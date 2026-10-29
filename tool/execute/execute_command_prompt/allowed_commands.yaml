@@ -1,0 +1,148 @@
+# Allowed Commands Configuration
+# ================================
+# Commands in the 'allowed' list can be executed by the agent.
+# Commands in the 'blocked' list are always rejected.
+# Commands not in either list will generate a warning but still execute.
+
+allowed:
+  # Python
+  - python
+  - python3
+  - pip
+  - pip3
+  - pytest
+  - mypy
+  - ruff
+  - black
+  - isort
+  - pylint
+  - flake8
+
+  # Node.js
+  - node
+  - npm
+  - npx
+  - yarn
+  - pnpm
+  - tsc
+
+  # Git
+  - git
+
+  # File operations (safe)
+  - ls
+  - cat
+  - head
+  - tail
+  - echo
+  - mkdir
+  - cp
+  - mv
+  - touch
+  - tree
+  - find
+  - grep
+  - wc
+  - sort
+  - uniq
+  - diff
+  - patch
+  - pwd
+  - which
+  - file
+
+  # System info (read-only)
+  - date
+  - whoami
+  - uname
+  - env
+  - printenv
+  - hostname
+  - df
+  - du
+  - free
+
+  # Archive
+  - tar
+  - zip
+  - unzip
+  - gzip
+  - gunzip
+
+  # Network (standalone, NOT piped to shell)
+  - curl
+  - wget
+  - ping
+
+  # Text processing
+  - sed
+  - awk
+  - cut
+  - tr
+  - tee
+  - xargs
+
+blocked:
+  # Destructive file operations
+  - rm
+  - rmdir
+  - shred
+
+  # Privilege escalation
+  - sudo
+  - su
+  - doas
+
+  # System administration
+  - chown
+  - chmod
+  - chgrp
+  - useradd
+  - userdel
+  - usermod
+  - passwd
+  - visudo
+
+  # Dangerous system commands
+  - mkfs
+  - fdisk
+  - parted
+  - dd
+  - shutdown
+  - reboot
+  - halt
+  - poweroff
+  - init
+  - systemctl
+
+  # Process control (dangerous)
+  - kill
+  - killall
+  - pkill
+
+  # Network (dangerous)
+  - nc
+  - ncat
+  - netcat
+  - iptables
+  - ip6tables
+  - nft
+
+  # Package managers (system-level)
+  - apt
+  - apt-get
+  - yum
+  - dnf
+  - pacman
+  - zypper
+  - snap
+
+# Blocked patterns (regex)
+# These are checked against the full command string
+blocked_patterns:
+  - 'rm\s+-[a-zA-Z]*r[a-zA-Z]*f'  # rm -rf
+  - 'chmod\s+777'                   # chmod 777
+  - '>\s*/dev/sd[a-z]'             # Write to block device
+  - 'curl.*\|\s*(bash|sh)'          # Pipe curl to shell
+  - 'wget.*\|\s*(bash|sh)'          # Pipe wget to shell
+  - ':\(\)\{\s*:\|:&\s*\};:'       # Fork bomb

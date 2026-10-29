@@ -1,0 +1,58 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# === Environment & secrets ===
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# === IDE / tooling cache ===
+.vscode/
+.idea/
+.relaycode.json
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.swp
+*.swo
+*~
+
+# === Agent runtime data ===
+.agent_memory/
+.agent_backups/
+audit.jsonl
+graphify-out/
+vault/
+workspace/
+*.db
+*.sqlite3
+logs/
+*.log
+tunnel.log
+
+# === Backups, archives, scratch ===
+*.bak
+*.tar.gz
+*.zip
+*.orphan
+tool.orphan/
+_t.py
+
+# === Screenshots / media ===
+Screenshot_*.png
+
+# === OS ===
+.DS_Store
+Thumbs.db

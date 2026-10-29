@@ -1,0 +1,1 @@
+Before answering, inspect every available modality, separate observation from inference, and note any quality or visibility limits.

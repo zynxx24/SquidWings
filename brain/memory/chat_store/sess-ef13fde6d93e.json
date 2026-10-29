@@ -1,0 +1,27 @@
+{
+  "session_id": "sess-ef13fde6d93e",
+  "title": "hi",
+  "created_at": 1793199824.0192077,
+  "updated_at": 1793199824.0199327,
+  "model_used": "ag/gemini-3.8-flash-high",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi",
+      "timestamp": 1793199824.0192077,
+      "model_used": "",
+      "token_count": 0,
+      "tool_calls": [],
+      "tool_call_id": ""
+    },
+    {
+      "role": "assistant",
+      "content": "Halo! Ada yang bisa saya bantu untuk proyek atau tugas Anda di workspace ini?",
+      "timestamp": 1793199824.0199327,
+      "model_used": "ag/gemini-3.8-flash-high",
+      "token_count": 138,
+      "tool_calls": [],
+      "tool_call_id": ""
+    }
+  ]
+}

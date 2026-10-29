@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Router — Multi-Model AI Agent</title>
+  <meta name="description" content="State-of-the-art multi-model AI agent with autonomous routing, deep reasoning, and tool execution.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220%22%22><text y=%2226%22 font-size=%2226%22>🧠</text></svg>">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/highlight.css">
+  <link rel="stylesheet" href="/static/css/team.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Mobile Sidebar Backdrop -->
+    <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="brand">
+          <div class="brand-icon">⚡</div>
+          <div class="brand-text">
+            <h1>Agent Router</h1>
+            <span class="version">v1.0.0</span>
+          </div>
+        </div>
+
+        <button class="team-launch" id="open-teams" type="button"><span>👥</span> AI Teams <b>NEW</b></button>
+
+        <button class="btn-primary-new-chat" id="btn-sidebar-new" type="button" title="Start New Chat (Ctrl+Shift+O)">
+          <span class="btn-icon">✨</span>
+          <span class="btn-label">New Chat</span>
+          <span class="btn-shortcut">New</span>
+        </button>
+      </div>
+
+      <!-- Chat History Section -->
+      <div class="sidebar-history-section">
+        <div class="history-section-header">
+          <div class="history-title-group">
+            <span class="history-title-icon">💬</span>
+            <span class="sidebar-section-title">Chat History</span>
+          </div>
+          <span class="history-count-badge" id="history-count">0</span>
+        </div>
+
+        <div class="history-search-box">
+          <span class="search-icon">🔍</span>
+          <input
+            type="text"
+            class="history-search-input"
+            id="history-search-input"
+            placeholder="Search conversations..."
+            autocomplete="off"
+          />
+          <button class="history-search-clear hide" id="history-search-clear" type="button" title="Clear search">&times;</button>
+        </div>
+
+        <div class="history-list-wrapper">
+          <div class="history-list" id="history-list">
+            <!-- Rendered dynamically -->
+          </div>
+          <div class="history-empty" id="history-empty">
+            <div class="empty-icon">💭</div>
+            <div class="empty-text">No previous chats yet</div>
+            <div class="empty-subtext">Click New Chat or send a message to start!</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Active Model Override Selector -->
+      <div class="sidebar-section sidebar-model-section">
+        <div class="sidebar-section-title">Active Model</div>
+        <button class="model-selector-btn" id="btn-select-model" type="button" title="Switch active model">
+          <span class="model-dot" id="active-model-dot"></span>
+          <span class="model-name" id="active-model-name">Gemini 3.8 Flash</span>
+          <span class="model-badge" id="active-model-badge">DEFAULT</span>
+        </button>
+      </div>
+
+      <!-- Navigation Actions Toolbar -->
+      <nav class="sidebar-nav">
+        <button class="nav-item" id="nav-new-chat" type="button" style="display:none;">
+          <span>New Chat</span>
+        </button>
+        <button class="nav-item" id="nav-select-model" type="button" title="Select different AI model">
+          <span class="nav-icon">🔀</span>
+          <span>Switch Model</span>
+        </button>
+        <button class="nav-item" id="nav-stats" type="button" title="View session metrics and token stats">
+          <span class="nav-icon">📊</span>
+          <span>Session Stats</span>
+        </button>
+        <button class="nav-item" id="nav-clear" type="button" title="Clear messages in current chat">
+          <span class="nav-icon">🧹</span>
+          <span>Clear Current Chat</span>
+        </button>
+      </nav>
+
+      <!-- Sidebar Footer Status -->
+      <div class="sidebar-footer">
+        <div class="connection-status">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-text">Connecting...</span>
+        </div>
+        <div class="tunnel-badge-wrap" id="tunnel-badge-wrap" style="display: none; margin: 6px 0;">
+          <a class="tunnel-link" id="tunnel-link" href="#" target="_blank" rel="noopener noreferrer" title="Click to open or copy public Cloudflare URL" style="display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 5px 8px; border-radius: 6px; background: rgba(56, 189, 248, 0.12); color: #38bdf8; text-decoration: none; border: 1px solid rgba(56, 189, 248, 0.25); transition: all 0.2s ease;">
+            <span>🌐</span>
+            <span id="tunnel-text" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px; font-weight: 500;">Public URL</span>
+          </a>
+        </div>
+        <div class="active-session-pill" id="stat-session-id" title="Click to copy Session ID">—</div>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Chat Header -->
+      <header class="chat-header">
+        <div class="chat-header-left">
+          <button class="mobile-menu-btn" id="btn-mobile-menu" type="button" aria-label="Toggle Navigation">☰</button>
+          <div>
+            <h2 class="chat-title">Agent Router</h2>
+            <p class="chat-subtitle" id="chat-subtitle">Multi-Model Intelligent Routing & Reasoning Engine</p>
+          </div>
+        </div>
+        <div class="chat-header-actions">
+          <button class="header-btn team-header-button" id="header-teams" type="button"><span>👥</span><span>Teams</span></button>
+          <button class="header-btn" id="btn-header-model" type="button">
+            <span>🔀</span>
+            <span>Model</span>
+          </button>
+          <button class="header-btn" id="btn-header-stats" type="button">
+            <span>📊</span>
+            <span>Stats</span>
+          </button>
+          <button class="header-btn" id="btn-header-clear" type="button">
+            <span>🧹</span>
+            <span>Clear</span>
+          </button>
+          <button class="header-btn" id="btn-header-new" type="button">
+            <span>➕</span>
+            <span>New Chat</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Messages Stream -->
+      <section class="chat-messages" id="chat-messages">
+        <div class="messages-container" id="messages-container">
+          <!-- Initial Welcome View -->
+          <div class="welcome-screen" id="welcome-screen">
+            <div class="welcome-icon">🧠</div>
+            <h3 class="welcome-title">Welcome to Agent Router</h3>
+            <p class="welcome-subtitle">
+              Intelligent multi-model agent with autonomous task classification, deep reasoning, and specialized tool execution.
+            </p>
+            <div class="quick-actions">
+              <button class="quick-action" type="button" data-prompt="Jelaskan arsitektur multi-model agent ini dan bagaimana mekanisme routing cerdasnya bekerja.">
+                <span>🏗️</span> Arsitektur Agent
+              </button>
+              <button class="quick-action" type="button" data-prompt="Tuliskan script Python asinkron untuk scraping data web lengkap dengan handling retry backoff.">
+                <span>🐍</span> Async Python
+              </button>
+              <button class="quick-action" type="button" data-prompt="Pecahkan teka-teki logika berikut secara mendalam dengan penalaran bertahap: Tiga kotak berisi apel, jeruk, dan campuran keduanya, tetapi semua labelnya tertukar.">
+                <span>💡</span> Penalaran Logika
+              </button>
+              <button class="quick-action" type="button" data-prompt="Bandingkan kelebihan dan kekurangan reasoning models (DeepSeek R1 / o1) dengan general fast models.">
+                <span>⚖️</span> Komparasi Model
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Chat Input Area -->
+      <footer class="chat-input-area">
+        <div class="input-wrapper">
+          <div class="chat-input-box">
+            <textarea
+              class="chat-input"
+              id="chat-input"
+              rows="1"
+              placeholder="Type a message or task... (Enter to send, Shift+Enter for new line)"
+              autofocus
+            ></textarea>
+            <button class="send-btn" id="send-btn" type="button" aria-label="Send message" title="Send (Enter)">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </button>
+          </div>
+          <div class="input-hint">
+            <kbd>Enter</kbd> to send, <kbd>Shift + Enter</kbd> for newline
+          </div>
+        </div>
+      </footer>
+    </main>
+  </div>
+
+  <!-- Model Selection Modal -->
+  <div class="modal-overlay" id="model-modal" role="dialog" aria-modal="true" aria-labelledby="modal-model-title">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modal-model-title">
+          <span>🔀</span> Select Model or Routing Mode
+        </h3>
+        <button class="modal-close" id="close-model-modal" type="button" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-search">
+        <input
+          class="modal-search-input"
+          id="model-search-input"
+          type="text"
+          placeholder="Filter models by name, provider, or ID..."
+        />
+      </div>
+      <div class="modal-body" id="modal-model-list">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Session Statistics Modal -->
+  <div class="modal-overlay" id="stats-modal" role="dialog" aria-modal="true" aria-labelledby="modal-stats-title">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modal-stats-title">
+          <span>📊</span> Session Analytics & Usage
+        </h3>
+        <button class="modal-close" id="close-stats-modal" type="button" aria-label="Close dialog">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-stats-content">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Collaborative AI Team workspace -->
+  <div class="team-overlay" id="team-overlay" aria-hidden="true">
+    <section class="team-workspace" role="dialog" aria-modal="true" aria-labelledby="team-heading">
+      <header class="team-topbar"><div><span class="team-kicker">COLLABORATIVE WORKSPACE</span><h2 id="team-heading">👥 AI Teams</h2></div><button class="team-icon-btn" id="close-teams" aria-label="Close AI Teams">&times;</button></header>
+      <div class="team-layout">
+        <aside class="team-list-panel"><div class="team-list-heading"><h3>Your teams</h3><button class="team-icon-btn" id="new-team" title="Create team">＋</button></div><div id="team-list" class="team-list"><p class="team-muted">Loading teams…</p></div><button class="team-secondary-btn" id="create-first-team">＋ Create a new team</button></aside>
+        <main class="team-main" id="team-main"><div class="team-welcome"><span>🤝</span><h3>Many minds. One result.</h3><p>Create a team of AI specialists, give them a task, and watch the lead combine their work into a final answer.</p><button class="team-primary-btn" id="welcome-create">Build your first team</button></div></main>
+      </div>
+    </section>
+  </div>
+  <div class="team-overlay" id="team-editor-overlay" aria-hidden="true">
+    <section class="team-editor" role="dialog" aria-modal="true" aria-labelledby="editor-title"><header class="team-topbar"><div><span class="team-kicker">TEAM BUILDER</span><h2 id="editor-title">Create a team</h2></div><button class="team-icon-btn" id="close-team-editor" aria-label="Close editor">&times;</button></header>
+      <form id="team-form"><div class="team-editor-scroll"><div class="team-form-grid"><label>Team name<input id="team-name" required maxlength="100" placeholder="e.g. Product Launch Squad"></label><label>Lead<select id="team-lead" required></select></label></div><label>Description <span class="team-muted">(optional)</span><input id="team-description" maxlength="1000" placeholder="What is this team good at?"></label><div class="team-members-heading"><h3>Team members <span id="member-count">2 / 6</span></h3><button type="button" class="team-secondary-btn" id="add-member">＋ Add member</button></div><p class="team-help">The other specialists work in parallel. The lead reviews their reports and creates the final answer.</p><div id="team-members"></div></div><footer class="team-editor-footer"><span class="team-form-error" id="team-form-error" role="alert"></span><button type="button" class="team-secondary-btn" id="cancel-team-editor">Cancel</button><button type="submit" class="team-primary-btn" id="save-team">Save team</button></footer></form>
+    </section>
+  </div>
+
+  <!-- Toast Notification -->
+  <div class="toast hide" id="toast" role="status" aria-live="polite">
+    <span id="toast-message">Notification</span>
+  </div>
+
+  <!-- Dependencies & Main Application Script -->
+  <script src="/static/js/marked.min.js"></script>
+  <script src="/static/js/highlight.min.js"></script>
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/team.js"></script>
+</body>
+</html>

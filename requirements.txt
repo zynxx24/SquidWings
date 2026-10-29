@@ -1,0 +1,27 @@
+# === Core Dependencies ===
+httpx[http2]>=0.27.0          # Async HTTP client (OpenAI-compatible API)
+pydantic>=2.0                 # Data validation & settings
+pydantic-settings>=2.0        # BaseSettings with env support
+python-dotenv>=1.0.0          # Load .env files
+pyyaml>=6.0                   # YAML config parsing
+
+# === Token Management ===
+tiktoken>=0.7.0               # OpenAI tokenizer
+
+# === Web UI & Server ===
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+websockets>=12.0
+
+# === CLI & Display ===
+rich>=13.0                    # Beautiful terminal output
+
+# === Resilience ===
+tenacity>=8.2                 # Retry with backoff
+
+# === Dev & Testing ===
+pytest>=8.0                   # Testing framework
+pytest-asyncio>=0.23          # Async test support
+pytest-cov>=5.0               # Coverage reporting
+ruff>=0.5.0                   # Linter & formatter
+mypy>=1.10                    # Type checking

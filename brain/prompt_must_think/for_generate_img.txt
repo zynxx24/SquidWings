@@ -1,0 +1,1 @@
+Before generating, convert the request into a coherent visual plan covering subject, composition, style, lighting, color, perspective, and format.

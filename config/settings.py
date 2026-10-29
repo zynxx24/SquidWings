@@ -1,0 +1,131 @@
+"""Central application settings loaded from environment / .env file."""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=False,
+    )
+
+    # --- Core ---
+    app_name: str = "SquidWings"
+    app_env: str = "development"
+    log_level: str = "INFO"
+    debug: bool = False
+
+    # --- API keys ---
+    openai_api_key: str = ""
+    anthropic_api_key: str = ""
+    google_api_key: str = ""
+    deepseek_api_key: str = ""
+    graphify_api_key: str = ""
+
+    # --- Base URLs ---
+    openai_base_url: str = "https://api.openai.com/v1"
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
+    google_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    graphify_base_url: str = "https://api.graphify.ai/v1"
+
+    # --- Web public access ---
+    web_public_access: bool = False
+    web_auth_token: str = ""
+    web_host: str = "127.0.0.1"
+    web_port: int = 8080
+
+    # --- Web Search ---
+    web_search_enabled: bool = True
+    web_search_timeout_seconds: float = 15.0
+    web_search_max_results: int = 5
+    web_search_cache_ttl_seconds: int = 21600
+    web_search_min_interval_seconds: float = 2.0
+    web_search_retries: int = 1
+    web_search_max_cache_entries: int = 200
+
+    # --- Obsidian local memory ---
+    web_search_obsidian_enabled: bool = False
+    obsidian_vault_path: str = ""
+    obsidian_search_folder: str = "SquidWings/Web Search"
+
+    # --- Graphify local memory ---
+    graphify_memory_enabled: bool = False
+    graphify_memory_endpoint: str = ""
+    graphify_memory_timeout_seconds: float = 5.0
+
+    # --- API connection ---
+    # These keys are present in .env (API_BASE_URL, DEFAULT_MODEL,
+    # TIMEOUT_SECONDS, STREAM_ENABLED) but were never declared here. Because
+    # ``extra="ignore"`` silently drops unknown keys, the values loaded fine
+    # and then vanished — every ``settings.api_base_url`` in main.py raised
+    # AttributeError and main() died before the first prompt.
+    api_base_url: str = "https://api.9router.ai/v1"
+    default_model: str = ""
+    default_temperature: float = 0.7
+    default_max_tokens: int = 8192
+    stream_enabled: bool = True
+    timeout_seconds: float = 120.0
+    retry_backoff_factor: float = 1.5
+
+    # --- Retry / limits ---
+    request_timeout_seconds: float = 120.0
+    max_retries: int = 2
+    stream_timeout_seconds: float = 120.0
+
+    # --- Paths (computed) ---
+    project_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parent.parent)
+
+    @property
+    def models_config_path(self) -> Path:
+        """Path to ``config/models_config.yaml``.
+
+        Referenced by ``main.py``, ``agent/orchestrator.py`` and the offline
+        tests; without it every orchestrator construction raises
+        ``AttributeError`` and the web server cannot start.
+        """
+        return self.project_root / "config" / "models_config.yaml"
+
+    @property
+    def brain_dir(self) -> Path:
+        """Root of the ``brain`` package.
+
+        ``main.py`` builds ``settings.brain_dir / "memory" / "store"``, so this
+        must be ``project_root/brain`` — not ``memory_dir``, which is already
+        one level deeper.
+        """
+        return self.project_root / "brain"
+
+    @property
+    def config_dir(self) -> Path:
+        """Root of the ``config`` package (``terminal_format.json`` lives here)."""
+        return self.project_root / "config"
+
+    @property
+    def memory_dir(self) -> Path:
+        return self.project_root / "brain" / "memory"
+
+    @property
+    def chat_store_dir(self) -> Path:
+        return self.memory_dir / "chat_store"
+
+    @property
+    def session_store_dir(self) -> Path:
+        return self.memory_dir / "store"
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in {"production", "prod"}
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    return Settings()

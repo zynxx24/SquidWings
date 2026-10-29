@@ -1,0 +1,7 @@
+search-path = [
+    ".",
+    "workspace/wifi_hacks",
+    "workspace/ai-agent-finance/src",
+    "workspace/ai-agent-finance/src/agent",
+]
+infer-with-first-use = false

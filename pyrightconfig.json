@@ -1,0 +1,10 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "extraPaths": [
+    ".",
+    "workspace/wifi_hacks",
+    "workspace/ai-agent-finance/src",
+    "workspace/ai-agent-finance/src/agent"
+  ]
+}

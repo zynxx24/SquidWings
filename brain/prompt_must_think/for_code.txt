@@ -1,0 +1,1 @@
+Before acting, identify the requested outcome, inspect the relevant code, and plan the smallest safe change. Verify the result with focused tests and repository checks.

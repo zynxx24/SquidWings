@@ -1,0 +1,68 @@
+# SquidWings security policy — first-match-wins, highest priority first.
+# Override the built-in baseline by pointing SQUIDWINGS_POLICY at this file.
+version: 1
+default: allow
+strict: false
+
+rules:
+  - name: block_privilege_escalation
+    action: deny
+    priority: 100
+    tools: [execute_command, run_command, shell]
+    arg_patterns:
+      command: '(?i)\b(?:sudo|su\s+-|doas|pkexec|chown\s+root|chmod\s+[ugo]*s)\b'
+    reason: privilege escalation is not permitted
+
+  - name: block_destructive_root
+    action: deny
+    priority: 100
+    tools: [execute_command, run_command, shell]
+    arg_patterns:
+      command: '(?i)(?:rm\s+-[a-z]*r[a-z]*f?\s+/(?:\s|$)|rm\s+-[a-z]*f[a-z]*r?\s+/(?:\s|$)|mkfs\.|dd\s+if=.*of=/dev/|>\s*/dev/sd)'
+    reason: destructive operation on system root or block device
+
+  - name: block_fork_bomb
+    action: deny
+    priority: 100
+    tools: [execute_command, run_command, shell]
+    arg_patterns:
+      command: ':\(\)\s*\{.*\};\s*:'
+    reason: fork bomb detected
+
+  - name: block_network_exfil
+    action: deny
+    priority: 95
+    tools: [execute_command, run_command, shell]
+    arg_patterns:
+      command: '(?i)(?:curl|wget)\b[^|;]*\|\s*(?:ba)?sh\b|(?:curl|wget)\b.*(?:--data|-d)\s+.*(?:\.env|id_rsa|\.ssh)'
+    reason: piping remote content to shell or uploading secrets
+
+  - name: block_secret_file_access
+    action: deny
+    priority: 90
+    tools: [read_file, upload_file, edit_file, discard_changes]
+    arg_patterns:
+      file_path: '(?i)(?:^|/)(?:\.env(?:\..*)?|id_rsa|id_ed25519|\.netrc|\.pgpass|credentials(?:\.json)?|.*\.(?:pem|key|p12|pfx))$'
+    reason: access to credential material is blocked
+
+  - name: block_git_force_push
+    action: deny
+    priority: 80
+    tools: [execute_command, run_command, shell]
+    arg_patterns:
+      command: '(?i)\bgit\s+push\b.*(?:--force|-f)\b'
+    reason: force push requires explicit human approval
+
+  - name: ask_package_install
+    action: ask
+    priority: 60
+    tools: [execute_command, run_command, shell]
+    arg_patterns:
+      command: '(?i)\b(?:pip3?\s+install|npm\s+(?:i|install)|apt(?:-get)?\s+install|brew\s+install|cargo\s+install|gem\s+install)\b'
+    reason: installing dependencies modifies the environment
+
+  - name: allow_readonly_tools
+    action: allow
+    priority: 10
+    tools: [read_file, list_directory, search, grep, glob]
+    reason: read-only operation
