@@ -1,7 +1,7 @@
 # ============================================
 # Agent Router — Model Capabilities Configuration
 # ============================================
-# Auto-generated from /v1/models API endpoint (ag/ and kg/ providers)
+# Auto-generated from /v1/models API endpoint (ag/, kg/ and vk/ providers)
 # Last synchronized: 2026-10-22
 #
 # Router Strategy:
@@ -1209,6 +1209,824 @@ models:
       - preview
 
 
+  # ------------------------------------------
+  # VK Provider Models (Vikey Router - 36 Active)
+  # ------------------------------------------
+
+  vk/anthropic/claude-fable-5:
+    display_name: "Anthropic / Claude Fable 5"
+    provider: vk
+    thinking_format: "claude-budget"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+
+  vk/anthropic/claude-fable-5.1:
+    display_name: "Anthropic / Claude Fable 5.1"
+    provider: vk
+    thinking_format: "claude-budget"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+
+  vk/anthropic/claude-opus-4.6:
+    display_name: "Anthropic / Claude Opus 4.6"
+    provider: vk
+    thinking_format: "claude-adaptive"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - heavy
+      - vision
+
+  vk/anthropic/claude-opus-4.7:
+    display_name: "Anthropic / Claude Opus 4.7"
+    provider: vk
+    thinking_format: "claude-adaptive"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - heavy
+      - vision
+
+  vk/anthropic/claude-opus-4.8:
+    display_name: "Anthropic / Claude Opus 4.8"
+    provider: vk
+    thinking_format: "claude-adaptive"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - heavy
+      - vision
+
+  vk/anthropic/claude-opus-5:
+    display_name: "Anthropic / Claude Opus 5"
+    provider: vk
+    thinking_format: "claude-adaptive"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - heavy
+      - vision
+
+  vk/anthropic/claude-opus-5.5:
+    display_name: "Anthropic / Claude Opus 5.5"
+    provider: vk
+    thinking_format: "claude-adaptive"
+    thinking_can_disable: false
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - heavy
+      - vision
+
+  vk/anthropic/claude-sonnet-4.6:
+    display_name: "Anthropic / Claude Sonnet 4.6"
+    provider: vk
+    thinking_format: "claude-adaptive"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+
+  vk/anthropic/claude-sonnet-5:
+    display_name: "Anthropic / Claude Sonnet 5"
+    provider: vk
+    thinking_format: "claude-adaptive"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+
+  vk/anthropic/claude-sonnet-5.5:
+    display_name: "Anthropic / Claude Sonnet 5.5"
+    provider: vk
+    thinking_format: "claude-adaptive"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+
+  vk/anthropic/haiku-5.5:
+    display_name: "Anthropic / Haiku 5.5"
+    provider: vk
+    thinking_format: ""
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 200000
+    max_output: 64000
+    capabilities:
+      vision: false
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: false
+    tags:
+      - fast
+
+  vk/deepseek/deepseek-v4-flash:
+    display_name: "Deepseek / Deepseek V4 Flash"
+    provider: vk
+    thinking_format: "deepseek"
+    thinking_can_disable: true
+    thinking_effort_supported: true
+    context_window: 1000000
+    max_output: 384000
+    capabilities:
+      vision: false
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+
+  vk/deepseek/deepseek-v4-pro:
+    display_name: "Deepseek / Deepseek V4 Pro"
+    provider: vk
+    thinking_format: "deepseek"
+    thinking_can_disable: true
+    thinking_effort_supported: true
+    context_window: 1000000
+    max_output: 384000
+    capabilities:
+      vision: false
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - heavy
+
+  vk/deepseek/deepseek-v4.1-flash:
+    display_name: "Deepseek / Deepseek V4.1 Flash"
+    provider: vk
+    thinking_format: "deepseek"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 384000
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+      - vision
+
+  vk/deepseek/deepseek-v4.1-flash-1017:
+    display_name: "Deepseek / Deepseek V4.1 Flash 1017"
+    provider: vk
+    thinking_format: "deepseek"
+    thinking_can_disable: true
+    thinking_effort_supported: true
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+      - vision
+
+  vk/gemini/gemini-3.7-flash-high:
+    display_name: "Gemini / Gemini 3.7 Flash High"
+    provider: vk
+    thinking_format: "gemini-level"
+    thinking_can_disable: false
+    thinking_effort_supported: false
+    context_window: 1048576
+    max_output: 65536
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: true
+      video_input: true
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+      - vision
+
+  vk/gemini/gemini-3.8-flash:
+    display_name: "Gemini / Gemini 3.8 Flash"
+    provider: vk
+    thinking_format: "gemini-level"
+    thinking_can_disable: false
+    thinking_effort_supported: false
+    context_window: 1048576
+    max_output: 65536
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: true
+      video_input: true
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+      - vision
+
+  vk/glm/glm-5.3-flash:
+    display_name: "GLM / GLM 5.3 Flash"
+    provider: vk
+    thinking_format: "zai"
+    thinking_can_disable: false
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 131072
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: false
+      video_input: true
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+      - vision
+
+  vk/minimax/minimax-m3:
+    display_name: "Minimax / Minimax M3"
+    provider: vk
+    thinking_format: "minimax"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 131072
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - heavy
+      - vision
+
+  vk/minimax/minimax-m3.1-flash:
+    display_name: "Minimax / Minimax M3.1 Flash"
+    provider: vk
+    thinking_format: "minimax"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 131072
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+      - heavy
+      - vision
+
+  vk/moonshot/kimi-k2.7-code:
+    display_name: "Moonshot / Kimi K2.7 Code"
+    provider: vk
+    thinking_format: "kimi"
+    thinking_can_disable: false
+    thinking_effort_supported: false
+    context_window: 262144
+    max_output: 65536
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: true
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - code
+      - reasoning
+      - vision
+
+  vk/moonshot/kimi-k3:
+    display_name: "Moonshot / Kimi K3"
+    provider: vk
+    thinking_format: "kimi"
+    thinking_can_disable: false
+    thinking_effort_supported: false
+    context_window: 1048576
+    max_output: 131072
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: true
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+
+  vk/moonshotai/kimi-k3.1-pro:
+    display_name: "Moonshotai / Kimi K3.1 Pro"
+    provider: vk
+    thinking_format: "kimi"
+    thinking_can_disable: false
+    thinking_effort_supported: false
+    context_window: 1048576
+    max_output: 131072
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: true
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - heavy
+      - vision
+
+  vk/openai/gpt-5.6-luna:
+    display_name: "Openai / GPT 5.6 Luna"
+    provider: vk
+    thinking_format: "openai"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1050000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+      - vision
+
+  vk/openai/gpt-5.6-sol:
+    display_name: "Openai / GPT 5.6 Sol"
+    provider: vk
+    thinking_format: "openai"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1050000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+
+  vk/openai/gpt-5.6-terra:
+    display_name: "Openai / GPT 5.6 Terra"
+    provider: vk
+    thinking_format: "openai"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1050000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+
+  vk/openai/gpt-6-astra:
+    display_name: "Openai / GPT 6 Astra"
+    provider: vk
+    thinking_format: "openai"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1050000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - heavy
+      - vision
+
+  vk/openai/gpt-6-luna:
+    display_name: "Openai / GPT 6 Luna"
+    provider: vk
+    thinking_format: "openai"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1050000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+      - vision
+
+  vk/openai/gpt-6-sol:
+    display_name: "Openai / GPT 6 Sol"
+    provider: vk
+    thinking_format: "openai"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1050000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+
+  vk/openai/gpt-6.1-sol:
+    display_name: "Openai / GPT 6.1 Sol"
+    provider: vk
+    thinking_format: "openai"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1050000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: true
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+
+  vk/qwen/qwen3.6-plus-uncensored:
+    display_name: "Qwen / Qwen3.6 Plus Uncensored"
+    provider: vk
+    thinking_format: "qwen"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 65536
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: true
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - vision
+      - uncensored
+
+  vk/qwen/qwen3.8-max:
+    display_name: "Qwen / Qwen3.8 Max"
+    provider: vk
+    thinking_format: "qwen"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 1000000
+    max_output: 65536
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - heavy
+      - vision
+
+  vk/vikey/deepseek-v4.1-flash-uncensored:
+    display_name: "Vikey / Deepseek V4.1 Flash Uncensored"
+    provider: vk
+    thinking_format: "deepseek"
+    thinking_can_disable: true
+    thinking_effort_supported: true
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+      - vision
+      - uncensored
+
+  vk/vikey/qwen3.8-27b-uncensored:
+    display_name: "Vikey / Qwen3.8 27B Uncensored"
+    provider: vk
+    thinking_format: "qwen"
+    thinking_can_disable: true
+    thinking_effort_supported: false
+    context_window: 262144
+    max_output: 64000
+    capabilities:
+      vision: false
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+      - uncensored
+
+  vk/xiaomi/mimo-v2.6-pro:
+    display_name: "Xiaomi / Mimo V2.6 Pro"
+    provider: vk
+    thinking_format: "deepseek"
+    thinking_can_disable: false
+    thinking_effort_supported: false
+    context_window: 1048576
+    max_output: 131072
+    capabilities:
+      vision: true
+      pdf: false
+      audio_input: true
+      video_input: true
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - fast
+      - reasoning
+      - heavy
+      - vision
+
+  vk/zai/glm-5.3:
+    display_name: "Zai / GLM 5.3"
+    provider: vk
+    thinking_format: "zai"
+    thinking_can_disable: false
+    thinking_effort_supported: true
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      vision: false
+      pdf: false
+      audio_input: false
+      video_input: false
+      image_output: false
+      audio_output: false
+      search: false
+      tools: true
+      reasoning: true
+    tags:
+      - reasoning
+
 # ============================================
 # ROUTING CONFIGURATION
 # ============================================
@@ -1228,6 +2046,9 @@ routing:
       - "kg/kimi-k2-7-code"
       - "ag/claude-opus-4-6-thinking"
       - "kg/claude-haiku-5-5"
+      - "vk/anthropic/claude-sonnet-4.6"
+      - "vk/openai/gpt-6-sol"
+      - "vk/deepseek/deepseek-v4-pro"
     default_difficulty: medium
     temperature: 0.2
     enable_thinking: true
@@ -1245,6 +2066,8 @@ routing:
       - "ag/claude-sonnet-4-6"
       - "kg/qwen3.8-max"
       - "ag/claude-opus-4-6-thinking"
+      - "vk/deepseek/deepseek-v4-pro"
+      - "vk/openai/gpt-6-astra"
     default_difficulty: medium
     temperature: 0.1
     enable_thinking: true
@@ -1263,6 +2086,8 @@ routing:
       - "kg/gpt-5-6-luna"
       - "ag/claude-opus-4-6-thinking"
       - "kg/claude-sonnet-4-6"
+      - "vk/openai/gpt-6-luna"
+      - "vk/gemini/gemini-3.8-flash"
     default_difficulty: easy
     temperature: 0.7
     enable_thinking: false
@@ -1280,6 +2105,8 @@ routing:
       - "ag/claude-sonnet-4-6"
       - "kg/deepseek-v4-pro"
       - "ag/claude-opus-4-6-thinking"
+      - "vk/anthropic/claude-sonnet-5.5"
+      - "vk/deepseek/deepseek-v4.1-flash"
     default_difficulty: medium
     temperature: 0.3
     enable_thinking: true
@@ -1295,6 +2122,8 @@ routing:
       - "kg/gpt-5-6-luna"
       - "gemini/gemini-4-argon"
       - "ag/claude-sonnet-4-6"
+      - "vk/openai/gpt-6-luna"
+      - "vk/gemini/gemini-3.8-flash"
     default_difficulty: easy
     temperature: 0.8
     enable_thinking: false
@@ -1314,6 +2143,8 @@ routing:
       - "gemini/gemini-4-argon"
       - "ag/gemini-3.8-flash-high"
       - "gemini/gemini-3.8-flash"
+      - "vk/anthropic/claude-opus-5.5"
+      - "vk/deepseek/deepseek-v4-pro"
     default_difficulty: hard
     temperature: 0.1
     enable_thinking: true
@@ -1333,6 +2164,8 @@ routing:
       - "kg/claude-sonnet-4-6"
       - "kg/gpt-5-6-luna"
       - "ag/claude-sonnet-4-6"
+      - "vk/gemini/gemini-3.7-flash-high"
+      - "vk/openai/gpt-6-astra"
     default_difficulty: easy
     temperature: 0.5
     enable_thinking: true

@@ -49,6 +49,7 @@ from model.type.math import MathHandler
 from model.type.multimodal import MultimodalHandler
 from model.type.reason import ReasonHandler
 from model.type.school_task import SchoolTaskHandler
+from tool.execute.execute_local_memory.session_distill import distill_session
 from tool.register_tools import register_all_tools
 from tool.registry.tool_registry import ToolRegistry
 from utils.logger import get_logger
@@ -188,6 +189,25 @@ class Orchestrator:
             tool_registry=self._tool_registry,
             working_memory=self._working_memory,
         )
+        # Turn counters for memory distillation (writes at most once per N turns).
+        self._distill_every = 3
+        self._turn_counts: dict[str, int] = {}
+
+    async def _distill_memory(self, session_id: str) -> None:
+        """Keep the vault session note in sync with the chat log.
+
+        Runs at most once every N turns: the note is long-term memory, not a
+        live transcript, and rewriting it per turn would churn the vault index.
+        Failures are swallowed - memory enrichment must never break a turn.
+        """
+        try:
+            count = self._turn_counts.get(session_id, 0) + 1
+            self._turn_counts[session_id] = count
+            if count % self._distill_every != 0:
+                return
+            await distill_session(self._conversation_store, session_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"[orchestrator] distill skipped: {exc}")
 
     @classmethod
     def from_settings(
@@ -448,6 +468,7 @@ class Orchestrator:
                 model_used=model.id,
                 token_count=loop_result.total_completion_tokens,
             )
+            await self._distill_memory(session_id)
 
             # 11. Record health + session usage
             latency_ms = (time.time() - start_time) * 1000

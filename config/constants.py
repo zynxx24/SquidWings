@@ -76,6 +76,7 @@ class ModelProvider(StrEnum):
     KG = "kg"  # Kagiro provider models (external marketplace)
     GEMINI = "gemini"  # Direct Google Gemini models from 9Router
     BANSOS = "bansos"  # Bansos mode (free Kagiro direct API)
+    VK = "vk"  # Vikey router models (vk/... multi-vendor)
 
 
 @unique

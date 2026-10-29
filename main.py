@@ -72,6 +72,7 @@ from tool.execute.execute_edit_change_file.file_editor import FileEditor
 from tool.execute.execute_local_memory.vault_context import (
     build_context as build_vault_context,
 )
+from tool.execute.execute_local_memory.session_distill import distill_session
 from tool.register_tools import build_skills_prompt, register_all_tools
 from utils.cli_formatter import (
     SESSION_CODE_TRACKER,
@@ -87,6 +88,10 @@ from utils.timer import Timer
 
 logger = get_logger(__name__)
 console = Console()
+
+# Turn counters for session distillation (memory), kept module-level so the
+# CLI loop and the fallback path share one cadence per session.
+_CLI_TURNS: dict[str, int] = {}
 
 # Handler registry
 HANDLERS: dict[TaskType, BaseTypeHandler] = {
@@ -106,6 +111,7 @@ PROVIDER_THEME: dict[str, dict[str, str]] = {
     "TH": {"color": "bright_yellow", "icon": "🟡", "label": "TH"},
     "gemini": {"color": "bright_blue", "icon": "♊", "label": "Google Gemini"},
     "bansos": {"color": "bright_green", "icon": "🆓", "label": "Bansos (Free)"},
+    "vk": {"color": "bright_red", "icon": "🔺", "label": "Vikey Router"},
 }
 
 # File extension → syntax language mapping
@@ -1115,6 +1121,25 @@ def _append_to_system_message(
         msg["content"] = str(content or "") + separator + extra_text
 
 
+async def _distill_cli_session(
+    conversation_store: ConversationStore,
+    session_id: str,
+    active_workspace: Path | None,
+) -> None:
+    """Refresh the vault session note every few turns. Never raises."""
+    _CLI_TURNS[session_id] = _CLI_TURNS.get(session_id, 0) + 1
+    if _CLI_TURNS[session_id] % 3 != 0:
+        return
+    try:
+        await distill_session(
+            conversation_store,
+            session_id,
+            workspace_path=str(active_workspace) if active_workspace else None,
+        )
+    except Exception as exc:  # noqa: BLE001 - memory must not break the turn
+        logger.debug(f"[process_input] distill skipped: {exc}")
+
+
 async def process_input(
     user_input: str,
     session_id: str,
@@ -1833,6 +1858,7 @@ async def process_input(
                 model_used=model.id,
                 token_count=parsed.completion_tokens,
             )
+            await _distill_cli_session(conversation_store, session_id, active_workspace)
 
             # 9. Record health
             health_checker.record_success(model.id, 0)
@@ -2015,6 +2041,9 @@ async def process_input(
                         session_id, "assistant", final_text,
                         model_used=fb_model.id,
                         token_count=fb_parsed.completion_tokens,
+                    )
+                    await _distill_cli_session(
+                        conversation_store, session_id, active_workspace
                     )
                     health_checker.record_success(fb_model.id, 0)
                     console.print(

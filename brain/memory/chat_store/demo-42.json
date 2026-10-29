@@ -1,0 +1,27 @@
+{
+  "session_id": "demo-42",
+  "title": "optimisasi input branching dan memory di a...",
+  "created_at": 1793273253.3633237,
+  "updated_at": 1793273253.363591,
+  "model_used": "vk/deepseek",
+  "messages": [
+    {
+      "role": "user",
+      "content": "optimisasi input branching dan memory di agent",
+      "timestamp": 1793273253.3633237,
+      "model_used": "",
+      "token_count": 0,
+      "tool_calls": [],
+      "tool_call_id": ""
+    },
+    {
+      "role": "assistant",
+      "content": "Decision: tambah distill sesi.\nNext step: jalankan pytest.",
+      "timestamp": 1793273253.363591,
+      "model_used": "vk/deepseek",
+      "token_count": 0,
+      "tool_calls": [],
+      "tool_call_id": ""
+    }
+  ]
+}
