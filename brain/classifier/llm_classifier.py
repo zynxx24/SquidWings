@@ -30,7 +30,7 @@ class LLMIntentClassifier:
         self,
         api_client: Any,
         model: ModelSelector = None,
-        timeout: float = 12.0,
+        timeout: float = 3.0,
     ) -> None:
         self._client = api_client
         self._model = model

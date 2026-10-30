@@ -282,9 +282,15 @@ class APIClient(BaseClient):
                 else:
                     if isinstance(e, RateLimitError):
                         retry_after = e.retry_after
+                        if retry_after is not None and retry_after > 30.0:
+                            logger.warning(
+                                f"[api] Upstream quota exhausted or Retry-After too long ({retry_after:.0f}s). "
+                                f"Triggering immediate model fallback."
+                            )
+                            raise
                         if retry_after is None or retry_after <= 0:
                             retry_after = min(2.0 * (self.retry_backoff_factor ** (attempt - 1)), 15.0)
-                        self.rate_limiter.penalize(api_model, penalty_seconds=retry_after)
+                        self.rate_limiter.penalize(api_model, penalty_seconds=min(retry_after, 30.0))
                         if attempt <= self.max_retries:
                             logger.warning(
                                 f"[api] Rate limited on {api_model} (HTTP 429). "
@@ -393,9 +399,15 @@ class APIClient(BaseClient):
                 else:
                     if isinstance(e, RateLimitError):
                         retry_after = e.retry_after
+                        if retry_after is not None and retry_after > 30.0:
+                            logger.warning(
+                                f"[api] Upstream quota exhausted or Retry-After too long ({retry_after:.0f}s). "
+                                f"Triggering immediate model fallback."
+                            )
+                            raise
                         if retry_after is None or retry_after <= 0:
                             retry_after = min(2.0 * (self.retry_backoff_factor ** (attempt - 1)), 15.0)
-                        self.rate_limiter.penalize(api_model, penalty_seconds=retry_after)
+                        self.rate_limiter.penalize(api_model, penalty_seconds=min(retry_after, 30.0))
                         if attempt <= self.max_retries:
                             logger.warning(
                                 f"[api] Rate limited on stream {api_model} (HTTP 429). "
@@ -487,6 +499,11 @@ class APIClient(BaseClient):
         for name, fetch in sources:
             try:
                 items = [m for m in await fetch() if m.get("id")]
+                if name == "router" and hasattr(registry, "model_ids") and hasattr(registry, "unregister"):
+                    current_ids = {m["id"] for m in items}
+                    for mid in list(registry.model_ids):
+                        if not mid.startswith("bansos/") and mid not in current_ids:
+                            registry.unregister(mid)
                 registry.register_from_api_models(items)
                 counts[name] = len(items)
             except Exception as e:  # noqa: BLE001

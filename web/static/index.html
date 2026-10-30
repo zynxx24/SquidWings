@@ -2,77 +2,182 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
-<title>Agent</title>
+<title>SquidWings Agent</title>
 <script src="/static/js/tailwind.js"></script>
 <link rel="stylesheet" href="/static/css/highlight.css">
 <link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body class="h-screen bg-stone-50 text-stone-900 font-sans text-sm antialiased overflow-hidden">
+<body class="bg-stone-50 text-stone-900 font-sans text-sm antialiased overflow-hidden select-text">
 
-<div id="app" class="h-full flex flex-col">
+<div id="app" class="h-full flex flex-col max-w-full overflow-hidden">
 
-  <header class="h-12 shrink-0 border-b border-stone-200 bg-white flex items-center gap-3 px-3 sm:px-4">
-    <span class="font-semibold tracking-tight shrink-0">Agent</span>
-    <nav class="flex gap-1 overflow-x-auto">
-      <button data-tab="chat" class="tab px-3 py-1.5 rounded-md whitespace-nowrap">Chat</button>
-      <button data-tab="canvas" data-feature="teams" class="tab px-3 py-1.5 rounded-md whitespace-nowrap">Team canvas</button>
-    </nav>
-    <div class="ml-auto flex items-center gap-2 min-w-0">
-      <select id="model-select" class="min-w-0 w-28 sm:w-56 lg:w-72 truncate border border-stone-300 rounded-md bg-white px-2 py-1.5 focus:outline-none focus:border-stone-500"></select>
-      <button id="refresh-models" title="Fetch models again" class="hidden sm:inline-flex border border-stone-300 rounded-md px-2.5 py-1.5 hover:bg-stone-100 shrink-0">Refresh</button>
+  <!-- Header: Mobile-first compact & Desktop expanded -->
+  <header class="h-12 sm:h-13 shrink-0 border-b border-stone-200 bg-white/95 backdrop-blur-md flex items-center justify-between gap-1.5 sm:gap-3 px-2 sm:px-4 z-20 max-w-full overflow-hidden">
+    <!-- Left: Sidebar toggle + Brand + Tabs -->
+    <div class="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
+      <button id="toggle-sidebar" title="Toggle chats" class="p-1.5 rounded-lg border border-stone-200 hover:bg-stone-100 text-stone-600 transition-colors shrink-0 cursor-pointer" aria-label="Toggle chats">
+        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+          <line x1="9" y1="3" x2="9" y2="21"></line>
+        </svg>
+      </button>
+
+      <!-- Brand -->
+      <div class="flex items-center gap-1.5 shrink-0">
+        <span class="w-6 h-6 rounded-md bg-stone-900 text-white flex items-center justify-center text-xs font-black shadow-xs select-none">S</span>
+        <span class="font-bold tracking-tight text-stone-900 text-sm hidden sm:inline">SquidWings</span>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <nav class="flex items-center gap-0.5 bg-stone-100 p-0.5 rounded-lg border border-stone-200/60 ml-0.5">
+        <button data-tab="chat" class="tab px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap active transition-all">Chat</button>
+        <button data-tab="canvas" data-feature="teams" class="tab px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-all hidden sm:inline-block">Teams</button>
+      </nav>
+    </div>
+
+    <!-- Right: Model Selector & Refresh Button -->
+    <div class="flex items-center gap-1 sm:gap-2 shrink-0 max-w-[55%] sm:max-w-none">
+      <div class="relative flex items-center min-w-0">
+        <select id="model-select" class="w-28 xs:w-36 sm:w-56 lg:w-72 truncate border border-stone-300 rounded-lg bg-stone-50 hover:bg-stone-100/80 px-2 py-1 text-xs text-stone-800 font-medium focus:outline-none focus:ring-2 focus:ring-stone-400 focus:bg-white transition-all shadow-2xs"></select>
+      </div>
+      <button id="refresh-models" title="Fetch models again" class="hidden sm:inline-flex items-center gap-1 border border-stone-300 rounded-lg px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100 shrink-0 transition-colors shadow-2xs">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+        </svg>
+        <span class="hidden md:inline">Refresh</span>
+      </button>
     </div>
   </header>
 
-  <main id="view-chat" class="view flex-1 min-h-0 flex">
-    <aside id="session-panel" class="session-panel flex w-60 shrink-0 flex-col border-r border-stone-200 bg-white">
-      <div class="p-3 flex items-center justify-between gap-2 border-b border-stone-200">
-        <span class="font-medium">Chats</span>
-        <div class="flex gap-1">
-          <button id="new-chat" class="border border-stone-300 rounded-md px-2 py-1 hover:bg-stone-100">New</button>
-          <button id="close-sessions" class="lg:hidden border border-stone-300 rounded-md px-2 py-1 hover:bg-stone-100">Close</button>
+  <!-- Main View: Chat -->
+  <main id="view-chat" class="view flex-1 min-h-0 flex bg-stone-50 max-w-full overflow-hidden">
+    <!-- Session Sidebar -->
+    <aside id="session-panel" class="session-panel flex w-64 shrink-0 flex-col border-r border-stone-200 bg-white">
+      <div class="p-3 flex items-center justify-between gap-2 border-b border-stone-200 bg-stone-50/60">
+        <span class="font-semibold text-xs uppercase tracking-wider text-stone-500">Chats</span>
+        <div class="flex items-center gap-1">
+          <button id="new-chat" class="flex items-center gap-1 bg-stone-900 text-white rounded-md px-2.5 py-1 text-xs font-medium hover:bg-stone-700 transition-colors shadow-2xs cursor-pointer">
+            <span>+</span>
+            <span>New</span>
+          </button>
+          <button id="close-sessions" class="lg:hidden border border-stone-300 rounded-md px-2 py-1 text-xs hover:bg-stone-100 cursor-pointer">Close</button>
         </div>
       </div>
       <div id="session-list" class="flex-1 min-h-0 overflow-y-auto p-2 space-y-1"></div>
     </aside>
 
-    <section class="flex-1 min-w-0 min-h-0 flex flex-col">
-      <div class="shrink-0 h-10 border-b border-stone-200 bg-white flex items-center gap-2 px-3 sm:px-4">
-        <button id="open-sessions" class="lg:hidden border border-stone-300 rounded-md px-2 py-1 hover:bg-stone-100 shrink-0">Chats</button>
-        <span id="chat-title" class="text-xs text-stone-500 truncate">New chat</span>
+    <!-- Chat Column -->
+    <section class="flex-1 min-w-0 min-h-0 flex flex-col bg-stone-50">
+      <!-- Sub-header -->
+      <div class="shrink-0 h-9 sm:h-10 border-b border-stone-200 bg-white/70 backdrop-blur-xs flex items-center justify-between gap-2 px-3 sm:px-6">
+        <div class="flex items-center gap-2 min-w-0">
+          <button id="open-sessions" class="lg:hidden border border-stone-300 rounded px-1.5 py-0.5 text-xs text-stone-600 hover:bg-stone-100 shrink-0 cursor-pointer">Chats</button>
+          <span id="chat-title" class="text-xs font-medium text-stone-600 truncate">New chat</span>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <span class="inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-medium text-emerald-600 bg-emerald-50 border border-emerald-200/60 px-1.5 py-0.5 rounded-full">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>Online</span>
+          </span>
+        </div>
       </div>
 
+      <!-- Messages Container -->
       <div id="messages" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-        <div id="empty" class="h-full flex items-center justify-center px-6 text-center text-stone-400">Pick a model and start typing.</div>
-        <div id="thread" class="w-full max-w-3xl mx-auto px-3 sm:px-4 py-4 sm:py-5 space-y-4"></div>
+        <!-- Empty State Hero -->
+        <div id="empty" class="h-full flex flex-col items-center justify-center px-3 sm:px-6 py-4 sm:py-8 text-center select-none overflow-y-auto">
+          <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-stone-900 text-white flex items-center justify-center text-lg sm:text-xl font-black mb-2 sm:mb-3 shadow-md shrink-0">S</div>
+          <h2 class="text-base sm:text-lg font-bold text-stone-800 mb-1 tracking-tight">SquidWings Workspace</h2>
+          <p class="text-[11px] sm:text-xs text-stone-500 max-w-sm mb-4 leading-relaxed line-clamp-2 px-2">
+            Multi-model routing cerdas dengan DeepSeek reasoning inspection, context memory, dan tool integration.
+          </p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg w-full text-left px-1">
+            <button class="prompt-suggestion p-2.5 sm:p-3 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 hover:border-stone-300 transition-all text-xs text-stone-700 shadow-2xs group cursor-pointer" data-prompt="Jelaskan cara kerja sistem routing model dan fallback di SquidWings">
+              <div class="font-semibold text-stone-800 text-[11px] sm:text-xs mb-0.5 group-hover:text-stone-950 flex items-center justify-between">
+                <span>Arsitektur & Routing</span>
+                <span class="text-stone-300 group-hover:text-stone-500">→</span>
+              </div>
+              <div class="text-[10px] sm:text-[11px] text-stone-400 line-clamp-1">Jelaskan alur routing dan fallback model</div>
+            </button>
+            <button class="prompt-suggestion p-2.5 sm:p-3 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 hover:border-stone-300 transition-all text-xs text-stone-700 shadow-2xs group cursor-pointer" data-prompt="Analisis performa latency dan waktu respon model reasoning">
+              <div class="font-semibold text-stone-800 text-[11px] sm:text-xs mb-0.5 group-hover:text-stone-950 flex items-center justify-between">
+                <span>Analisis Latency</span>
+                <span class="text-stone-300 group-hover:text-stone-500">→</span>
+              </div>
+              <div class="text-[10px] sm:text-[11px] text-stone-400 line-clamp-1">Bagaimana reasoning tokens mempengaruhi respon</div>
+            </button>
+            <button class="prompt-suggestion p-2.5 sm:p-3 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 hover:border-stone-300 transition-all text-xs text-stone-700 shadow-2xs group cursor-pointer hidden sm:block" data-prompt="Buat script Python asinkron untuk scraping data dan ekspor ke JSON">
+              <div class="font-semibold text-stone-800 text-[11px] sm:text-xs mb-0.5 group-hover:text-stone-950 flex items-center justify-between">
+                <span>Code Generation</span>
+                <span class="text-stone-300 group-hover:text-stone-500">→</span>
+              </div>
+              <div class="text-[10px] sm:text-[11px] text-stone-400 line-clamp-1">Tulis script Python lengkap dengan error handling</div>
+            </button>
+            <button class="prompt-suggestion p-2.5 sm:p-3 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 hover:border-stone-300 transition-all text-xs text-stone-700 shadow-2xs group cursor-pointer hidden sm:block" data-prompt="Bantu saya merancang automation schedule dan rules baru">
+              <div class="font-semibold text-stone-800 text-[11px] sm:text-xs mb-0.5 group-hover:text-stone-950 flex items-center justify-between">
+                <span>Automation & Rules</span>
+                <span class="text-stone-300 group-hover:text-stone-500">→</span>
+              </div>
+              <div class="text-[10px] sm:text-[11px] text-stone-400 line-clamp-1">Desain background scheduler dan hooks</div>
+            </button>
+          </div>
+        </div>
+
+        <!-- Thread Messages -->
+        <div id="thread" class="w-full max-w-3xl lg:max-w-4xl xl:max-w-5xl mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-3.5 sm:space-y-5"></div>
       </div>
 
-      <div class="shrink-0 border-t border-stone-200 bg-white pb-[env(safe-area-inset-bottom)]">
-        <div class="w-full max-w-3xl mx-auto px-3 sm:px-4 py-2 sm:py-3">
-          <div id="chips" class="flex flex-wrap gap-2 mb-2 empty:hidden"></div>
-          <div class="flex items-end gap-1.5 sm:gap-2">
-            <label class="border border-stone-300 rounded-md px-2.5 sm:px-3 py-2 cursor-pointer hover:bg-stone-100 shrink-0" title="Attach a document">
-              <span class="hidden sm:inline">Attach</span>
-              <span class="sm:hidden" aria-hidden="true">+</span>
-              <input id="file-input" type="file" multiple accept=".pdf,.docx,.pptx,.xlsx,.csv,.json,.txt,.md,.png,.jpg,.jpeg,.webp,.gif" class="hidden">
-            </label>
-            <textarea id="input" rows="1" placeholder="Message" class="flex-1 min-w-0 resize-none border border-stone-300 rounded-md px-3 py-2 max-h-40 focus:outline-none focus:border-stone-500"></textarea>
-            <button id="send" class="bg-stone-900 text-white rounded-md px-3 sm:px-4 py-2 hover:bg-stone-700 disabled:opacity-40 shrink-0">Send</button>
+      <!-- Chat Input Area -->
+      <div class="chat-input-bar shrink-0 border-t border-stone-200/80 bg-white/95 backdrop-blur-md">
+        <div class="w-full max-w-3xl lg:max-w-4xl xl:max-w-5xl mx-auto px-2.5 sm:px-6 pt-2 pb-1 sm:py-3">
+          <!-- Attachment Chips -->
+          <div id="chips" class="flex flex-wrap gap-1.5 sm:gap-2 mb-1.5 empty:hidden"></div>
+
+          <!-- Elevated Input Box -->
+          <div class="rounded-xl sm:rounded-2xl border border-stone-300 bg-white shadow-2xs focus-within:border-stone-500 focus-within:ring-2 focus-within:ring-stone-400/20 transition-all p-1.5 sm:p-2.5">
+            <textarea id="input" rows="1" placeholder="Type a message or question..." class="w-full resize-none border-0 bg-transparent px-2 py-1 text-base sm:text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none max-h-36 sm:max-h-48 leading-relaxed"></textarea>
+
+            <div class="flex items-center justify-between pt-1.5 sm:pt-2 border-t border-stone-100 mt-1">
+              <div class="flex items-center gap-1.5 sm:gap-2">
+                <!-- Attach file button -->
+                <label class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-stone-200 hover:bg-stone-100 cursor-pointer text-xs font-medium text-stone-600 transition-colors" title="Attach document or image">
+                  <svg class="w-3.5 h-3.5 text-stone-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                  </svg>
+                  <span class="hidden sm:inline">Attach</span>
+                  <input id="file-input" type="file" multiple accept=".pdf,.docx,.pptx,.xlsx,.csv,.json,.txt,.md,.png,.jpg,.jpeg,.webp,.gif" class="hidden">
+                </label>
+                <span class="text-[11px] text-stone-400 hidden md:inline">Enter to send · Shift+Enter for new line</span>
+              </div>
+
+              <!-- Send Button -->
+              <button id="send" class="inline-flex items-center justify-center gap-1.5 bg-stone-900 text-white rounded-lg sm:rounded-xl px-4 py-2 sm:py-1.5 text-xs font-semibold hover:bg-stone-800 active:scale-95 disabled:opacity-40 transition-all shadow-xs shrink-0 cursor-pointer min-h-[38px] min-w-[72px]">
+                <span>Send</span>
+                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13"></line>
+                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+              </button>
+            </div>
           </div>
-          <div id="upload-hint" class="mt-1.5 text-xs text-stone-400 line-clamp-2"></div>
+
+          <!-- Upload Hint -->
+          <div id="upload-hint" class="mt-1 px-1 text-[10px] sm:text-[11px] text-stone-400 truncate empty:hidden"></div>
         </div>
       </div>
     </section>
   </main>
 
-  <main id="view-canvas" class="view hidden flex-1 min-h-0 flex">
+  <!-- Team Canvas View -->
+  <main id="view-canvas" class="view hidden flex-1 min-h-0 flex bg-stone-50 max-w-full overflow-hidden">
     <aside id="team-panel" class="team-panel flex w-60 shrink-0 flex-col border-r border-stone-200 bg-white">
       <div class="p-3 flex items-center justify-between gap-2 border-b border-stone-200">
-        <span class="font-medium">Teams</span>
+        <span class="font-medium text-xs uppercase tracking-wider text-stone-500">Teams</span>
         <div class="flex gap-1">
-          <button id="new-team" class="border border-stone-300 rounded-md px-2 py-1 hover:bg-stone-100">New</button>
-          <button id="close-teams" class="lg:hidden border border-stone-300 rounded-md px-2 py-1 hover:bg-stone-100">Close</button>
+          <button id="new-team" class="border border-stone-300 rounded-md px-2 py-1 text-xs hover:bg-stone-100 cursor-pointer">New</button>
+          <button id="close-teams" class="lg:hidden border border-stone-300 rounded-md px-2 py-1 text-xs hover:bg-stone-100 cursor-pointer">Close</button>
         </div>
       </div>
       <div id="team-list" class="flex-1 min-h-0 overflow-y-auto p-2 space-y-1"></div>
@@ -80,11 +185,11 @@
 
     <section class="flex-1 min-w-0 flex flex-col">
       <div class="shrink-0 h-12 border-b border-stone-200 bg-white flex items-center gap-2 px-2 sm:px-3 overflow-x-auto">
-        <button id="open-teams" class="lg:hidden border border-stone-300 rounded-md px-2 py-1.5 hover:bg-stone-100 shrink-0">Teams</button>
-        <input id="team-name" placeholder="Team name" class="border border-stone-300 rounded-md px-2 py-1.5 w-32 sm:w-52 focus:outline-none focus:border-stone-500 shrink-0">
-        <button id="add-node" class="border border-stone-300 rounded-md px-2.5 py-1.5 hover:bg-stone-100 shrink-0">Add agent</button>
-        <button id="save-team" class="border border-stone-300 rounded-md px-2.5 py-1.5 hover:bg-stone-100 shrink-0">Save</button>
-        <button id="delete-team" class="border border-stone-300 rounded-md px-2.5 py-1.5 text-red-700 hover:bg-red-50 shrink-0">Delete</button>
+        <button id="open-teams" class="lg:hidden border border-stone-300 rounded-md px-2 py-1.5 hover:bg-stone-100 shrink-0 text-xs cursor-pointer">Teams</button>
+        <input id="team-name" placeholder="Team name" class="border border-stone-300 rounded-md px-2 py-1.5 w-32 sm:w-52 focus:outline-none focus:border-stone-500 shrink-0 text-xs">
+        <button id="add-node" class="border border-stone-300 rounded-md px-2.5 py-1.5 text-xs hover:bg-stone-100 shrink-0 cursor-pointer">Add agent</button>
+        <button id="save-team" class="border border-stone-300 rounded-md px-2.5 py-1.5 text-xs hover:bg-stone-100 shrink-0 cursor-pointer">Save</button>
+        <button id="delete-team" class="border border-stone-300 rounded-md px-2.5 py-1.5 text-xs text-red-700 hover:bg-red-50 shrink-0 cursor-pointer">Delete</button>
         <span id="canvas-msg" class="text-xs text-stone-500 whitespace-nowrap"></span>
       </div>
 
@@ -96,18 +201,18 @@
 
         <aside id="inspector-panel" class="inspector-panel w-72 shrink-0 border-l border-stone-200 bg-white overflow-y-auto">
           <div class="lg:hidden flex items-center justify-between border-b border-stone-200 p-2">
-            <span class="font-medium">Agent</span>
-            <button id="close-inspector" class="border border-stone-300 rounded-md px-2 py-1 hover:bg-stone-100">Done</button>
+            <span class="font-medium text-xs">Agent</span>
+            <button id="close-inspector" class="border border-stone-300 rounded-md px-2 py-1 text-xs hover:bg-stone-100 cursor-pointer">Done</button>
           </div>
-          <div id="inspector" class="p-4 space-y-3 text-stone-400">Select an agent on the canvas.</div>
+          <div id="inspector" class="p-4 space-y-3 text-stone-400 text-xs">Select an agent on the canvas.</div>
         </aside>
       </div>
 
-      <div class="shrink-0 border-t border-stone-200 bg-white pb-[env(safe-area-inset-bottom)]">
+      <div class="chat-input-bar shrink-0 border-t border-stone-200 bg-white">
         <div class="flex gap-2 p-2 sm:p-3">
-          <input id="task" placeholder="Task for the team" class="flex-1 min-w-0 border border-stone-300 rounded-md px-3 py-2 focus:outline-none focus:border-stone-500">
-          <button id="run" class="bg-stone-900 text-white rounded-md px-3 sm:px-4 py-2 hover:bg-stone-700 disabled:opacity-40 shrink-0">Run</button>
-          <button id="cancel" class="hidden border border-stone-300 rounded-md px-3 sm:px-4 py-2 hover:bg-stone-100 shrink-0">Cancel</button>
+          <input id="task" placeholder="Task for the team" class="flex-1 min-w-0 border border-stone-300 rounded-md px-3 py-2 text-xs focus:outline-none focus:border-stone-500">
+          <button id="run" class="inline-flex items-center justify-center bg-stone-900 text-white rounded-md px-4 py-2 sm:py-1.5 text-xs font-semibold hover:bg-stone-700 active:scale-95 disabled:opacity-40 transition-all shadow-xs shrink-0 cursor-pointer min-h-[38px]">Run</button>
+          <button id="cancel" class="hidden border border-stone-300 rounded-md px-3 sm:px-4 py-2 text-xs hover:bg-stone-100 shrink-0 cursor-pointer">Cancel</button>
         </div>
         <div id="run-info" class="px-3 pb-2 text-xs text-stone-500"></div>
         <div id="result" class="hidden prose-out max-h-64 overflow-y-auto border-t border-stone-200 px-3 sm:px-4 py-3"></div>
@@ -117,7 +222,7 @@
 </div>
 
 <div id="scrim" class="scrim hidden"></div>
-<div id="toast" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 max-w-[90vw] bg-stone-900 text-white rounded-md px-4 py-2 shadow z-50"></div>
+<div id="toast" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 max-w-[90vw] bg-stone-900 text-white rounded-xl px-4 py-2 text-xs font-medium shadow-lg z-50 transition-all"></div>
 
 <script src="/static/js/marked.min.js"></script>
 <script src="/static/js/highlight.min.js"></script>

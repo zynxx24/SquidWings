@@ -73,10 +73,10 @@ from model.type.multimodal import MultimodalHandler
 from model.type.reason import ReasonHandler
 from model.type.school_task import SchoolTaskHandler
 from tool.execute.execute_edit_change_file.file_editor import FileEditor
+from tool.execute.execute_local_memory.session_distill import distill_session
 from tool.execute.execute_local_memory.vault_context import (
     build_context as build_vault_context,
 )
-from tool.execute.execute_local_memory.session_distill import distill_session
 from tool.register_tools import build_skills_prompt, register_all_tools
 from utils.cli_formatter import (
     SESSION_CODE_TRACKER,
@@ -2583,6 +2583,7 @@ async def ask_cmd(question: str, model: str | None = None) -> None:
     api_client = APIClient(
         settings.api_base_url, secrets.api_key, int(settings.timeout_seconds)
     )
+    await api_client.sync_all_models(registry)
     classifier = IntentClassifier()
     router = RoutingType(config_path=settings.models_config_path, registry=registry)
     conversation_store = ConversationStore()

@@ -238,6 +238,21 @@ class ModelRegistry:
         self._models.clear()
         logger.debug("[registry] Registry cleared")
 
+    def unregister(self, model_id: str) -> bool:
+        """Remove a single model from the registry.
+
+        Args:
+            model_id: The ID of the model to remove.
+
+        Returns:
+            True if removed, False if not found.
+        """
+        if model_id in self._models:
+            del self._models[model_id]
+            logger.info(f"[registry] Unregistered model: {model_id}")
+            return True
+        return False
+
     @classmethod
     def reset_singleton(cls) -> None:
         """Reset the singleton (for testing)."""

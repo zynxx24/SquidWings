@@ -40,6 +40,8 @@ class TokenBucket:
         """Refill tokens based on elapsed time."""
         now = time.monotonic()
         elapsed = now - self.last_refill
+        if elapsed <= 0:
+            return
         self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
         self.last_refill = now
 

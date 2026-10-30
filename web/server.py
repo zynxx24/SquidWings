@@ -127,7 +127,9 @@ async def serve_index() -> HTMLResponse:
     index_path = STATIC_DIR / "index.html"
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="index.html not found")
-    return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    resp = HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
 
 
 # Mount static files (CSS, JS, assets)
@@ -654,6 +656,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     ][:MAX_CHAT_IMAGES],
                     on_content_chunk=on_content,
                     on_thinking_chunk=on_thinking,
+                    classification=classification,
+                    difficulty=difficulty,
                 )
 
                 # Send fallback buffered items if streaming didn't output chunks

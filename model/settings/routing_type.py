@@ -173,6 +173,12 @@ class RoutingType:
             logger.warning(f"[router] Using default model: {default.id}")
             return default
 
+        # Dynamic fallback: any available model registered in the system
+        for model in self._registry.get_all():
+            if healthy_models is None or model.id in healthy_models:
+                logger.warning(f"[router] Using registered model: {model.id}")
+                return model
+
         logger.error("[router] No available models found!")
         return None
 

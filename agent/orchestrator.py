@@ -29,8 +29,8 @@ from brain.classifier.llm_classifier import LLMIntentClassifier
 from brain.context.context_assembler import ContextAssembler
 from brain.max_token.max_token_calculator import MaxTokenCalculator
 from brain.max_token.max_token_config import MaxTokenConfig
-from brain.memory.context_window_manager import ContextWindowManager
 from brain.memory.agent_working_memory import AgentWorkingMemory
+from brain.memory.context_window_manager import ContextWindowManager
 from brain.memory.conversation_store import ConversationStore
 from brain.prompt_must_think.base_think_prompt import ThinkPromptManager
 from config.constants import TOKEN_BUFFER, ResponseStatus, TaskType
@@ -240,10 +240,16 @@ class Orchestrator:
             int(settings.timeout_seconds),
         )
         max_token_config = MaxTokenConfig(settings.models_config_path)
+        health_checker = HealthChecker()
 
         def cheapest_model() -> str | None:
+            all_models = registry.get_all()
+            healthy_ids = health_checker.filter_healthy([m.id for m in all_models])
+            candidates = [m for m in all_models if m.id in healthy_ids]
+            if not candidates:
+                candidates = all_models
             candidates = sorted(
-                registry.get_all(),
+                candidates,
                 key=lambda item: (not item.is_free, item.max_output or 8192),
             )
             return candidates[0].id if candidates else None
@@ -260,7 +266,6 @@ class Orchestrator:
             max_token_calculator=MaxTokenCalculator(config=max_token_config),
         )
         session_manager = SessionManager()
-        health_checker = HealthChecker()
         fallback = FallbackStrategy(
             config_path=settings.models_config_path, registry=registry
         )
@@ -290,6 +295,8 @@ class Orchestrator:
         workspace_context: str | None = None,
         _fallback_depth: int = 0,
         images: list[str] | None = None,
+        classification: Any = None,
+        difficulty: str | None = None,
     ) -> AgentResponse:
         """Process a user input through the full pipeline.
 
@@ -311,6 +318,10 @@ class Orchestrator:
             on_content_chunk: Callback for streaming content chunks.
             on_thinking_chunk: Callback for streaming thinking chunks.
             workspace_context: Optional workspace context to prepend.
+            _fallback_depth: Fallback recursion depth.
+            images: List of attached image data URLs.
+            classification: Precomputed classification result (optional).
+            difficulty: Precomputed difficulty string (optional).
 
         Returns:
             AgentResponse with the full result.
@@ -327,21 +338,27 @@ class Orchestrator:
         self._session_manager.get_or_create_session(session_id)
         self._session_manager.increment_turn(session_id)
 
-        classification = None
         model = None
         is_continue_turn = is_continuation_input(user_input)
 
         try:
-            # 1. Classify intent + difficulty. Preserve support for custom
-            # synchronous classifiers while enabling the built-in LLM fallback.
-            async_classify = getattr(
-                self._classifier, "classify_async_with_difficulty", None
-            )
-            if callable(async_classify):
-                classification, difficulty = await async_classify(user_input)
-            else:
+            # 1. Classify intent + difficulty.
+            # Use precomputed classification if provided, or fast rule-based
+            # classification when override_model is active (avoids redundant extra LLM calls).
+            if classification is not None and difficulty is not None:
+                pass
+            elif override_model:
                 classification = self._classifier.classify(user_input)
                 difficulty = IntentClassifier.estimate_difficulty(user_input)
+            else:
+                async_classify = getattr(
+                    self._classifier, "classify_async_with_difficulty", None
+                )
+                if callable(async_classify):
+                    classification, difficulty = await async_classify(user_input)
+                else:
+                    classification = self._classifier.classify(user_input)
+                    difficulty = IntentClassifier.estimate_difficulty(user_input)
             diff_enum = Difficulty(difficulty)
 
             logger.info(
@@ -541,25 +558,33 @@ class Orchestrator:
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
             msg = str(e)
+            lowered = msg.lower()
+            is_model_specific = (
+                "not allowed to use model" in lowered
+                or "model not found" in lowered
+                or "model is not available" in lowered
+            )
             logger.error(f"[orchestrator] Pipeline error: {e}")
             if model is not None:
                 # Feed failures back so routing can skip unhealthy models.
                 self._health_checker.record_failure(model.id)
+                if is_model_specific:
+                    logger.warning(
+                        f"[orchestrator] Model '{model.id}' is unavailable on provider; unregistering"
+                    )
+                    self._registry.unregister(model.id)
 
             # Billing/quota failures (HTTP 402, API key exhausted, rate
             # limits) affect every model on the same provider. Trying the
             # whole fallback chain would only burn time and tokens, so
             # surface the error immediately instead.
-            lowered = msg.lower()
-            is_billing_error = any(
+            is_billing_error = (not is_model_specific) and any(
                 token in lowered
                 for token in (
                     "402",
                     "billing_error",
                     "token budget exhausted",
-                    "insufficient_quota",
                     "top up at",
-                    "api key",
                 )
             )
             if is_billing_error and _fallback_depth == 0:

@@ -16,7 +16,7 @@
     clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 3500);
   }
 
-  /* ---------- Layout (mobile drawers) ---------- */
+  /* ---------- Layout (mobile drawers & desktop collapse) ---------- */
   function closeDrawers() {
     document.querySelectorAll('.team-panel, .inspector-panel, .session-panel').forEach(p => p.classList.remove('open'));
     $('scrim').classList.add('hidden');
@@ -26,13 +26,31 @@
     if (panel) panel.classList.toggle('open', open);
     $('scrim').classList.toggle('hidden', !document.querySelector('.team-panel.open, .inspector-panel.open, .session-panel.open'));
   }
+
+  function toggleDesktopSidebar() {
+    if (window.innerWidth < 1024) {
+      setDrawer('session', !$('session-panel').classList.contains('open'));
+    } else {
+      const panel = $('session-panel');
+      const isCollapsed = panel.classList.toggle('desktop-collapsed');
+      localStorage.setItem('sidebar_collapsed', isCollapsed ? '1' : '0');
+    }
+  }
+
   $('scrim').onclick = closeDrawers;
+  if ($('toggle-sidebar')) $('toggle-sidebar').onclick = toggleDesktopSidebar;
   $('open-teams').onclick = () => setDrawer('team', true);
   $('close-teams').onclick = closeDrawers;
   $('close-inspector').onclick = closeDrawers;
   $('open-sessions').onclick = () => setDrawer('session', true);
   $('close-sessions').onclick = closeDrawers;
-  window.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawers(); });
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeDrawers();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+      e.preventDefault();
+      toggleDesktopSidebar();
+    }
+  });
 
   async function j(url, opts = {}) {
     const r = await fetch(url, opts);
@@ -105,8 +123,8 @@
   function updateHint() {
     const m = S.byId[S.current];
     const native = m ? m.uploads.filter(u => u !== 'text') : [];
-    $('upload-hint').textContent = 'Documents become Markdown. Audio and video are transcribed (first 10 min). Images are sent to vision-capable models.'
-      + (native.length ? ` This model natively supports: ${native.join(', ')}.` : '');
+    $('upload-hint').textContent = 'Documents become Markdown. Audio and video are transcribed. Images are sent to vision models.'
+      + (native.length ? ` Natively supports: ${native.join(', ')}.` : '');
   }
 
   /* ---------- Attachments ---------- */
@@ -127,14 +145,94 @@
     e.target.value = ''; renderChips();
   };
 
-  /* ---------- Chat ---------- */
+  /* ---------- Code Blocks Enhancement ---------- */
+  function enhanceCodeBlocks(container) {
+    if (!container) return;
+    container.querySelectorAll('pre code').forEach(codeBlock => {
+      if (window.hljs) window.hljs.highlightElement(codeBlock);
+      const pre = codeBlock.parentElement;
+      if (pre && !pre.closest('.code-wrapper')) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'code-wrapper';
+        const langMatch = (codeBlock.className || '').match(/language-([a-z0-9_-]+)/i);
+        const lang = langMatch ? langMatch[1] : 'code';
+        const header = document.createElement('div');
+        header.className = 'code-header';
+        header.innerHTML = `<span>${esc(lang)}</span><button class="code-copy-btn" type="button">Copy</button>`;
+        header.querySelector('.code-copy-btn').onclick = async (e) => {
+          try {
+            await navigator.clipboard.writeText(codeBlock.innerText);
+            e.target.textContent = 'Copied!';
+            setTimeout(() => { e.target.textContent = 'Copy'; }, 2000);
+          } catch (_) {}
+        };
+        pre.parentNode.insertBefore(wrapper, pre);
+        wrapper.appendChild(header);
+        wrapper.appendChild(pre);
+      }
+    });
+  }
+
+  /* ---------- Chat UI ---------- */
   function addMsg(role) {
     $('empty').classList.add('hidden');
     const el = document.createElement('div');
     el.className = 'msg ' + (role === 'user' ? 'msg-user-row' : 'msg-assistant-row');
-    el.innerHTML = `<div class="msg-role">${role === 'user' ? 'You' : 'Assistant'}</div>` + (role === 'user'
-      ? '<div class="msg-user"></div>'
-      : '<details class="think hidden"><summary>Thinking</summary><pre></pre></details><div class="prose-out"></div><div class="meta text-xs text-stone-400 mt-1"></div>');
+    if (role === 'user') {
+      el.innerHTML = `
+        <div class="flex items-start justify-end gap-2 max-w-full">
+          <div class="msg-user max-w-[85%] sm:max-w-[78%] leading-relaxed text-sm"></div>
+          <div class="shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-stone-200 text-stone-700 flex items-center justify-center font-bold text-[10px] sm:text-xs select-none mt-0.5">You</div>
+        </div>`;
+    } else {
+      el.innerHTML = `
+        <div class="flex items-start gap-2 sm:gap-3 w-full max-w-full min-w-0">
+          <div class="assistant-avatar shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-stone-900 text-stone-100 flex items-center justify-center font-black text-[10px] sm:text-xs select-none shadow-2xs mt-0.5">S</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-1.5 sm:gap-2 mb-1">
+              <span class="font-semibold text-xs text-stone-800">SquidWings</span>
+              <span class="meta-tag text-[10px] sm:text-[11px] text-stone-400 font-mono truncate"></span>
+            </div>
+            <div class="process-card mb-2.5 sm:mb-3 p-2.5 sm:p-3 rounded-xl border border-stone-200 bg-stone-50/80 transition-all max-w-full">
+              <div class="flex items-center justify-between gap-1.5">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span class="relative flex h-2 w-2 shrink-0">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                  </span>
+                  <span class="process-status text-[11px] sm:text-xs font-medium text-stone-700 truncate">Preparing context & routing...</span>
+                </div>
+                <span class="process-timer font-mono text-[10px] sm:text-xs text-stone-500 bg-white px-1.5 sm:px-2 py-0.5 rounded-full border border-stone-200 shrink-0">0.0s</span>
+              </div>
+              <div class="process-shimmer mt-2 sm:mt-2.5 flex items-center gap-1.5">
+                <div class="h-1.5 w-10 sm:w-12 rounded-full bg-stone-200 animate-pulse"></div>
+                <div class="h-1.5 w-16 sm:w-24 rounded-full bg-stone-200 animate-pulse"></div>
+                <div class="h-1.5 w-12 sm:w-16 rounded-full bg-stone-200 animate-pulse"></div>
+              </div>
+              <details class="think-details mt-2 sm:mt-2.5 border-t border-stone-200/60 pt-2 hidden" open>
+                <summary class="cursor-pointer text-[11px] font-medium text-stone-500 hover:text-stone-800 select-none flex items-center justify-between">
+                  <span class="flex items-center gap-1.5 truncate">
+                    <span class="toggle-icon inline-block text-[10px]">▶</span>
+                    <span>Reasoning Steps</span>
+                  </span>
+                  <span class="think-badge text-[10px] text-stone-400 font-mono shrink-0">streaming</span>
+                </summary>
+                <pre class="think-pre text-[11px] text-stone-600 font-mono bg-white p-2 sm:p-2.5 rounded-lg border border-stone-200 mt-2 max-h-48 sm:max-h-56 overflow-y-auto whitespace-pre-wrap leading-relaxed select-text"></pre>
+              </details>
+            </div>
+            <div class="prose-out text-stone-900 leading-relaxed text-sm"></div>
+            <div class="footer-meta flex flex-wrap items-center gap-1.5 sm:gap-2 mt-2.5 pt-2 border-t border-stone-100 text-[10px] sm:text-xs text-stone-400 hidden">
+              <span class="model-badge px-1.5 py-0.5 rounded-md bg-stone-100 text-stone-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[140px] sm:max-w-none"></span>
+              <span class="token-badge font-mono text-[10px] sm:text-[11px]"></span>
+              <span class="latency-badge font-mono text-[10px] sm:text-[11px]"></span>
+              <button class="copy-resp-btn ml-auto text-[11px] text-stone-500 hover:text-stone-800 flex items-center gap-1 px-1.5 py-0.5 rounded-md hover:bg-stone-100 transition-colors cursor-pointer" type="button" title="Copy response">
+                <svg class="w-3 h-3 sm:w-3.5 sm:h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                <span>Copy</span>
+              </button>
+            </div>
+          </div>
+        </div>`;
+    }
     $('thread').appendChild(el);
     $('messages').scrollTop = $('messages').scrollHeight;
     return el;
@@ -153,10 +251,30 @@
       } else if (m.role === 'assistant') {
         const el = addMsg('assistant');
         const out = el.querySelector('.prose-out');
+        const proc = el.querySelector('.process-card');
+        if (proc) proc.classList.add('hidden');
         out.innerHTML = md(m.content);
-        out.querySelectorAll('pre code').forEach(b => window.hljs && window.hljs.highlightElement(b));
-        const bits = [m.model_used, m.token_count ? `${m.token_count} tokens` : ''].filter(Boolean);
-        if (bits.length) el.querySelector('.meta').textContent = bits.join(' · ');
+        enhanceCodeBlocks(out);
+        const footer = el.querySelector('.footer-meta');
+        if (footer) {
+          footer.classList.remove('hidden');
+          const modelBadge = footer.querySelector('.model-badge');
+          if (modelBadge) modelBadge.textContent = m.model_used || S.current;
+          const tokenBadge = footer.querySelector('.token-badge');
+          if (tokenBadge && m.token_count) tokenBadge.textContent = `${m.token_count.toLocaleString()} tokens`;
+          const copyBtn = footer.querySelector('.copy-resp-btn');
+          if (copyBtn) {
+            copyBtn.onclick = async () => {
+              try {
+                await navigator.clipboard.writeText(m.content || '');
+                copyBtn.innerHTML = '<span>✓ Copied</span>';
+                setTimeout(() => {
+                  copyBtn.innerHTML = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span>Copy</span>';
+                }, 2000);
+              } catch (_) {}
+            };
+          }
+        }
       }
     }
     $('messages').scrollTop = $('messages').scrollHeight;
@@ -179,11 +297,11 @@
     for (const s of sessions) {
       const item = document.createElement('div');
       item.className = 'sess-item' + (s.session_id === S.session ? ' active' : '');
-      item.innerHTML = `<button class="sess-open" title="${esc(s.title)}">
+      item.innerHTML = `<button class="sess-open cursor-pointer" title="${esc(s.title)}">
           <div class="sess-title">${esc(s.title || 'Chat')}</div>
           <div class="sess-meta">${esc(fmtWhen(s.updated_at))} · ${s.message_count} msg</div>
         </button>
-        <button class="sess-del" title="Delete chat" aria-label="Delete chat">x</button>`;
+        <button class="sess-del cursor-pointer" title="Delete chat" aria-label="Delete chat">×</button>`;
       item.querySelector('.sess-open').onclick = () => openSession(s.session_id);
       item.querySelector('.sess-del').onclick = async ev => {
         ev.stopPropagation();
@@ -235,11 +353,21 @@
     return new Promise((resolve, reject) => {
       const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/chat');
       ws.onopen = () => resolve(ws);
-      ws.onerror = () => reject(new Error('WebSocket failed'));
+      ws.onerror = () => reject(new Error('WebSocket connection failed'));
       ws.onclose = () => { S.ws = null; };
       S.ws = ws;
     });
   }
+
+  /* Prompt suggestions */
+  document.querySelectorAll('.prompt-suggestion').forEach(btn => {
+    btn.onclick = () => {
+      const p = btn.dataset.prompt || btn.innerText.trim();
+      $('input').value = p;
+      autosize();
+      send();
+    };
+  });
 
   async function send() {
     const text = $('input').value.trim();
@@ -256,36 +384,128 @@
       const t = label.replace(/\s+/g, ' ').trim();
       $('chat-title').textContent = t.length > 60 ? t.slice(0, 60) + '…' : t;
     }
+
     const el = addMsg('assistant');
-    const out = el.querySelector('.prose-out'), think = el.querySelector('details'), tpre = think.querySelector('pre'), meta = el.querySelector('.meta');
-    let content = '', hint = '';
+    const out = el.querySelector('.prose-out');
+    const processCard = el.querySelector('.process-card');
+    const timerEl = el.querySelector('.process-timer');
+    const statusEl = el.querySelector('.process-status');
+    const shimmerEl = el.querySelector('.process-shimmer');
+    const thinkDetails = el.querySelector('.think-details');
+    const thinkPre = el.querySelector('.think-pre');
+    const thinkBadge = el.querySelector('.think-badge');
+    const metaTag = el.querySelector('.meta-tag');
+    const footerMeta = el.querySelector('.footer-meta');
+
+    let content = '', hint = '', thinkDuration = 0;
+    const startTime = performance.now();
+    const timerInterval = setInterval(() => {
+      const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
+      if (timerEl) timerEl.textContent = elapsed + 's';
+    }, 100);
+
     try {
       if (!S.ws || S.ws.readyState !== 1) await connectWS();
       S.ws.onmessage = ev => {
         const m = JSON.parse(ev.data);
         if (m.type === 'meta' && m.event === 'classified') {
           hint = `${m.task_type} · ${m.difficulty}${m.continuation ? ' · lanjutan' : ''}`;
-          meta.textContent = hint;
+          if (metaTag) metaTag.textContent = hint;
+          const shortModel = (m.model || S.current || '').split('/').pop();
+          if (statusEl) statusEl.textContent = `Routing: ${shortModel} (${m.difficulty})...`;
         }
-        else if (m.type === 'thinking') { think.classList.remove('hidden'); tpre.textContent += m.content; }
-        else if (m.type === 'content') { content += m.content; out.innerHTML = md(content); }
-        else if (m.type === 'error') { out.innerHTML = `<p class="text-red-700">${esc(m.content)}</p>`; finish(); }
+        else if (m.type === 'thinking') {
+          if (shimmerEl) shimmerEl.classList.add('hidden');
+          if (statusEl) statusEl.textContent = 'Reasoning process...';
+          if (thinkDetails) thinkDetails.classList.remove('hidden');
+          if (thinkPre) {
+            thinkPre.textContent += m.content;
+            thinkPre.scrollTop = thinkPre.scrollHeight;
+          }
+        }
+        else if (m.type === 'content') {
+          if (shimmerEl) shimmerEl.classList.add('hidden');
+          if (statusEl) statusEl.textContent = 'Generating final answer...';
+          if (thinkDetails && thinkDetails.open && !thinkDuration) {
+            thinkDuration = ((performance.now() - startTime) / 1000).toFixed(1);
+            if (thinkBadge) thinkBadge.textContent = `${thinkDuration}s`;
+            thinkDetails.open = false;
+          }
+          content += m.content;
+          out.innerHTML = md(content);
+          enhanceCodeBlocks(out);
+        }
+        else if (m.type === 'error') {
+          clearInterval(timerInterval);
+          if (processCard) processCard.classList.add('hidden');
+          out.innerHTML = `<div class="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs">${esc(m.content)}</div>`;
+          finish();
+        }
         else if (m.type === 'done') {
-          meta.textContent = `${hint ? hint + ' · ' : ''}${m.model_used} · ${m.total_tokens} tokens · ${(m.latency_ms / 1000).toFixed(1)}s`;
-          out.querySelectorAll('pre code').forEach(b => window.hljs && window.hljs.highlightElement(b));
+          clearInterval(timerInterval);
+          const totalSec = (m.latency_ms / 1000).toFixed(1);
+          if (processCard) {
+            if (thinkPre && thinkPre.textContent.trim()) {
+              if (statusEl) statusEl.textContent = `Thought process completed (${thinkDuration || totalSec}s)`;
+              if (shimmerEl) shimmerEl.classList.add('hidden');
+            } else {
+              processCard.classList.add('hidden');
+            }
+          }
+          if (footerMeta) {
+            footerMeta.classList.remove('hidden');
+            const modelBadge = footerMeta.querySelector('.model-badge');
+            if (modelBadge) modelBadge.textContent = m.model_used;
+            const tokenBadge = footerMeta.querySelector('.token-badge');
+            if (tokenBadge) tokenBadge.textContent = `${(m.total_tokens || 0).toLocaleString()} tokens`;
+            const latBadge = footerMeta.querySelector('.latency-badge');
+            if (latBadge) latBadge.textContent = `${totalSec}s`;
+            const copyBtn = footerMeta.querySelector('.copy-resp-btn');
+            if (copyBtn) {
+              copyBtn.onclick = async () => {
+                try {
+                  await navigator.clipboard.writeText(content);
+                  copyBtn.innerHTML = '<span>✓ Copied</span>';
+                  setTimeout(() => {
+                    copyBtn.innerHTML = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span>Copy</span>';
+                  }, 2000);
+                } catch (_) {}
+              };
+            }
+          }
+          enhanceCodeBlocks(out);
           finish();
           loadSessions();
         }
         $('messages').scrollTop = $('messages').scrollHeight;
       };
       S.ws.send(JSON.stringify({ message: full, session_id: S.session, images }));
-    } catch (err) { out.innerHTML = `<p class="text-red-700">${esc(err.message)}</p>`; finish(); }
+    } catch (err) {
+      clearInterval(timerInterval);
+      if (processCard) processCard.classList.add('hidden');
+      out.innerHTML = `<div class="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs">${esc(err.message)}</div>`;
+      finish();
+    }
   }
-  function finish() { S.busy = false; $('send').disabled = false; $('input').focus(); }
 
-  function autosize() { const t = $('input'); t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 160) + 'px'; }
+  function finish() {
+    S.busy = false;
+    $('send').disabled = false;
+    $('input').focus();
+  }
+
+  function autosize() {
+    const t = $('input');
+    t.style.height = 'auto';
+    t.style.height = Math.min(t.scrollHeight, 180) + 'px';
+  }
   $('input').oninput = autosize;
-  $('input').onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } };
+  $('input').onkeydown = e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  };
   $('send').onclick = send;
 
   /* ---------- Canvas ---------- */
@@ -305,7 +525,7 @@
   function renderTeamList() {
     $('team-list').innerHTML = S.teams.map(t =>
       `<button data-t="${esc(t.id)}" class="w-full text-left px-2.5 py-2 rounded-md hover:bg-stone-100 ${t.id === S.team ? 'bg-stone-100 font-medium' : ''}">${esc(t.name)}<div class="text-xs text-stone-400 font-normal">${t.members.length} agents</div></button>`).join('')
-      || '<p class="px-2 py-1 text-stone-400">No saved teams.</p>';
+      || '<p class="px-2 py-1 text-stone-400 text-xs">No saved teams.</p>';
     document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => openTeam(b.dataset.t));
   }
 
@@ -345,10 +565,10 @@
   function renderBoard() {
     $('nodes').innerHTML = S.members.map(m => `
       <div class="node ${m.id === S.selected ? 'selected' : ''}" data-id="${esc(m.id)}" style="left:${m.x}px;top:${m.y}px">
-        <div class="handle"><div class="font-medium truncate">${esc(m.name || 'Unnamed')}${m.id === S.lead ? ' <span class="text-xs text-stone-400 font-normal">lead</span>' : ''}</div>
-        <div class="text-xs text-stone-500 truncate">${esc(m.role)}</div></div>
-        <div class="px-2.5 pb-2 pt-1 text-xs text-stone-400 truncate">${esc(S.byId[m.model_id]?.display_name || m.model_id)}</div>
-        <div class="px-2.5 pb-2 state"></div>
+        <div class="handle"><div class="font-medium truncate text-xs">${esc(m.name || 'Unnamed')}${m.id === S.lead ? ' <span class="text-[10px] text-stone-400 font-normal">lead</span>' : ''}</div>
+        <div class="text-[11px] text-stone-500 truncate">${esc(m.role)}</div></div>
+        <div class="px-2.5 pb-2 pt-1 text-[11px] text-stone-400 truncate">${esc(S.byId[m.model_id]?.display_name || m.model_id)}</div>
+        <div class="px-2.5 pb-2 state text-[11px]"></div>
       </div>`).join('');
     document.querySelectorAll('.node').forEach(el => {
       el.onpointerdown = e => startDrag(e, el);
@@ -388,7 +608,7 @@
   function renderInspector() {
     const m = S.members.find(x => x.id === S.selected);
     const box = $('inspector');
-    if (!m) { box.className = 'p-4 text-stone-400'; box.textContent = 'Select an agent on the canvas.'; return; }
+    if (!m) { box.className = 'p-4 text-stone-400 text-xs'; box.textContent = 'Select an agent on the canvas.'; return; }
     box.className = 'p-4 space-y-3';
     const opts = Object.entries(S.models.reduce((a, x) => ((a[x.provider] ||= []).push(x), a), {}))
       .map(([p, l]) => `<optgroup label="${esc(p)}">${l.map(x => `<option value="${esc(x.id)}" ${x.id === m.model_id ? 'selected' : ''}>${esc(x.display_name)}</option>`).join('')}</optgroup>`).join('');
@@ -397,8 +617,8 @@
       <div class="field"><label>Role</label><input data-f="role" value="${esc(m.role)}" maxlength="120"></div>
       <div class="field"><label>Model</label><select data-f="model_id">${opts}</select></div>
       <div class="field"><label>Instructions</label><textarea data-f="instructions" rows="6" maxlength="4000">${esc(m.instructions)}</textarea></div>
-      <label class="flex items-center gap-2"><input type="radio" name="lead" ${m.id === S.lead ? 'checked' : ''} id="set-lead"> Lead agent</label>
-      <button id="remove-node" class="border border-stone-300 rounded-md px-3 py-1.5 text-red-700 hover:bg-red-50 w-full">Remove agent</button>`;
+      <label class="flex items-center gap-2 text-xs"><input type="radio" name="lead" ${m.id === S.lead ? 'checked' : ''} id="set-lead"> Lead agent</label>
+      <button id="remove-node" class="border border-stone-300 rounded-md px-3 py-1.5 text-red-700 hover:bg-red-50 w-full text-xs cursor-pointer">Remove agent</button>`;
     box.querySelectorAll('[data-f]').forEach(inp => inp.oninput = inp.onchange = () => {
       m[inp.dataset.f] = inp.value;
       const node = document.querySelector(`.node[data-id="${m.id}"]`);
@@ -437,7 +657,6 @@
     const t = S.team
       ? await j('/api/teams/' + S.team, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) })
       : await post('/api/teams', p);
-    // Backend may assign its own ids; carry positions over by index.
     const old = S.members;
     S.team = t.id; S.lead = t.lead_id;
     S.members = t.members.map((m, i) => ({ ...m, x: old[i]?.x, y: old[i]?.y }));
@@ -474,7 +693,7 @@
     if (run.result || run.error) {
       r.classList.remove('hidden');
       r.innerHTML = run.error ? `<p class="text-red-700">${esc(run.error)}</p>` : md(run.result);
-      r.querySelectorAll('pre code').forEach(b => window.hljs && window.hljs.highlightElement(b));
+      enhanceCodeBlocks(r);
     } else r.classList.add('hidden');
   }
 
@@ -515,6 +734,11 @@
       if (S.current !== defaultModel) await post('/api/model/select', { session_id: S.session, model_id: S.current }).catch(() => {});
     } catch (e) { toast(e.message); }
     showTab(localStorage.getItem('tab') || 'chat');
+
+    // Restore desktop sidebar collapsed state
+    if (window.innerWidth >= 1024 && localStorage.getItem('sidebar_collapsed') === '1') {
+      $('session-panel').classList.add('desktop-collapsed');
+    }
 
     // Restore the last opened chat, otherwise show the empty new session.
     const last = localStorage.getItem('session');
