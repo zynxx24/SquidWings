@@ -19,6 +19,9 @@ os.environ["AISLOP_AUTO"] = "false"
 
 import pytest
 
+# Offline tests must pass on a fresh clone, which has no .env.
+os.environ["API_KEY"] = "test-key-not-real"
+
 
 @pytest.fixture(autouse=True)
 def block_all_network(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,4 +40,5 @@ def isolated_workspace_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> N
     """Team runs and web sessions create folders; keep them out of the real workspace."""
     from utils import workspace_context
 
-    monkeypatch.setattr(workspace_context, "WORKSPACE_ROOT", tmp_path / "workspace")
+    monkeypatch.setattr(workspace_context, "SESSIONS_ROOT", tmp_path / "workspace" / "sessions")
+    monkeypatch.setattr(workspace_context, "PROJECTS_ROOT", tmp_path / "workspace" / "projects")

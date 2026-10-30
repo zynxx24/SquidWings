@@ -65,8 +65,13 @@ class Settings(BaseSettings):
 
     # --- Web Search ---
     web_search_enabled: bool = True
+    # Search APIs, tried before the public result pages. Much better results.
+    searxng_url: str = ""
+    brave_search_api_key: str = ""
+    # Render JavaScript-only pages in a local headless Chrome or Chromium.
+    web_browser_enabled: bool = True
     web_search_timeout_seconds: float = 15.0
-    web_search_max_results: int = 5
+    web_search_max_results: int = 10
     web_search_cache_ttl_seconds: int = 21600
     web_search_min_interval_seconds: float = 2.0
     web_search_retries: int = 1

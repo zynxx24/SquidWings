@@ -27,6 +27,8 @@
     layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
     chevron: '<path d="m9 6 6 6-6 6"/>',
     trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+    down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
+    copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>',
   };
   const icon = (name, size = 18) =>
     `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -89,12 +91,33 @@
     $(id).classList.add('open');
     $('scrim').classList.remove('hidden');
   }
-  $('open-rail').onclick = () => openDrawer('rail');
+  const isNarrow = () => window.matchMedia('(max-width: 820px)').matches;
+  const isMedium = () => window.matchMedia('(max-width: 1180px)').matches;
+  function togglePanel(storeKey, shellClass) {
+    const collapsed = $('shell').classList.toggle(shellClass);
+    store.set(storeKey, collapsed ? '1' : '0');
+  }
+  if (store.get('rail-collapsed') === '1') $('shell').classList.add('no-rail');
+  if (store.get('panel-collapsed') === '1') $('shell').classList.add('no-panel');
+  $('open-rail').onclick = () => (isNarrow() ? openDrawer('rail') : togglePanel('rail-collapsed', 'no-rail'));
   $('close-rail').onclick = closeDrawers;
-  $('open-inspector').onclick = () => { openDrawer('inspector'); loadStack(); };
-  $('close-inspector').onclick = closeDrawers;
+  $('open-inspector').onclick = () => {
+    if (isMedium()) openDrawer('inspector');
+    else togglePanel('panel-collapsed', 'no-panel');
+    loadStack();
+  };
+  $('close-inspector').onclick = () => {
+    if (isMedium()) closeDrawers();
+    else togglePanel('panel-collapsed', 'no-panel');
+  };
   $('scrim').onclick = closeDrawers;
-  window.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawers(); });
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeDrawers();
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+      e.preventDefault();
+      $('open-rail').click();
+    }
+  });
 
   const THEMES = { system: 'Tema: ikuti sistem', light: 'Tema: terang', dark: 'Tema: gelap' };
   function applyTheme(name) {
@@ -187,9 +210,14 @@
     } catch (e) { toast(e.message); }
   }
 
+  function setEmpty(empty) {
+    $('view-chat').classList.toggle('is-empty', empty);
+  }
+
   function clearThread() {
     $('thread').innerHTML = '';
-    $('empty').classList.remove('hidden');
+    setEmpty(true);
+    updateScrollUi();
   }
 
   async function newChat() {
@@ -232,9 +260,15 @@
   const scroller = $('scroller');
   const nearBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120;
   const scrollDown = force => { if (force || nearBottom()) scroller.scrollTop = scroller.scrollHeight; };
+  function updateScrollUi() {
+    $('to-bottom').classList.toggle('hidden', nearBottom());
+    $('topbar').classList.toggle('scrolled', scroller.scrollTop > 4);
+  }
+  scroller.addEventListener('scroll', updateScrollUi, { passive: true });
+  $('to-bottom').onclick = () => scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
 
   function addUser(text) {
-    $('empty').classList.add('hidden');
+    setEmpty(false);
     const row = document.createElement('div');
     row.className = 'turn-user';
     const bubble = document.createElement('div');
@@ -268,21 +302,73 @@
     } catch { toast('Tidak bisa menyalin.'); }
   }
 
+  /* What the agent is doing, in words a person would use. */
+  const TOOLS = {
+    read_file: ['Membaca', 'read', 'path'], list_directory: ['Melihat folder', 'read', 'path'],
+    file_search: ['Mencari di file', 'search', 'quote'], find_symbol: ['Mencari simbol', 'search', 'plain'],
+    code_outline: ['Melihat struktur', 'read', 'path'], project_overview: ['Mempelajari proyek', 'read', 'plain'],
+    file_write: ['Menulis', 'edit', 'path'], file_patch: ['Mengedit', 'edit', 'path'],
+    file_move: ['Memindahkan', 'edit', 'path'], file_delete: ['Menghapus', 'edit', 'path'],
+    dir_create: ['Membuat folder', 'edit', 'path'], execute_command: ['Menjalankan', 'run', 'plain'],
+    run_checks: ['Menjalankan tes', 'run', 'plain'], aislop_scan: ['Memeriksa kualitas kode', 'run', 'plain'],
+    web_research: ['Mencari dan membaca web', 'web', 'quote'], web_search: ['Mencari di web', 'web', 'quote'],
+    web_read: ['Membuka', 'web', 'url'], git_status: ['Melihat status git', 'read', 'plain'],
+    git_diff: ['Melihat perubahan', 'read', 'path'], code_graph: ['Menelusuri graph kode', 'search', 'quote'],
+    load_skill: ['Membuka panduan', 'read', 'plain'], vault_search: ['Mencari catatan', 'search', 'quote'],
+    vault_read: ['Membaca catatan', 'read', 'path'], vault_write: ['Menulis catatan', 'edit', 'path'],
+    vault_recall: ['Mengingat catatan', 'read', 'quote'], memory_recall: ['Mengingat', 'read', 'quote'],
+    memory_remember: ['Menyimpan ke memori', 'edit', 'plain'], memory_forget: ['Menghapus dari memori', 'edit', 'plain'],
+    time_now: ['Melihat waktu', 'read', 'plain'],
+  };
+  const TRACE_SPLIT = new RegExp(`; (?=(?:${Object.keys(TOOLS).join('|')})(?: |$))`);
+  const GROUPS = { read: 'membaca', edit: 'mengubah', run: 'menjalankan', search: 'mencari', web: 'dari web' };
+
+  function describeTool(name, detail) {
+    const [verb, group, style] = TOOLS[name] || [`Menjalankan ${name}`, 'run', 'plain'];
+    let target = detail || '';
+    if (target && style === 'path') target = target.split('/').filter(Boolean).pop() || target;
+    if (target && style === 'quote') target = `“${target}”`;
+    if (target && style === 'url') { try { target = new URL(target).hostname.replace(/^www\./, ''); } catch { /* not a url yet */ } }
+    return { verb, group, target };
+  }
+
+  function stepRow(name, detail) {
+    const { verb, target } = describeTool(name, detail);
+    const li = document.createElement('li');
+    li.className = 'step';
+    li.title = detail || '';
+    li.dataset.tool = name;
+    li.innerHTML = `<span class="step-mark running"></span><span class="step-verb">${esc(verb)}</span><code class="step-target">${esc(target)}</code><span class="step-meta"></span><span class="step-ms"></span>`;
+    return li;
+  }
+
+  function finishRow(li, ok, ms, meta, error) {
+    const mark = li.querySelector('.step-mark');
+    mark.classList.remove('running');
+    mark.textContent = ok ? '✓' : '✗';
+    mark.classList.add(ok ? 'ok' : 'bad');
+    li.querySelector('.step-meta').textContent = meta || '';
+    if (ms !== undefined) li.querySelector('.step-ms').textContent = ms >= 1000 ? `${(ms / 1000).toFixed(1)}d` : `${ms}ms`;
+    if (!ok && error) li.insertAdjacentHTML('afterend', `<li class="step-error">${esc(error)}</li>`);
+  }
+
   function addHistoryAnswer(message) {
     const turn = createTurn();
     turn.setContent(message.content);
+    turn.history(message.tool_trace);
     turn.finish();
     turn.foot({ model: message.model_used, tokens: message.token_count, text: message.content });
   }
 
   function createTurn() {
-    $('empty').classList.add('hidden');
+    setEmpty(false);
     const row = document.createElement('article');
     row.className = 'turn-agent';
     row.innerHTML = `
-      <div class="working"><span class="pulse"></span><span class="working-text">Menyiapkan</span></div>
-      <details class="steps hidden"><summary><span class="chev">${icon('chevron', 12)}</span><span class="steps-title"></span></summary>
-        <ul class="step-list"></ul><pre class="thinking hidden"></pre></details>
+      <div class="working"><span class="pulse"></span><span class="working-text">Menyiapkan</span><span class="working-time"></span></div>
+      <div class="think-line hidden"></div>
+      <details class="steps hidden" open><summary><span class="chev">${icon('chevron', 12)}</span><span class="steps-title"></span></summary>
+        <ul class="step-list"></ul><details class="think-box hidden"><summary>Proses berpikir</summary><pre class="thinking"></pre></details></details>
       <div class="prose"></div>
       <div class="turn-foot hidden"></div>`;
     $('thread').appendChild(row);
@@ -291,44 +377,87 @@
     const steps = row.querySelector('.steps');
     const stepList = row.querySelector('.step-list');
     const thinking = row.querySelector('.thinking');
+    const thinkBox = row.querySelector('.think-box');
+    const thinkLine = row.querySelector('.think-line');
     const working = row.querySelector('.working');
     const workingText = row.querySelector('.working-text');
-    const open = new Map();
-    let toolCount = 0;
+    const workingTime = row.querySelector('.working-time');
+    const started = Date.now();
+    let lastEvent = started;
+    let waitingModel = false;
+    let waitLabel = 'Menunggu model';
+    const running = new Map();
+    const preparing = new Map();
+    const counts = {};
     let content = '';
     let pendingRender = 0;
+
+    // The clock always moves, so a slow model never looks like a frozen page.
+    const timer = setInterval(() => {
+      const seconds = Math.round((Date.now() - started) / 1000);
+      workingTime.textContent = `${seconds}d`;
+      if (waitingModel && Date.now() - lastEvent > 20000) workingText.textContent = `${waitLabel}, masih memproses`;
+    }, 1000);
+
+    const setStatus = (text, isWaiting = false) => {
+      working.classList.remove('hidden');
+      workingText.textContent = text;
+      waitingModel = isWaiting;
+      if (isWaiting) waitLabel = text;
+      lastEvent = Date.now();
+    };
 
     const render = () => {
       pendingRender = 0;
       const stick = nearBottom();
       out.innerHTML = md(content);
       if (stick) scrollDown(true);
+      updateScrollUi();
     };
 
+    const count = group => { counts[group] = (counts[group] || 0) + 1; };
+
     const updateTitle = () => {
-      const parts = [];
-      if (toolCount) parts.push(`${toolCount} langkah`);
-      if (thinking.textContent) parts.push('proses berpikir');
-      row.querySelector('.steps-title').textContent = parts.join(' · ');
+      const parts = Object.entries(GROUPS).filter(([key]) => counts[key]).map(([key, label]) => `${counts[key]} ${label}`);
+      const elapsed = Math.round((Date.now() - started) / 1000);
+      if (!parts.length && thinking.textContent) parts.push('proses berpikir');
+      row.querySelector('.steps-title').textContent = parts.length ? parts.join(' · ') + (elapsed ? ` · ${elapsed}d` : '') : '';
       steps.classList.toggle('hidden', !parts.length);
+    };
+
+    const stopClock = () => {
+      clearInterval(timer);
+      // Calls that never ran, and spinners left by a stop or an error.
+      preparing.forEach(li => li.remove());
+      preparing.clear();
+      stepList.querySelectorAll('.step-mark.running').forEach(mark => mark.classList.remove('running'));
+      working.classList.add('hidden');
+      thinkLine.classList.add('hidden');
+      out.classList.remove('streaming');
     };
 
     return {
       row,
-      status(text) { workingText.textContent = text; },
       thinking(chunk) {
-        thinking.classList.remove('hidden');
         thinking.textContent += chunk;
-        workingText.textContent = 'Berpikir';
+        thinkBox.classList.remove('hidden');
+        // A live glimpse of the reasoning: the clearest sign that work is happening.
+        const lines = thinking.textContent.trim().split('\n');
+        thinkLine.textContent = lines[lines.length - 1].slice(-140);
+        thinkLine.classList.remove('hidden');
+        setStatus('Berpikir', true);
         updateTitle();
       },
       content(chunk) {
         working.classList.add('hidden');
+        thinkLine.classList.add('hidden');
+        waitingModel = false;
+        out.classList.add('streaming');
         content += chunk;
         if (!pendingRender) pendingRender = requestAnimationFrame(render);
       },
       setContent(text) {
-        working.classList.add('hidden');
+        stopClock();
         content = text;
         render();
         enhanceCode(out);
@@ -336,53 +465,88 @@
       reset() {
         content = '';
         out.innerHTML = '';
-        working.classList.remove('hidden');
-        workingText.textContent = 'Memperbaiki hasil';
+        out.classList.remove('streaming');
+        setStatus('Memperbaiki hasil', true);
+      },
+      history(trace) {
+        // Commands contain "; " too, so only a known tool name starts a new step.
+        (trace || '').split(TRACE_SPLIT).filter(Boolean).forEach(item => {
+          const failed = item.endsWith(' (failed)');
+          const clean = failed ? item.slice(0, -9) : item;
+          const [name, ...rest] = clean.split(' ');
+          const li = stepRow(name, rest.join(' '));
+          stepList.appendChild(li);
+          finishRow(li, !failed);
+          count(describeTool(name).group);
+        });
+        steps.open = false;
+        updateTitle();
       },
       progress(event) {
         if (event.kind === 'route') {
-          workingText.textContent = `Menunggu ${shortModel(event.model)}`;
+          setStatus(`Menunggu ${shortModel(event.model)}`, true);
         } else if (event.kind === 'status') {
-          workingText.textContent = event.text || 'Bekerja';
+          if (event.note) {
+            stepList.insertAdjacentHTML('beforeend', `<li class="step step-note">${esc(event.text)}</li>`);
+            steps.classList.remove('hidden');
+          }
+          setStatus(event.text || 'Bekerja', true);
+          scrollDown();
         } else if (event.kind === 'remembered') {
           (event.items || []).forEach(item => toast(`Diingat: ${item}`));
+        } else if (event.kind === 'tool' && event.phase === 'prepare') {
+          // The model is still writing this call. A big file can take a while.
+          let li = preparing.get(event.index);
+          if (!li) {
+            li = stepRow(event.name, event.detail);
+            stepList.appendChild(li);
+            preparing.set(event.index, li);
+            row.querySelector('.steps-title').textContent ||= 'Menyiapkan langkah';
+            steps.classList.remove('hidden');
+            scrollDown();
+          }
+          const { verb, target } = describeTool(event.name, event.detail);
+          li.querySelector('.step-target').textContent = target;
+          if (event.chars > 2000) li.querySelector('.step-meta').textContent = `${(event.chars / 1000).toFixed(1)} rb karakter`;
+          setStatus(`${verb} ${target}`.trim(), true);
         } else if (event.kind === 'tool' && event.phase === 'start') {
-          working.classList.remove('hidden');
-          workingText.textContent = `Menjalankan ${event.name}`;
-          const li = document.createElement('li');
-          li.className = 'step';
-          li.innerHTML = `<span class="step-mark">·</span><span class="step-name">${esc(event.name)}</span><span class="step-detail">${esc(event.detail || '')}</span><span class="step-ms"></span>`;
-          stepList.appendChild(li);
-          open.set(`${event.name}:${event.detail || ''}`, li);
-          toolCount += 1;
+          const { verb, group, target } = describeTool(event.name, event.detail);
+          const li = stepRow(event.name, event.detail);
+          const prepared = [...preparing.entries()].find(([, item]) => item.dataset.tool === event.name);
+          if (prepared) {
+            preparing.delete(prepared[0]);
+            prepared[1].replaceWith(li);
+          } else {
+            stepList.appendChild(li);
+          }
+          running.set(`${event.name}:${event.detail || ''}`, li);
+          count(group);
           steps.open = true;
           updateTitle();
+          setStatus(`${verb} ${target}`.trim());
           scrollDown();
         } else if (event.kind === 'tool') {
-          const li = open.get(`${event.name}:${event.detail || ''}`);
-          open.delete(`${event.name}:${event.detail || ''}`);
-          if (li) {
-            const mark = li.querySelector('.step-mark');
-            mark.textContent = event.ok ? '✓' : '✗';
-            mark.classList.add(event.ok ? 'ok' : 'bad');
-            li.querySelector('.step-ms').textContent = `${event.ms}ms`;
-            if (!event.ok && event.error) li.insertAdjacentHTML('afterend', `<li class="step-error">${esc(event.error)}</li>`);
-          }
-          workingText.textContent = 'Menunggu model';
+          const key = `${event.name}:${event.detail || ''}`;
+          const li = running.get(key);
+          running.delete(key);
+          if (li) finishRow(li, event.ok, event.ms, event.meta, event.error);
+          if (!running.size) setStatus('Menunggu model', true);
+          scrollDown();
         }
       },
       finish() {
         if (pendingRender) { cancelAnimationFrame(pendingRender); render(); }
-        working.classList.add('hidden');
+        stopClock();
+        updateTitle();
         steps.open = false;
         enhanceCode(out);
       },
       error(message) {
-        working.classList.add('hidden');
+        stopClock();
         out.insertAdjacentHTML('beforeend', `<div class="notice">${esc(message)}</div>`);
       },
       stopped() {
-        working.classList.add('hidden');
+        stopClock();
         out.insertAdjacentHTML('beforeend', '<div class="notice soft">Dihentikan.</div>');
       },
       foot({ model, tokens, ms, harness, text }) {
@@ -396,7 +560,7 @@
         if (tokens) bits.push(`<span>${formatTokens(tokens)} token</span>`);
         if (ms) bits.push(`<span>${formatSeconds(ms)}</span>`);
         if (stats.skills_used && stats.skills_used.length) bits.push(`<span>skill ${esc(stats.skills_used.join(', '))}</span>`);
-        foot.innerHTML = `${bits.join('')}<button class="link-btn" type="button">Salin</button>`;
+        foot.innerHTML = `${bits.join('<span class="sep">·</span>')}<button class="link-btn" type="button">Salin</button>`;
         foot.querySelector('button').onclick = e => copyText(text || content, e.currentTarget);
         foot.classList.remove('hidden');
       },
@@ -522,86 +686,87 @@
   };
 
   /* ── Session panel ────────────────────────────────── */
+  const openCards = new Set((store.get('open-cards') || 'ponytail,graphify,aislop').split(',').filter(Boolean));
+
+  function card(key, title, summary, dot, body) {
+    return `<details class="card" data-card="${key}" ${openCards.has(key) ? 'open' : ''}>
+      <summary class="card-head">
+        ${dot === null ? '' : `<span class="status-dot ${dot}"></span>`}
+        <span class="card-title">${title}</span>
+        <span class="card-summary">${summary}</span>
+        <span class="card-chev">${icon('chevron', 14)}</span>
+      </summary>
+      <div class="card-body">${body}</div>
+    </details>`;
+  }
+
+  function pathRow(path) {
+    return `<div class="path"><code title="${esc(path)}">${esc(path)}</code><button class="icon-btn icon-small" type="button" data-copy="${esc(path)}" aria-label="Salin path">${icon('copy', 14)}</button></div>`;
+  }
+
   function renderStack(info, findings) {
     const graph = info.graphify;
     const slop = info.aislop;
     const last = slop.last;
     const memory = info.memory;
     const box = $('stack');
-
-    const scoreClass = score => (score >= 80 ? 'good' : score >= 50 ? 'mid' : 'low');
     const toggle = (key, on, label) =>
-      `<button class="switch" role="switch" aria-checked="${on}" aria-label="${label}" data-toggle="${key}"></button>`;
+      `<div class="row"><span>Aktif di chat ini</span><button class="switch" role="switch" aria-checked="${on}" aria-label="${label}" data-toggle="${key}"></button></div>`;
+    const hasScore = last && last.score !== null && last.score !== undefined;
+    const scoreTone = score => (score >= 80 ? 'good' : score >= 50 ? 'mid' : 'low');
+    const sandboxOk = info.sandbox.backend && info.sandbox.backend !== 'none';
 
     box.innerHTML = `
-      <section class="card">
-        <div class="card-head"><span class="card-title">Ponytail</span></div>
+      <div class="stack-group">Cara kerja agent</div>
+      ${card('ponytail', 'Ponytail', esc(info.ponytail.mode), null, `
         <p class="card-text">Seberapa keras agent menahan diri dari kode berlebihan.</p>
         <div class="segmented" role="group" aria-label="Mode Ponytail">
           ${info.ponytail.modes.map(mode => `<button data-ponytail="${esc(mode)}" aria-pressed="${mode === info.ponytail.mode}">${esc(mode)}</button>`).join('')}
-        </div>
-      </section>
+        </div>`)}
+      ${card('graphify', 'Graphify', !graph.installed ? 'belum terpasang' : graph.built ? `${graph.nodes ?? 0} node` : 'belum ada', graph.installed && graph.built ? 'on' : '', !graph.installed
+        ? '<p class="card-text">Pasang dengan <code>uv tool install graphifyy</code></p>'
+        : `${graph.built
+            ? `<div class="stats"><div class="stat"><strong>${graph.nodes ?? 0}</strong><span>node</span></div><div class="stat"><strong>${graph.edges ?? 0}</strong><span>relasi</span></div></div>`
+            : '<p class="card-text">Dibuat otomatis setelah ada file yang berubah.</p>'}
+           ${toggle('graphify', graph.enabled, 'Graphify untuk chat ini')}
+           <button class="btn btn-ghost btn-small btn-block" data-action="graph">${graph.built ? 'Bangun ulang' : 'Bangun sekarang'}</button>`)}
+      ${card('aislop', 'aislop', !slop.installed ? 'belum terpasang' : hasScore ? `skor ${last.score}` : 'belum dipindai', slop.installed && hasScore ? 'on' : '', !slop.installed
+        ? '<p class="card-text">Pasang dengan <code>npm install -g aislop</code></p>'
+        : `${hasScore
+            ? `<div class="score-row"><div class="ring ${scoreTone(last.score)}" style="--value:${last.score}"><span>${last.score}</span></div>
+                 <p class="card-text"><strong>${esc(last.label || '')}</strong><br>${last.errors ?? 0} error, ${last.warnings ?? 0} peringatan</p></div>`
+            : '<p class="card-text">File yang diubah agent diperiksa otomatis.</p>'}
+           ${toggle('aislop', slop.enabled, 'aislop untuk chat ini')}
+           <button class="btn btn-ghost btn-small btn-block" data-action="aislop">Pindai sekarang</button>
+           ${findings && findings.length ? `<ul class="findings">${findings.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}`)}
 
-      <section class="card">
-        <div class="card-head">
-          <span class="status-dot ${graph.installed && graph.built ? 'on' : ''}"></span>
-          <span class="card-title">Graphify</span>
-          ${graph.installed ? toggle('graphify', graph.enabled, 'Graphify untuk chat ini') : ''}
-        </div>
-        ${!graph.installed
-          ? '<p class="card-text">Belum terpasang. <code>uv tool install graphifyy</code></p>'
-          : graph.built
-            ? `<div class="stats"><div class="stat"><strong>${graph.nodes ?? 0}</strong><span>node</span></div><div class="stat"><strong>${graph.edges ?? 0}</strong><span>relasi</span></div></div>
-               <div class="card-actions"><button class="btn btn-ghost btn-small" data-action="graph">Bangun ulang</button></div>`
-            : `<p class="card-text">Graph kode chat ini dibuat otomatis setelah ada file yang berubah.</p>
-               <div class="card-actions"><button class="btn btn-ghost btn-small" data-action="graph">Bangun sekarang</button></div>`}
-      </section>
-
-      <section class="card">
-        <div class="card-head">
-          <span class="status-dot ${slop.installed && last ? 'on' : ''}"></span>
-          <span class="card-title">aislop</span>
-          ${slop.installed ? toggle('aislop', slop.enabled, 'aislop untuk chat ini') : ''}
-        </div>
-        ${!slop.installed
-          ? '<p class="card-text">Belum terpasang. <code>npm install -g aislop</code></p>'
-          : `${last && last.score !== null && last.score !== undefined
-              ? `<p class="score ${scoreClass(last.score)}">${last.score}<small> / 100 · ${esc(last.label || '')}</small></p>
-                 <p class="card-text">${last.errors ?? 0} error, ${last.warnings ?? 0} peringatan</p>`
-              : '<p class="card-text">Belum dipindai. File yang diubah agent akan diperiksa otomatis.</p>'}
-             <div class="card-actions"><button class="btn btn-ghost btn-small" data-action="aislop">Pindai sekarang</button></div>
-             ${findings && findings.length ? `<ul class="findings">${findings.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}`}
-      </section>
-
-      <section class="card">
-        <div class="card-head"><span class="status-dot ${info.vault.notes ? 'on' : ''}"></span><span class="card-title">Vault Obsidian</span></div>
-        <p class="card-text">${info.vault.notes} catatan milik chat ini.</p>
-        <code class="path">${esc(info.vault.path)}</code>
-      </section>
-
-      <section class="card">
-        <div class="card-head"><span class="card-title">Memori</span></div>
+      <div class="stack-group">Yang diingat</div>
+      ${card('memory', 'Memori proyek', `${memory.decisions + memory.facts} catatan`, null, `
         <div class="stats">
           <div class="stat"><strong>${memory.decisions}</strong><span>keputusan</span></div>
           <div class="stat"><strong>${memory.facts}</strong><span>fakta</span></div>
           <div class="stat"><strong>${memory.files}</strong><span>file</span></div>
         </div>
-        <p class="card-text">${info.profile.entries} hal tentang kamu diingat di semua chat.</p>
-      </section>
+        <p class="card-text">${info.profile.entries} hal tentang kamu diingat di semua chat.</p>`)}
+      ${card('vault', 'Vault Obsidian', `${info.vault.notes} catatan`, info.vault.notes ? 'on' : '', `
+        <p class="card-text">Buka folder ini di Obsidian untuk membaca catatan chat ini.</p>
+        ${pathRow(info.vault.path)}`)}
 
-      <section class="card">
-        <div class="card-head">
-          <span class="status-dot ${info.sandbox.backend && info.sandbox.backend !== 'none' ? 'on' : 'bad'}"></span>
-          <span class="card-title">Sandbox</span>
-        </div>
+      <div class="stack-group">Keamanan</div>
+      ${card('sandbox', 'Sandbox', info.sandbox.error ? 'tidak tersedia' : sandboxOk ? esc(info.sandbox.backend) : 'mati', sandboxOk ? 'on' : 'bad', `
         <p class="card-text">${info.sandbox.error
-          ? 'Tidak tersedia, perintah agent ditolak. Jalankan <code>python main.py doctor</code>.'
-          : info.sandbox.backend === 'none'
-            ? 'Mati. Perintah berjalan langsung di mesin ini.'
-            : `${esc(info.sandbox.backend)}, internet ${info.sandbox.network ? 'nyala' : 'mati'}. Perintah hanya bisa menulis ke folder chat ini.`}</p>
-        <code class="path">${esc(info.folder)}</code>
-      </section>`;
+          ? 'Perintah agent ditolak. Jalankan <code>python main.py doctor</code>.'
+          : sandboxOk
+            ? `Perintah hanya bisa menulis ke folder chat ini. Internet ${info.sandbox.network ? 'nyala' : 'mati'}.`
+            : 'Perintah berjalan langsung di mesin ini.'}</p>
+        ${pathRow(info.folder)}`)}`;
 
+    box.querySelectorAll('details.card').forEach(item => {
+      item.ontoggle = () => {
+        if (item.open) openCards.add(item.dataset.card); else openCards.delete(item.dataset.card);
+        store.set('open-cards', [...openCards].join(','));
+      };
+    });
     box.querySelectorAll('[data-ponytail]').forEach(button => {
       button.onclick = () => updateStack({ ponytail: button.dataset.ponytail });
     });
@@ -610,6 +775,11 @@
     });
     box.querySelectorAll('[data-action]').forEach(button => {
       button.onclick = () => runStackAction(button);
+    });
+    box.querySelectorAll('[data-copy]').forEach(button => {
+      button.onclick = async () => {
+        try { await navigator.clipboard.writeText(button.dataset.copy); toast('Path disalin.'); } catch { toast('Tidak bisa menyalin.'); }
+      };
     });
   }
 
@@ -659,7 +829,9 @@
 
   /* ── Team canvas ──────────────────────────────────── */
   const NODE_W = 196;
-  const NODE_H = 72;
+  const NODE_H = 76;
+  const COLUMN_GAP = 216;
+  const ROW_GAP = 112;
   const newId = () => `a${Math.random().toString(36).slice(2, 9)}`;
   const posKey = (team, member) => `pos:${team}:${member}`;
   const finished = status => ['completed', 'failed', 'cancelled'].includes(status);
@@ -672,9 +844,16 @@
   }
 
   function autoLayout(teamId) {
-    const columns = {};
+    const rows = {};
     const workers = S.members.filter(m => m.id !== S.lead && m.id !== S.reviewer);
     const lastWorker = workers.length ? Math.max(...workers.map(m => depth(m))) : -1;
+    const rowOf = member => {
+      if (member.id === S.lead) return lastWorker + 1;
+      if (member.id === S.reviewer) return lastWorker + 2;
+      return depth(member);
+    };
+    S.members.forEach(member => { (rows[rowOf(member)] ||= []).push(member); });
+    const widest = Math.max(...Object.values(rows).map(list => list.length));
     S.members.forEach(member => {
       const saved = teamId && store.get(posKey(teamId, member.id));
       if (saved) {
@@ -684,25 +863,27 @@
         return;
       }
       if (member.x !== undefined) return;
-      let column = depth(member);
-      if (member.id === S.lead) column = lastWorker + 1;
-      if (member.id === S.reviewer) column = lastWorker + 2;
-      const row = columns[column] = (columns[column] || 0) + 1;
-      member.x = 32 + column * 228;
-      member.y = 40 + (row - 1) * 120;
+      const row = rowOf(member);
+      const list = rows[row];
+      // Centre each row over the widest one, so the flow reads straight down.
+      const offset = ((widest - list.length) * COLUMN_GAP) / 2;
+      member.x = 28 + offset + list.indexOf(member) * COLUMN_GAP;
+      member.y = 28 + row * ROW_GAP;
     });
   }
 
   function edges() {
     const lines = [];
+    const statusOf = member => (S.run && S.run.agents && S.run.agents[member.id] ? S.run.agents[member.id].status : '');
     const add = (from, to, cls = '') => {
       if (!from || !to) return;
-      const x1 = from.x + NODE_W;
-      const y1 = from.y + NODE_H / 2;
-      const x2 = to.x;
-      const y2 = to.y + NODE_H / 2;
-      const bend = Math.max(30, Math.abs(x2 - x1) / 2);
-      lines.push(`<path class="edge ${cls}" d="M${x1} ${y1}C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}" marker-end="url(#arrow)"/>`);
+      const x1 = from.x + NODE_W / 2;
+      const y1 = from.y + NODE_H;
+      const x2 = to.x + NODE_W / 2;
+      const y2 = to.y;
+      const bend = Math.max(18, Math.abs(y2 - y1) / 2);
+      const active = statusOf(to) === 'running' ? ' active' : '';
+      lines.push(`<path class="edge ${cls}${active}" d="M${x1} ${y1}C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}" marker-end="url(#arrow)"/>`);
     };
     const lead = S.members.find(m => m.id === S.lead);
     const reviewer = S.members.find(m => m.id === S.reviewer);
@@ -746,7 +927,7 @@
     }
     el.setPointerCapture(event.pointerId);
     el.onpointermove = e => {
-      member.x = Math.max(0, Math.min(2000 - NODE_W, e.clientX - offsetX));
+      member.x = Math.max(0, Math.min(1600 - NODE_W, e.clientX - offsetX));
       member.y = Math.max(0, Math.min(1400 - NODE_H, e.clientY - offsetY));
       el.style.left = `${member.x}px`;
       el.style.top = `${member.y}px`;
@@ -958,6 +1139,7 @@
       const state = node.querySelector('.node-state');
       state.textContent = agent ? (labels[agent.status] || agent.status) + (agent.error ? `: ${agent.error}` : '') : '';
     });
+    if ($('edge-lines').childElementCount) edges();
   }
 
   function showRun(run) {

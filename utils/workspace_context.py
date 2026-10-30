@@ -1,7 +1,11 @@
 """Per-session workspace context shared by the web UI and the agent loop.
 
-The web chat has no active workspace of its own, so each session gets
-``workspace/<session_id>/`` (same layout the CLI uses). The agent loop reads
+``workspace/`` is where the model works, kept apart from the agent's own code:
+
+* ``workspace/sessions/<session_id>/``: one folder per chat or team run.
+* ``workspace/projects/<name>/``: projects opened from the CLI with ``/tree``.
+
+The agent loop reads
 the active path from a ContextVar, which stays isolated between concurrent
 sessions, and falls back to the SQUIDWINGS_WORKSPACE env var.
 """
@@ -14,17 +18,20 @@ from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = _PROJECT_ROOT / "workspace"
+SESSIONS_ROOT = WORKSPACE_ROOT / "sessions"
+PROJECTS_ROOT = WORKSPACE_ROOT / "projects"
 
 _active_workspace: ContextVar[str] = ContextVar("active_workspace", default="")
 _active_session: ContextVar[str] = ContextVar("active_session", default="")
 _active_ponytail: ContextVar[str] = ContextVar("active_ponytail", default="")
 
 
-def session_workspace(session_id: str) -> Path:
-    """Return (and create) workspace/<session_id>, sanitising the name."""
+def session_workspace(session_id: str, create: bool = True) -> Path:
+    """Return (and create) workspace/sessions/<session_id>, sanitising the name."""
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", session_id or "").strip("._") or "default"
-    path = WORKSPACE_ROOT / safe[:64]
-    path.mkdir(parents=True, exist_ok=True)
+    path = SESSIONS_ROOT / safe[:64]
+    if create:
+        path.mkdir(parents=True, exist_ok=True)
     return path
 
 

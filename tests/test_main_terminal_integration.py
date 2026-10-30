@@ -149,3 +149,58 @@ async def test_process_input_reports_failure_without_raising(tmp_path: Path) -> 
         user_input="halo", session_id="s", orchestrator=orch, stream=False, override_model="ag/m",
     )
     assert isinstance(result, str) and result
+
+
+def test_cli_session_starts_inside_a_new_project(tmp_path: Path) -> None:
+    from main import _start_project
+
+    folder, auto = _start_project(tmp_path, "sess-abcdef123456")
+    assert folder.parent == tmp_path and folder.is_dir()
+    assert folder.name.endswith("-abcdef")
+    assert auto is True
+
+
+def test_cli_session_can_open_an_existing_project(tmp_path: Path) -> None:
+    from main import _start_project
+
+    (tmp_path / "toko").mkdir()
+    folder, auto = _start_project(tmp_path, "sess-1", "toko")
+    assert folder == (tmp_path / "toko").resolve()
+    assert auto is False
+
+
+def test_project_name_cannot_leave_the_projects_folder(tmp_path: Path) -> None:
+    from main import _project_path, _start_project
+
+    root = tmp_path / "projects"
+    root.mkdir()
+    assert _project_path(root, "../../etc") is None
+    assert _project_path(root, "/etc") == (root / "etc").resolve()  # a name, never the real /etc
+    assert _project_path(root, "..") is None
+    assert _project_path(root, "workspace/projects/toko") == (root / "toko").resolve()
+    folder, _ = _start_project(root, "sess-abcdef", "../luar")
+    assert folder.parent == root
+    assert not (tmp_path / "luar").exists()
+
+
+def test_unused_project_is_removed_but_used_ones_stay(tmp_path: Path) -> None:
+    from brain.memory.project_memory import ProjectMemory
+    from main import _remove_if_unused
+
+    unused = tmp_path / "kosong"
+    unused.mkdir()
+    (unused / ".agent_memory").mkdir()
+    _remove_if_unused(unused)
+    assert not unused.exists()
+
+    with_file = tmp_path / "ada-file"
+    with_file.mkdir()
+    (with_file / "app.py").write_text("x = 1\n")
+    _remove_if_unused(with_file)
+    assert with_file.exists()
+
+    chatted = tmp_path / "pernah-chat"
+    chatted.mkdir()
+    ProjectMemory(chatted).build_input("halo", False)
+    _remove_if_unused(chatted)
+    assert chatted.exists()

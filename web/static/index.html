@@ -16,7 +16,7 @@
   <aside id="rail" class="rail" aria-label="Daftar chat">
     <div class="rail-head">
       <div class="brand"><span class="brand-mark" aria-hidden="true">S</span><span>SquidWings</span></div>
-      <button id="close-rail" class="icon-btn only-narrow" aria-label="Tutup daftar chat" data-icon="x"></button>
+      <button id="close-rail" class="icon-btn" aria-label="Tutup daftar chat" data-icon="x"></button>
     </div>
     <button id="new-chat" class="btn btn-primary btn-block"><span data-icon="plus"></span>Chat baru</button>
     <label class="search">
@@ -31,8 +31,8 @@
   </aside>
 
   <main class="stage">
-    <header class="topbar">
-      <button id="open-rail" class="icon-btn only-narrow" aria-label="Buka daftar chat" data-icon="menu"></button>
+    <header id="topbar" class="topbar">
+      <button id="open-rail" class="icon-btn" aria-label="Tampilkan atau sembunyikan daftar chat" data-icon="menu"></button>
       <h1 id="chat-title" class="chat-title">Chat baru</h1>
       <div class="topbar-actions">
         <button id="nav-chat" class="btn btn-ghost hidden"><span data-icon="chat"></span>Kembali ke chat</button>
@@ -40,30 +40,17 @@
       </div>
     </header>
 
-    <section id="view-chat" class="view">
+    <section id="view-chat" class="view is-empty">
       <div id="scroller" class="scroller">
-        <div id="empty" class="empty">
-          <h2>Mau kerjakan apa?</h2>
-          <p>Setiap chat punya folder, vault, graph kode, dan memorinya sendiri. Apa yang dipelajari di sini tidak tercampur ke chat lain.</p>
-          <div class="suggestions">
-            <button class="suggestion" data-prompt="Buat REST API sederhana untuk daftar tugas dengan FastAPI, lengkap dengan tes, lalu jalankan tesnya.">
-              <strong>Bangun sesuatu</strong><span>REST API lengkap dengan tes</span>
-            </button>
-            <button class="suggestion" data-prompt="Buat landing page responsif untuk kedai kopi, satu file HTML, tanpa library.">
-              <strong>Buat halaman web</strong><span>Landing page yang responsif</span>
-            </button>
-            <button class="suggestion" data-prompt="Tes saya gagal. Saya akan tempel errornya, bantu temukan penyebab dan perbaiki.">
-              <strong>Perbaiki bug</strong><span>Dari pesan error sampai tes lulus</span>
-            </button>
-            <button class="suggestion" data-prompt="Riset berita terbaru tentang Python, rangkum poin pentingnya beserta sumber.">
-              <strong>Riset</strong><span>Cari di web, rangkum dengan sumber</span>
-            </button>
-          </div>
-        </div>
         <div id="thread" class="thread"></div>
       </div>
+      <button id="to-bottom" class="to-bottom hidden" aria-label="Ke pesan terbaru" data-icon="down"></button>
 
-      <div class="composer-wrap">
+      <div class="dock">
+        <div class="hero">
+          <h2>Mau kerjakan apa?</h2>
+          <p>Setiap chat punya folder, vault, graph kode, dan memorinya sendiri.</p>
+        </div>
         <form id="composer" class="composer">
           <div id="chips" class="chips"></div>
           <textarea id="input" rows="1" placeholder="Tulis tugas atau pertanyaan" aria-label="Pesan"></textarea>
@@ -77,21 +64,31 @@
             <button id="send" type="submit" class="send" aria-label="Kirim" data-icon="send"></button>
           </div>
         </form>
+        <div class="suggestions">
+          <button class="suggestion" data-prompt="Buat REST API sederhana untuk daftar tugas dengan FastAPI, lengkap dengan tes, lalu jalankan tesnya.">Bangun REST API</button>
+          <button class="suggestion" data-prompt="Buat landing page responsif untuk kedai kopi, satu file HTML, tanpa library.">Buat landing page</button>
+          <button class="suggestion" data-prompt="Tes saya gagal. Saya akan tempel errornya, bantu temukan penyebab dan perbaiki.">Perbaiki bug</button>
+          <button class="suggestion" data-prompt="Riset berita terbaru tentang Python, rangkum poin pentingnya beserta sumber.">Riset di web</button>
+        </div>
       </div>
     </section>
 
     <section id="view-team" class="view hidden">
       <div class="team-bar">
-        <select id="team-select" aria-label="Pilih tim"></select>
-        <select id="template-select" aria-label="Mulai dari template"><option value="">Template</option></select>
-        <input id="team-name" placeholder="Nama tim" aria-label="Nama tim">
-        <button id="add-node" class="btn btn-ghost"><span data-icon="plus"></span>Agent</button>
-        <button id="save-team" class="btn btn-ghost">Simpan</button>
-        <button id="delete-team" class="btn btn-ghost btn-danger">Hapus</button>
+        <div class="team-bar-group">
+          <select id="team-select" aria-label="Pilih tim"></select>
+          <select id="template-select" aria-label="Mulai dari template"><option value="">Template</option></select>
+          <input id="team-name" placeholder="Nama tim" aria-label="Nama tim">
+        </div>
+        <div class="team-bar-group">
+          <button id="add-node" class="btn btn-ghost"><span data-icon="plus"></span>Agent</button>
+          <button id="save-team" class="btn btn-ghost">Simpan</button>
+          <button id="delete-team" class="icon-btn btn-danger" aria-label="Hapus tim" title="Hapus tim" data-icon="trash"></button>
+        </div>
       </div>
       <div class="team-body">
         <div id="board" class="board">
-          <svg id="edges" class="edges" width="2000" height="1400" aria-hidden="true">
+          <svg id="edges" class="edges" width="1600" height="1400" aria-hidden="true">
             <defs>
               <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M0 0 10 5 0 10z" class="edge-head"></path>
@@ -120,7 +117,9 @@
       <h2>Sesi ini</h2>
       <button id="close-inspector" class="icon-btn" aria-label="Tutup panel sesi" data-icon="x"></button>
     </div>
-    <div id="stack" class="stack"></div>
+    <div id="stack" class="stack">
+      <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+    </div>
   </aside>
 </div>
 

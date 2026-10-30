@@ -54,14 +54,15 @@ def sandbox_label() -> str:
     return f"[green]{backend}[/green] [dim]· {network}[/dim]"
 
 
-def banner(console: Console, *, models: int, providers: list[str], session_id: str) -> None:
+def banner(console: Console, *, models: int, providers: list[str], session_id: str, project: Path) -> None:
     title = Text.assemble(("SquidWings", "bold bright_cyan"), ("  agent untuk semua model", "dim"))
     rows = [
         f"[dim]model    [/dim]{models} model [dim]· {escape(', '.join(providers) or 'tidak ada provider')}[/dim]",
         f"[dim]sandbox  [/dim]{sandbox_label()}",
+        f"[dim]proyek   [/dim][bright_green]{escape(project.name)}[/bright_green] [dim]{escape(str(project))}[/dim]",
         f"[dim]sesi     [/dim][dim]{escape(session_id)}[/dim]",
         "",
-        "[dim]Ketik tugasmu, atau[/dim] [cyan]/tree nama-proyek[/cyan] [dim]untuk membuka proyek ·[/dim] "
+        "[dim]Ketik tugasmu, atau[/dim] [cyan]/tree nama-proyek[/cyan] [dim]untuk pindah proyek ·[/dim] "
         "[cyan]/model[/cyan] [dim]·[/dim] [cyan]/memory[/cyan] [dim]·[/dim] [cyan]/help[/cyan] [dim]·[/dim] [cyan]exit[/cyan]",
     ]
     console.print(Panel("\n".join(rows), title=title, title_align="left", border_style="bright_cyan", padding=(0, 2)))
@@ -78,11 +79,33 @@ def route_line(task_type: str, difficulty: str, model: str) -> str:
     return f"[dim]{escape(task_type)} · {escape(difficulty)} · {escape(model.split('/')[-1])}[/dim]"
 
 
-def tool_line(name: str, detail: str, ok: bool, ms: int, error: str = "") -> str:
+_TOOL_VERBS = {
+    "read_file": "Membaca", "list_directory": "Melihat folder", "file_search": "Mencari di file",
+    "find_symbol": "Mencari simbol", "code_outline": "Melihat struktur", "file_write": "Menulis",
+    "file_patch": "Mengedit", "file_move": "Memindahkan", "file_delete": "Menghapus",
+    "dir_create": "Membuat folder", "execute_command": "Menjalankan", "run_checks": "Menjalankan tes",
+    "web_research": "Mencari dan membaca web", "web_search": "Mencari di web", "web_read": "Membuka",
+    "git_status": "Melihat status git", "git_diff": "Melihat perubahan", "code_graph": "Menelusuri graph kode",
+    "aislop_scan": "Memeriksa kualitas kode", "project_overview": "Mempelajari proyek",
+    "load_skill": "Membuka panduan", "vault_search": "Mencari catatan", "vault_read": "Membaca catatan",
+    "vault_write": "Menulis catatan", "vault_recall": "Mengingat catatan", "memory_recall": "Mengingat",
+    "memory_remember": "Menyimpan ke memori", "memory_forget": "Menghapus dari memori", "time_now": "Melihat waktu",
+}
+
+
+def describe_tool(name: str, detail: str = "") -> str:
+    """What a tool is doing, in words a person would use."""
+    verb = _TOOL_VERBS.get(name, f"Menjalankan {name}")
+    return f"{verb} {detail[:60]}".strip()
+
+
+def tool_line(name: str, detail: str, ok: bool, ms: int, error: str = "", meta: str = "") -> str:
     mark = "[green]✓[/green]" if ok else "[red]✗[/red]"
+    verb = escape(_TOOL_VERBS.get(name, name))
     shown = f" [dim]{escape(detail[:70])}[/dim]" if detail else ""
+    fact = f" [cyan]{escape(meta)}[/cyan]" if meta else ""
     reason = f" [red]{escape(error[:90])}[/red]" if error and not ok else ""
-    return f"  {mark} {escape(name)}{shown} [dim]{ms}ms[/dim]{reason}"
+    return f"  {mark} {verb}{shown}{fact} [dim]{ms}ms[/dim]{reason}"
 
 
 def _format_tokens(count: int) -> str:

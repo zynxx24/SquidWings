@@ -5,7 +5,7 @@ graph, and aislop score, and its own Ponytail mode. Two chats never mix: what th
 agent learns while working on one does not leak into the other. Your profile and
 the playbooks stay global, because those are about you and about how to work.
 
-    workspace/<session>/
+    workspace/sessions/<session>/
       .agent_memory/   project memory, Ponytail mode, aislop score
       .vault/          this chat's Obsidian vault
       graphify-out/    this chat's code graph
@@ -80,7 +80,7 @@ class SessionStack:
     def status(self) -> dict[str, Any]:
         """What this session has right now, for the UI and the CLI."""
         settings = self.settings
-        state = ProjectMemory(self.workspace).state
+        state = ProjectMemory(self.workspace).state if self.workspace.is_dir() else {}
         vault = self.workspace / ".vault"
         notes = sum(1 for _ in vault.rglob("*.md")) if vault.is_dir() else 0
         policy = sandbox.load_policy()

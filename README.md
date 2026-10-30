@@ -1,58 +1,35 @@
 # SquidWings
 
-Asisten AI berbasis Python dengan terminal interaktif, Web GUI, routing multi-model,
-memory berlapis, dan tool lokal (baca/tulis file, eksekusi command, web search)
-yang dibungkus Security Layer.
-
----
-
-## Daftar Isi
-
-- [Fitur](#fitur)
-- [Kebutuhan](#kebutuhan)
-- [Instalasi](#instalasi)
-- [Konfigurasi](#konfigurasi)
-- [Cara Menjalankan](#cara-menjalankan)
-- [Perintah CLI](#perintah-cli)
-- [Workspace Sesi](#workspace-sesi)
-- [Memory](#memory)
-- [Upload dan Gambar](#upload-dan-gambar)
-- [Ponytail](#ponytail)
-- [Security Layer](#security-layer)
-- [Menjalankan Test](#menjalankan-test)
-- [Struktur Proyek](#struktur-proyek)
-- [Execution Harness](#execution-harness)
-- [Troubleshooting](#troubleshooting)
-- [Lisensi](#lisensi)
-
----
+Agent AI multi-model untuk terminal dan web. Agent ini mengerjakan tugas sungguhan: membaca dan mengubah kode, menjalankan perintah di sandbox, membaca web, dan mengingat konteks per chat. Lapisan pengawasnya dibuat supaya model murah bekerja mendekati model mahal.
 
 ## Fitur
 
 | Fitur | Keterangan |
 |---|---|
-| Terminal interaktif | Mode `chat` dengan riwayat, render Markdown, dan workspace per sesi |
-| Web GUI | FastAPI + WebSocket, opsional diekspos lewat Cloudflare Tunnel |
-| Multi-model routing | Registry model, classifier tugas, fallback, rate limiter |
-| Tool lokal | Baca/edit file (backup + diff), jalankan command (disanitasi), discard perubahan |
-| Web search | Pencarian internet dengan cache, hasil bisa disimpan ke Obsidian |
-| Memory berlapis | Riwayat chat, ringkasan riwayat, memory vault Obsidian, Graphify |
-| Upload dokumen dan gambar | Dokumen diubah ke Markdown lewat MarkItDown; gambar dikirim ke model vision |
-| Ponytail | Gaya jawaban ringkas dengan level yang bisa diatur lewat env |
-| Security Layer | Policy engine, path jail, secrets vault, audit hash-chain, prompt shield, redactor |
-
----
+| Terminal dan Web UI | Satu orchestrator yang sama, tanpa login |
+| Multi-model | Routing, fallback, dan banyak provider lewat `config/providers.yaml` |
+| Execution harness | Verifikasi hasil, deteksi loop, perbaikan argumen tool, dan eskalasi ke model lebih kuat |
+| Tim agent | Kanvas multi-agent dengan dependensi antar-agent dan reviewer |
+| Riset web | Mencari, membuka beberapa halaman, membaca isinya, dan mencantumkan sumber |
+| Satu chat, satu set | Folder, memori, vault Obsidian, graph kode, skor aislop, dan mode Ponytail sendiri |
+| Sandbox | Perintah agent berjalan terisolasi lewat bubblewrap atau Docker |
+| Keamanan | Policy engine, path jail, audit log, prompt shield, dan penyamaran rahasia |
 
 ## Kebutuhan
 
-- Python 3.12 atau lebih baru (target `py312`)
+- Python 3.12 atau lebih baru
 - Endpoint API yang kompatibel dengan OpenAI Chat Completions
-- Linux atau macOS (Windows via PowerShell belum diuji secara penuh)
-- Opsional: `cloudflared` untuk tunnel, `ffmpeg` untuk video draft
+- Linux atau macOS
+- `bubblewrap` atau Docker, karena tanpa keduanya perintah agent ditolak
 
-Di sebagian sistem perintahnya `python3`, bukan `python`.
+Opsional, dan aktif otomatis setelah terpasang:
 
----
+```bash
+npm install -g aislop        # skor kualitas kode
+uv tool install graphifyy    # graph kode
+```
+
+Chrome atau Chromium dipakai untuk membaca situs yang butuh JavaScript. `cloudflared` dipakai untuk `--tunnel`.
 
 ## Instalasi
 
@@ -63,259 +40,130 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+sudo apt install bubblewrap
+python main.py doctor        # memastikan sandbox benar-benar mengisolasi
 ```
 
 Isi `API_BASE_URL` dan `API_KEY` di `.env`.
 
----
+## Menjalankan
+
+```bash
+python main.py chat                     # terminal, dengan pilihan folder proyek
+python main.py chat --project nama      # langsung ke workspace/projects/nama
+python main.py ask "pertanyaan"         # satu pertanyaan
+python main.py web                      # Web UI di http://127.0.0.1:8080
+python main.py models                   # daftar model
+python main.py health                   # cek koneksi API
+```
+
+Perintah di dalam `chat`: `/model`, `/stack`, `/ponytail`, `/memory`, `/sandbox`, `/status`, dan `/help` untuk daftar lengkap.
+
+Menu tim agent di web aktif dengan `WEB_TEAMS_ENABLED=true`.
+
+> **Tidak ada login.** Web UI hanya menerima akses dari mesin ini secara bawaan. Dengan `--tunnel`, siapa pun yang punya URL-nya bisa memakai agent dan membaca semua chat.
 
 ## Konfigurasi
 
-Semua pengaturan ada di `.env`. Contoh lengkap dengan komentar ada di
-[.env.example](.env.example). Tulis komentar di baris sendiri, jangan di baris yang sama dengan nilai.
+Semua pengaturan ada di `.env`, dengan contoh lengkap di [.env.example](.env.example). Tulis komentar di baris sendiri, jangan di baris yang sama dengan nilai.
 
 | Kelompok | Variabel utama |
 |---|---|
 | API | `API_BASE_URL`, `API_KEY`, `TIMEOUT_SECONDS`, `MAX_RETRIES` |
 | Model | `DEFAULT_MODEL`, `DEFAULT_TEMPERATURE`, `DEFAULT_MAX_TOKENS` |
-| Web | `WEB_HOST`, `WEB_PORT`, `WEB_ALLOWED_HOSTS`, `WEB_ALLOWED_ORIGINS` |
-| Workspace | `SQUIDWINGS_WORKSPACE` |
+| Web UI | `WEB_HOST`, `WEB_PORT`, `WEB_ALLOWED_HOSTS`, `WEB_ALLOWED_ORIGINS`, `WEB_TEAMS_ENABLED` |
+| Sandbox | `SANDBOX_NETWORK`, `SANDBOX_RO_PATHS` |
+| Riset web | `SEARXNG_URL`, `BRAVE_SEARCH_API_KEY`, `WEB_BROWSER_ENABLED` |
+| Memori | `HISTORY_SUMMARY_CHARS`, `HISTORY_MAX_TOKENS`, `OBSIDIAN_VAULT_PATH` |
 | Ponytail | `PONYTAIL_MODE`, `PONYTAIL_TASKS` |
-| Ringkasan riwayat | `HISTORY_SUMMARY_CHARS`, `HISTORY_SUMMARY_SHARE` |
-| Obsidian | `WEB_SEARCH_OBSIDIAN_ENABLED`, `OBSIDIAN_VAULT_PATH`, `OBSIDIAN_SEARCH_FOLDER` |
-| Graphify | `GRAPHIFY_MEMORY_ENABLED`, `GRAPHIFY_MEMORY_ENDPOINT`, `GRAPHIFY_MEMORY_TIMEOUT_SECONDS` |
-| Web search | `WEB_SEARCH_ENABLED`, `WEB_SEARCH_MAX_RESULTS`, `WEB_SEARCH_CACHE_TTL_SECONDS` |
-| Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `MAX_CHAT_IMAGES`, `IMAGE_MAX_SIDE`, `VIDEO_UPLOAD_ENABLED` |
-| Keamanan | `SQUIDWINGS_AUDIT_LOG`, `SQUIDWINGS_VAULT`, `SQUIDWINGS_VAULT_PASSPHRASE` |
+| Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `MAX_CHAT_IMAGES`, `IMAGE_MAX_SIDE` |
 
----
+Provider tambahan didaftarkan di `config/providers.yaml`. Key-nya tetap dibaca dari `.env`.
 
-## Cara Menjalankan
+### Hasil riset web
 
-```bash
-python main.py chat             # chat interaktif di terminal
-python main.py ask "pertanyaan" # satu pertanyaan
-python main.py models           # daftar model
-python main.py fetch            # ambil daftar model dari router
-python main.py health           # cek kesehatan API
-python main.py web              # Web GUI di http://127.0.0.1:8080
-python main.py web --port 9000 --host 127.0.0.1
-python main.py web --tunnel     # buka akses publik lewat Cloudflare Tunnel
-```
+Tanpa API pencarian, agent memakai halaman hasil publik yang sering lemah atau kosong. Untuk hasil yang lebih baik, pakai salah satu:
 
-`python cli.py <perintah>` setara dengan `python main.py <perintah>`.
+- **SearXNG:** gratis dan berjalan di mesinmu. Aktifkan `json` di `search.formats` pada `settings.yml`, lalu isi `SEARXNG_URL`.
+- **Brave Search API:** isi `BRAVE_SEARCH_API_KEY`. Query dikirim ke Brave.
 
-Mode tunnel juga tersedia lewat skrip: `./tunnel.sh start [port]`.
-Tidak ada login. Dengan `--tunnel`, siapa pun yang punya URL bisa memakai agent dan membaca semua chat.
+Agent tidak menembus CAPTCHA atau blokir bot. Situs yang menolak dilaporkan apa adanya, lalu agent memakai sumber lain.
 
----
+## Data dan memori
 
-## Perintah CLI
+Agent bekerja di `workspace/`, terpisah dari kodenya:
 
-Perintah slash di dalam `chat`:
+- `workspace/sessions/<id>/` untuk setiap chat web dan team run
+- `workspace/projects/<nama>/` untuk proyek CLI
 
-| Perintah | Fungsi |
-|---|---|
-| `/model` | Pilih model |
-| `/tree [nama]`, `/tree all` | Lihat atau pindah workspace, atau lihat root proyek |
-| `/ws`, `/workspace` | Daftar, buat, atau tutup workspace (`/ws none`) |
-| `/view`, `/create` | Lihat atau buat file |
-| `/search` | Cari teks di workspace |
-| `/code` | Minimize, expand, atau copy blok kode |
-| `/format`, `/theme`, `/md` | Tampilan terminal |
-| `/status` | Info sesi |
-| `/help` | Daftar perintah lengkap |
+Setiap folder punya memorinya sendiri:
 
----
-
-## Workspace Sesi
-
-CLI dan Web memakai tata letak yang sama: `workspace/<session_id>/`.
-
-- Di web chat, file kode yang diminta user disimpan di `workspace/<session_id>/`.
-- Nama folder sesi dibersihkan sebelum dipakai.
-- Folder dasar bisa diganti lewat `SQUIDWINGS_WORKSPACE`.
-- Catatan: `execute_command` di web chat masih berjalan dari root proyek.
-
----
-
-## Memory
-
-Memory punya tiga lapisan, dan setiap jenis fakta hanya punya satu tempat:
-
-| Lapisan | Isi | Lokasi |
+| Komponen | Isi | Lokasi |
 |---|---|---|
-| Sesi | Riwayat chat. Bagian lama diringkas tanpa LLM (`HISTORY_SUMMARY_CHARS`, `HISTORY_MAX_TOKENS`). | `brain/memory/conversation_store.py` |
-| Proyek | File yang disentuh, keputusan, fakta, error, dan output yang terpotong. Disimpan di `<workspace>/.agent_memory`. | `brain/memory/project_memory.py` |
-| Pengetahuan | Catatan dan playbook yang berlaku lintas proyek. Bisa dibuka langsung di Obsidian. | `vault/` |
+| Memori proyek | Keputusan, fakta, error, dan file | `.agent_memory/` |
+| Vault | Catatan chat, bisa dibuka di Obsidian | `.vault/` |
+| Graphify | Graph kode | `graphify-out/` |
+| aislop | Skor kualitas kode | `.agent_memory/aislop.json` |
+| Ponytail | Mode `off`, `lite`, `full`, atau `ultra` | `.agent_memory/session.json` |
 
-- Profil pengguna ada di `vault/90-meta/user-profile.md` dan berlaku di semua proyek. Hanya yang kamu nyatakan yang disimpan: `ingat: saya memakai pnpm`, `nama saya Wira`, atau `/memory add`. Hapus dengan `/memory forget`.
-- Ringkasan memori proyek diurutkan menurut relevansinya dengan permintaan saat ini, lalu menurut usianya.
-- Web chat, team run, dan CLI memakai orchestrator yang sama, jadi perilaku memorinya juga sama.
-- Tool catatan hanya `vault_*`. Nama lama `obsidian_*` otomatis diarahkan ke sana.
-- Hasil web search bisa disimpan ke vault (`WEB_SEARCH_OBSIDIAN_ENABLED`, `OBSIDIAN_VAULT_PATH`).
-- Tool `graphify_*` hanya aktif bila `GRAPHIFY_MEMORY_ENABLED=true` dan `GRAPHIFY_MEMORY_ENDPOINT` terisi. Graph vault lokal tersedia lewat `vault_graph_build`, `vault_neighbours`, dan `vault_explain`.
+Profil pengguna dan playbook berlaku di semua chat, dan disimpan di `vault/`.
 
-Struktur vault:
-
-```text
-vault/
-  00-inbox  10-sessions  20-concepts  30-decisions  40-people-projects  50-playbooks  90-meta
-```
-
----
-
-## Satu Sesi, Satu Set Lengkap
-
-Setiap chat punya foldernya sendiri di `workspace/<sesi>/`, sehingga apa yang dipelajari di satu chat tidak tercampur ke chat lain:
-
-| Komponen | Milik sesi | Lokasi |
-|---|---|---|
-| Memori proyek | Keputusan, fakta, error, file, output terpotong | `.agent_memory/` |
-| Vault Obsidian | Catatan chat ini, bisa dibuka di Obsidian | `.vault/` |
-| Graphify | Graph kode, diperbarui otomatis setelah file berubah | `graphify-out/` |
-| aislop | Skor kualitas, ikut memeriksa file yang baru diubah | `.agent_memory/aislop.json` |
-| Ponytail | Mode per chat: `off`, `lite`, `full`, `ultra` | `.agent_memory/session.json` |
-
-Profil kamu dan playbook tetap global, karena isinya tentang kamu dan cara bekerja. Vault bersama tetap bisa dibaca lewat `scope: global`.
-
-```bash
-npm install -g aislop          # opsional, aktif otomatis setelah terpasang
-uv tool install graphifyy      # opsional, aktif otomatis setelah terpasang
-```
-
-Hapus sesi di web juga menghapus foldernya. Di CLI: `/stack` dan `/ponytail lite`.
-
----
+Semua data ini diabaikan Git dan tidak ikut terbit. Menghapus chat di web juga menghapus foldernya.
 
 ## Sandbox
 
-Perintah agent (`execute_command`, `run_checks`, dan tes dari verifikasi) berjalan terisolasi. Agent hanya bisa menulis ke folder proyek aktif. Folder home, file `.env`, kunci SSH, dan API key tidak terlihat, internet mati secara default, dan pemakaian CPU, ukuran file, serta jumlah proses dibatasi.
+`execute_command`, `run_checks`, dan tes dari verifikasi berjalan terisolasi. Agent hanya bisa menulis ke folder kerjanya, dan internet mati secara bawaan. Atur `SANDBOX_NETWORK=true` agar `pip install` dan `npm install` bisa jalan. `python main.py doctor` mencoba keluar dari sandbox dan melaporkan hasilnya.
 
-```bash
-sudo apt install bubblewrap   # atau jalankan Docker
-python main.py doctor         # mencoba keluar dari sandbox dan melaporkan hasilnya
-```
+## Execution harness
 
-Tanpa bubblewrap atau Docker, perintah agent ditolak. Atur `SANDBOX_NETWORK=true` agar `pip install` dan `npm install` bisa jalan, atau `SANDBOX_MODE=off` untuk mematikan isolasi. Tanpa proyek aktif, kode agent sendiri bersifat hanya-baca bagi perintah tersebut.
-
----
-
-## Upload dan Gambar
-
-- Dokumen (PDF, DOCX, PPTX, XLSX, dan sejenisnya) diubah ke Markdown lewat MarkItDown
-  di `POST /api/upload`. Batas: `MAX_UPLOAD_MB` dan `MAX_UPLOAD_CHARS`.
-- Gambar diperkecil hingga sisi terpanjang `IMAGE_MAX_SIDE` dan dikirim sebagai `image_url`,
-  maksimal `MAX_CHAT_IMAGES` per pesan. Bila model tidak mendukung vision, gambar dibuang
-  dengan peringatan di log.
-- Audio tidak didukung. Upload audio ditolak dengan 415.
-- Video masih draft. Aktifkan dengan `VIDEO_UPLOAD_ENABLED=true`. Butuh ffmpeg dan transkripsi.
-
----
-
-## Ponytail
-
-Gaya jawaban ringkas, diatur lewat env:
-
-- `PONYTAIL_MODE`: `off`, `lite`, `full` (bawaan), atau `ultra`.
-- `PONYTAIL_TASKS`: jenis tugas yang kena, misalnya `code,reason`.
-- Teks tiap level ada di `brain/system_prompt/ponytail*.txt` dan bisa diedit langsung.
-
-Perintah `/ponytail-review` dan `/ponytail-audit` belum ada.
-
----
-
-## Security Layer
-
-Kode ada di `security/`, kebijakan di `security/policy.yaml`.
-
-| Komponen | Fungsi |
-|---|---|
-| `policy_engine.py` | Aturan izin tool |
-| `path_jail.py` | Membatasi akses file ke workspace |
-| `secrets_vault.py` | Penyimpanan rahasia terenkripsi |
-| `audit_chain.py` | Log audit hash-chain (`audit.jsonl`) |
-| `prompt_shield.py` | Penyaring prompt injection |
-| `redactor.py` | Menyamarkan rahasia di log dan keluaran |
-| `rate_guard.py`, `web_access.py`, `headers.py` | Pembatasan laju dan akses web |
-
----
-
-## Menjalankan Test
-
-```bash
-python -m pytest
-python -m pytest -m "not live"   # lewati tes yang memanggil API asli
-ruff check .
-```
-
-Terakhir dijalankan: 218 tes lolos. Alur gambar dan workspace sesi di web belum punya tes ujung ke ujung.
-
----
-
-## Struktur Proyek
-
-```text
-main.py, cli.py     entry point CLI dan Web
-agent/              orchestrator, agent loop, session manager
-brain/              classifier, context assembler, memory, token budget, system prompt
-model/              API client, registry, parser, stream
-tool/               tool lokal: edit file, command, upload, web search, memory vault
-security/           policy, path jail, vault, audit, shield
-web/                server FastAPI dan file statis
-config/             settings, konstanta, models_config.yaml
-utils/              logger, helper, workspace context, tunnel
-vault/              memory Obsidian
-workspace/          hasil kerja per sesi
-tests/              test suite
-```
-
-Dokumen internal (catatan desain, rencana, review) disimpan di `.internal/`.
-Folder itu diabaikan Git, jadi hanya `README.md` dan `LICENSE` yang tampil di repo.
-
----
-
-## Execution Harness
-
-`agent/harness/` memindahkan tanggung jawab disiplin dari model ke loop, supaya model murah bekerja lebih mendekati model mahal. Harness berjalan di web chat, team run, dan CLI. Semuanya berjalan di kode tanpa token, kecuali advisor.
+`agent/harness/` memindahkan disiplin kerja dari model ke loop:
 
 | Lapisan | Fungsi |
 |---|---|
-| Tier (`tiers.py`) | Membagi model menjadi lite, standard, dan frontier. Tier lebih murah mendapat batas lebih ketat dan pengawasan lebih banyak. Pola bisa diganti lewat `harness.tiers` di `models_config.yaml`. |
-| Pemilihan tool (`tool_select.py`) | Menawarkan 12 sampai 18 tool yang relevan, bukan 40 tool (sekitar 5 ribu token skema per request). |
-| Guard (`guards.py`) | Memperbaiki argumen rusak, menjelaskan argumen yang kurang, memangkas hasil panjang, dan mendeteksi panggilan yang berulang atau terus gagal. |
-| Verifier (`verifier.py`) | Sebelum jawaban diterima: berkas yang berubah harus valid, tes yang ada harus lulus, dan klaim pekerjaan harus didukung tool call. Kegagalan dikembalikan ke model. Yang tetap gagal ditampilkan ke pengguna sebagai belum terverifikasi. |
-| Advisor (`advisor.py`) | Run yang macet mendapat saran singkat dari model lebih kuat, lalu diserahkan ke model itu jika saran tidak membantu. Set `HARNESS_ADVISOR=false` agar biaya tetap. |
-| Playbook (`playbooks.py`) | Run dengan minimal tiga tool call disimpan ke `vault/50-playbooks` dan bisa dibaca di Obsidian. Permintaan serupa berikutnya memakai langkah dan jebakan dari catatan itu. |
-| Briefing (`briefing.py`) | Memasukkan playbook, catatan vault, dan berkas yang relevan ke prompt, sehingga model tidak perlu ingat untuk mencarinya. |
+| `tiers.py` | Membagi model ke lite, standard, dan frontier, dengan pengawasan lebih ketat untuk tier murah |
+| `tool_select.py` | Menawarkan tool yang relevan saja, sehingga skemanya hemat token |
+| `guards.py` | Memperbaiki argumen rusak, memangkas hasil panjang, dan mendeteksi loop |
+| `verifier.py` | Memeriksa file dan tes sebelum jawaban diterima |
+| `advisor.py` | Meminta saran model lebih kuat saat macet, lalu menyerahkan tugasnya bila perlu |
+| `playbooks.py`, `briefing.py` | Menyimpan cara kerja yang berhasil dan memakainya lagi |
 
-Tool berjalan di mesin ini dan tunduk pada `security/policy.yaml`. Pakai `AGENT_DISABLED_TOOLS` untuk menolak tool tertentu, misalnya `execute_command`.
+Panduan kerja ada di `brain/skills/`: `fix-bug`, `add-feature`, `clean-code`, `web-research`, `design-ui`, `build-web`, dan `build-backend`.
 
-Tool kode untuk memahami proyek tanpa membaca semuanya: `project_overview` (stack dan cara menjalankan tes), `code_outline` (fungsi dan kelas beserta nomor baris), `find_symbol` (definisi dan pemakaian), dan `run_checks` (tes, lint, dan type check proyek). `file_patch` kini menoleransi selisih indentasi bila hanya ada satu lokasi yang cocok, dan memberi baris terdekat saat gagal.
+## Struktur proyek
 
-Skill ada di `brain/skills/`: `fix-bug`, `add-feature`, `clean-code`, `design-ui`, `build-web`, dan `build-backend`. Skill yang cocok dengan permintaan masuk ke prompt model lite dan standard secara otomatis, sisanya bisa dimuat dengan `load_skill`. Tambahkan skill sendiri lewat `SKILLS_DIR`.
+```text
+main.py, cli.py   entry point
+agent/            orchestrator, agent loop, harness, tim agent
+brain/            classifier, konteks, memori, prompt, skill
+model/            API client, provider, registry, stream
+tool/             tool lokal, web, memori, dan kode
+security/         sandbox, policy, path jail, audit, shield
+web/              server FastAPI dan Web UI
+config/           settings, model, provider
+utils/            logger, CLI UI, workspace
+tests/            test suite
+```
 
-Model tanpa tool calling bawaan tetap bisa memakai tool: daftar tool dikirim sebagai teks dan loop membaca panggilannya dari jawaban model.
+## Pengembangan
 
-Provider tambahan didaftarkan di `config/providers.yaml`, masing-masing dengan URL, key, prefix model, dan batas konkurensi sendiri, sehingga satu tim bisa memakai beberapa provider. Bila saldo satu provider habis (HTTP 402), model provider itu dilewati 10 menit dan request pindah ke provider lain.
+```bash
+bash scripts/check_all.sh        # ruff, mypy, compile, pytest, import
+python -m pytest -m "not live"   # lewati tes yang memanggil API asli
+```
 
-Team flow menambahkan `depends_on` antar-agent, reviewer opsional yang bisa mengembalikan draf lead sampai dua kali, dan template siap pakai di `GET /api/teams/templates`.
+Jangan pernah meng-commit `.env`. Key disimpan di sana, dan `.env.example` hanya berisi contoh.
 
 ## Troubleshooting
 
-| Gejala | Penyebab dan solusi |
+| Gejala | Solusi |
 |---|---|
-| `ModuleNotFoundError` saat tes | Jalankan `python -m pytest` dari root proyek ini |
-| Koneksi ditolak | Periksa `API_BASE_URL` dan `API_KEY`, lalu `python main.py health` |
-| Upload audio gagal (415) | Audio memang tidak didukung |
-| Video ditolak | Set `VIDEO_UPLOAD_ENABLED=true` dan pasang ffmpeg |
-| Gambar tidak terbaca model | Model tidak mendukung vision. Pilih model vision |
-| Nilai env tidak terbaca | Pastikan tidak ada komentar di baris yang sama dengan nilai |
-| Web tidak bisa diakses dari luar | Gunakan `--tunnel` |
-
----
+| Perintah agent ditolak | Pasang bubblewrap atau Docker, lalu jalankan `python main.py doctor` |
+| Koneksi ditolak | Periksa `API_BASE_URL` dan `API_KEY`, lalu jalankan `python main.py health` |
+| Hasil riset kurang lengkap | Pasang SearXNG atau isi `BRAVE_SEARCH_API_KEY` |
+| Gambar tidak terbaca | Model tidak mendukung vision, jadi pilih model lain |
+| Nilai env tidak terbaca | Pindahkan komentar ke baris sendiri |
+| Menu tim tidak muncul | Atur `WEB_TEAMS_ENABLED=true` |
 
 ## Lisensi
 
-SquidWings adalah perangkat lunak berbayar (proprietary). Penggunaan memerlukan
-lisensi yang dibeli. Lihat [LICENSE](LICENSE) untuk syarat lengkap.
+SquidWings adalah perangkat lunak berbayar (proprietary). Penggunaan memerlukan lisensi yang dibeli. Lihat [LICENSE](LICENSE) untuk syarat lengkap.

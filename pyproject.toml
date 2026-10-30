@@ -25,7 +25,7 @@ ignore = ["E501"]
 "tests/test_vault_memory.py" = ["N812"]
 
 [tool.pytest.ini_options]
-# Without this section pytest walks up to /home/wira/Documents/agent and uses
+# Without this section pytest walks up to the parent folder and uses
 # that project's config, where pythonpath=["."] resolves `tool` to the WRONG
 # package (the parent's tool/, which has no execute_local_memory). Every test
 # then dies with ModuleNotFoundError before it runs.

@@ -46,6 +46,9 @@ _BING_ENDPOINT = "https://www.bing.com/search"
 # transport failure (DNS, TCP, timeout) the next provider is tried. Provider
 # refusals (403/429) are honoured per-provider and never bypassed.
 _PROVIDER_CHAIN: tuple[str, ...] = (_PROVIDER, _BING_PROVIDER)
+_SEARXNG_PROVIDER = "searxng"
+_BRAVE_PROVIDER = "brave-api"
+_BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 _BROWSER_USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/124.0.0.0 Safari/537.36"
@@ -99,6 +102,8 @@ class _Config:
     graphify_enabled: bool
     graphify_endpoint: str
     graphify_timeout: float
+    searxng_url: str = ""
+    brave_api_key: str = ""
 
 
 def _get_config() -> _Config:
@@ -119,6 +124,8 @@ def _get_config() -> _Config:
         graphify_enabled=bool(getattr(s, "graphify_memory_enabled", False)),
         graphify_endpoint=str(getattr(s, "graphify_memory_endpoint", "") or "").strip(),
         graphify_timeout=float(getattr(s, "graphify_memory_timeout_seconds", 5.0)),
+        searxng_url=str(getattr(s, "searxng_url", "") or "").strip().rstrip("/"),
+        brave_api_key=str(getattr(s, "brave_search_api_key", "") or "").strip(),
     )
 
 
@@ -425,7 +432,11 @@ async def _fetch_results(
     """Try each provider in ``_PROVIDER_CHAIN`` until one returns results."""
     failures: list[str] = []
     refusals: list[ProviderRefusalError] = []
-    for provider in _PROVIDER_CHAIN:
+    configured = (
+        *((_SEARXNG_PROVIDER,) if config.searxng_url else ()),
+        *((_BRAVE_PROVIDER,) if config.brave_api_key else ()),
+    )
+    for provider in (*configured, *_PROVIDER_CHAIN):
         try:
             results = await _fetch_from_provider(provider, query, config)
         except ProviderRefusalError as exc:
@@ -474,6 +485,18 @@ async def _fetch_from_provider(
 
 async def _request_provider(provider: str, query: str, config: _Config) -> str:
     """Perform the provider-specific HTTP request and return the body."""
+    if provider in {_SEARXNG_PROVIDER, _BRAVE_PROVIDER}:
+        if provider == _SEARXNG_PROVIDER:
+            url, api_params, api_headers = f"{config.searxng_url}/search", {"q": query, "format": "json"}, {}
+        else:
+            url, api_params = _BRAVE_ENDPOINT, {"q": query, "count": str(min(config.max_results, 20))}
+            api_headers = {"Accept": "application/json", "X-Subscription-Token": config.brave_api_key}
+        async with httpx.AsyncClient(timeout=config.timeout, follow_redirects=True) as client:
+            api_response = await client.get(url, params=api_params, headers=api_headers)
+        if api_response.status_code in {403, 429}:
+            raise ProviderRefusalError(api_response.status_code, api_response.headers.get("Retry-After", ""))
+        api_response.raise_for_status()
+        return api_response.text
     if provider == _BING_PROVIDER:
         headers = {
             "User-Agent": _BROWSER_USER_AGENT,
@@ -507,7 +530,29 @@ async def _request_provider(provider: str, query: str, config: _Config) -> str:
     return response.text
 
 
+def _parse_api_results(provider: str, body: str) -> list[dict[str, str]]:
+    try:
+        data = json.loads(body)
+    except ValueError as exc:
+        raise WebSearchError(f"{provider} did not answer with JSON") from exc
+    if provider == _BRAVE_PROVIDER:
+        items, snippet_key = (data.get("web") or {}).get("results") or [], "description"
+    else:
+        items, snippet_key = data.get("results") or [], "content"
+    return [
+        {
+            "title": _strip_tags(str(item.get("title") or "")),
+            "url": str(item["url"]),
+            "snippet": _strip_tags(str(item.get(snippet_key) or "")),
+        }
+        for item in items
+        if str(item.get("url") or "").startswith(("http://", "https://"))
+    ]
+
+
 def _parse_provider(provider: str, body: str) -> list[dict[str, str]]:
+    if provider in {_SEARXNG_PROVIDER, _BRAVE_PROVIDER}:
+        return _parse_api_results(provider, body)
     if provider == _BING_PROVIDER:
         return _parse_bing_results(body)
     return _parse_results(body)

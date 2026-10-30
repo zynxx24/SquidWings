@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import datetime
 import os
 import re
 import select
+import shutil
 import sys
 import termios
 import time
@@ -65,7 +67,7 @@ from utils.cli_formatter import (
 from utils.helpers import format_tokens, generate_session_id
 from utils.logger import get_logger
 from utils.session_settings import PONYTAIL_MODES
-from utils.workspace_context import set_active_ponytail
+from utils.workspace_context import PROJECTS_ROOT, set_active_ponytail
 
 logger = get_logger(__name__)
 console = Console()
@@ -473,7 +475,7 @@ def _display_workspace_list(workspace_dir: Path, active_workspace: Path | None) 
 
     if not projects:
         console.print(Panel(
-            "[yellow]Belum ada proyek di folder workspace/.[/yellow]\n\n"
+            "[yellow]Belum ada proyek di folder workspace/projects/.[/yellow]\n\n"
             "Buat proyek baru dengan perintah:\n"
             "  [bold cyan]/tree YYYYMMDD-namaproyek[/bold cyan] (contoh: [cyan]/tree 20261009-appcash[/cyan])",
             title="[bold yellow]Workspace Masih Kosong[/bold yellow]",
@@ -483,7 +485,7 @@ def _display_workspace_list(workspace_dir: Path, active_workspace: Path | None) 
         return
 
     table = Table(
-        title="📂 Daftar Proyek di workspace/",
+        title="📂 Daftar Proyek di workspace/projects/",
         title_style="bold bright_cyan",
         border_style="cyan",
         box=box.ROUNDED,
@@ -686,17 +688,19 @@ def _handle_ide_command(
                 return True, None, active_workspace
 
             # User specified project name: e.g. /tree 20261009-appcash
-            clean_name = arg.strip().strip("/").replace("workspace/", "")
-            target = workspace_dir / clean_name
+            target = _project_path(workspace_dir, arg)
+            if target is None:
+                console.print(f"[yellow]Nama proyek tidak valid: {escape(arg)}[/yellow]")
+                return True, None, active_workspace
             is_new = not target.exists()
             target.mkdir(parents=True, exist_ok=True)
 
             if is_new:
-                console.print(f"[bold bright_green]✨ Proyek workspace baru dibuat: workspace/{target.name}[/bold bright_green]")
+                console.print(f"[bold bright_green]✨ Proyek baru dibuat: workspace/projects/{target.name}[/bold bright_green]")
                 console.print(f"[dim]📁 Path: {target}[/dim]")
                 console.print("[dim]🤖 AI sekarang memiliki akses penuh untuk baca, buat, edit, dan replace file di sini.[/dim]")
             else:
-                console.print(f"[bold bright_cyan]📁 Beralih ke workspace: workspace/{target.name}[/bold bright_cyan]")
+                console.print(f"[bold bright_cyan]📁 Beralih ke proyek: workspace/projects/{target.name}[/bold bright_cyan]")
 
             _display_file_browser(target, title=f"Workspace: {target.name}")
             return True, None, target
@@ -732,10 +736,12 @@ def _handle_ide_command(
             return True, None, None
         else:
             # Switch / create workspace
-            clean_name = arg.strip().strip("/").replace("workspace/", "")
-            target = workspace_dir / clean_name
+            target = _project_path(workspace_dir, arg)
+            if target is None:
+                console.print(f"[yellow]Nama proyek tidak valid: {escape(arg)}[/yellow]")
+                return True, None, active_workspace
             target.mkdir(parents=True, exist_ok=True)
-            console.print(f"[bold bright_cyan]📁 Workspace aktif: workspace/{target.name}[/bold bright_cyan]")
+            console.print(f"[bold bright_cyan]📁 Proyek aktif: workspace/projects/{target.name}[/bold bright_cyan]")
             _display_file_browser(target, title=f"Workspace: {target.name}")
             return True, None, target
 
@@ -1056,7 +1062,7 @@ def _display_status(
     status_lines.append(f"[bold]Current Model:[/bold]     {theme.get('icon', '❓')} [bold {theme.get('color', 'white')}]{current_model or 'auto (router)'}[/]")
 
     if active_workspace:
-        status_lines.append(f"[bold]Active Workspace:[/bold]  📁 [bold bright_green]workspace/{active_workspace.name}[/bold bright_green]")
+        status_lines.append(f"[bold]Active Workspace:[/bold]  📁 [bold bright_green]workspace/projects/{active_workspace.name}[/bold bright_green]")
     else:
         status_lines.append("[bold]Active Workspace:[/bold]  [dim]None (gunakan /tree YYYYMMDD-namaproyek)[/dim]")
 
@@ -1215,20 +1221,25 @@ async def process_input(
         elif kind == "remembered":
             for item in event.get("items") or []:
                 console.print(f"[green]✓ diingat[/green] [dim]{escape(str(item))}[/dim]")
-        elif kind == "tool" and event.get("phase") == "start":
+        elif kind == "tool" and event.get("phase") == "start" or kind == "tool" and event.get("phase") == "prepare":
             activity.stop()
             renderer.finish("")
             renderer = new_renderer()
-            activity.start(f"Menjalankan {event.get('name')}")
+            activity.start(cli_ui.describe_tool(str(event.get("name")), str(event.get("detail") or "")))
         elif kind == "tool":
             activity.stop()
             console.print(cli_ui.tool_line(
                 str(event.get("name")), str(event.get("detail") or ""), bool(event.get("ok")),
-                int(event.get("ms") or 0), str(event.get("error") or ""),
+                int(event.get("ms") or 0), str(event.get("error") or ""), str(event.get("meta") or ""),
             ))
             activity.start("Menunggu model")
         elif kind == "status":
-            activity.update(str(event.get("text") or ""))
+            if event.get("note"):
+                activity.stop()
+                console.print(f"  [yellow]•[/yellow] [dim]{escape(str(event.get('text') or ''))}[/dim]")
+                activity.start("Menunggu model")
+            else:
+                activity.update(str(event.get("text") or ""))
 
     try:
         response = await orchestrator.process(
@@ -1268,8 +1279,45 @@ async def process_input(
     return response.content
 
 
-async def chat_mode() -> None:
-    """Interactive chat REPL with IDE features and Workspace Project support."""
+def _project_path(root: Path, name: str) -> Path | None:
+    """The folder for a project name, or None if the name points outside ``root``."""
+    clean = name.strip().strip("/").replace("workspace/projects/", "").replace("workspace/", "")
+    target = (root / clean).resolve()
+    return target if clean and target != root.resolve() and target.is_relative_to(root.resolve()) else None
+
+
+def _start_project(root: Path, session_id: str, requested: str | None = None) -> tuple[Path, bool]:
+    """Open the folder a CLI session works in, as soon as it starts.
+
+    Returns:
+        The folder, and whether it was created just for this session. Such a
+        folder is removed at exit if the session never used it.
+    """
+    target = _project_path(root, requested) if requested else None
+    if requested and target is None:
+        console.print(f"[yellow]Nama proyek tidak valid: {escape(requested)}. Membuat proyek baru.[/yellow]")
+    if target is None:
+        stamp = datetime.datetime.now().strftime("%Y%m%d")
+        target = root / f"{stamp}-{session_id.removeprefix('sess-')[:6]}"
+    is_new = not target.exists()
+    target.mkdir(parents=True, exist_ok=True)
+    return target, is_new and not requested
+
+
+def _remove_if_unused(folder: Path) -> None:
+    """Delete a session's auto-created project if nothing happened in it."""
+    with contextlib.suppress(OSError):
+        has_files = any(not item.name.startswith(".") for item in folder.iterdir())
+        if not has_files and ProjectMemory(folder).state.get("turn_count", 0) == 0:
+            shutil.rmtree(folder)
+
+
+async def chat_mode(project: str | None = None) -> None:
+    """Interactive chat REPL that works inside a project folder from the start.
+
+    Args:
+        project: Project to open. Without one, the session gets a new project.
+    """
     settings = get_settings()
     secrets = get_secrets()
 
@@ -1294,9 +1342,15 @@ async def chat_mode() -> None:
     terminal_config = TerminalFormatConfig.load(terminal_cfg_path)
 
     # Workspace directory
-    workspace_dir = project_root / "workspace"
+    workspace_dir = PROJECTS_ROOT
     workspace_dir.mkdir(parents=True, exist_ok=True)
-    active_workspace: Path | None = None
+    # An explicit SQUIDWINGS_WORKSPACE wins over the projects folder.
+    configured = os.getenv("SQUIDWINGS_WORKSPACE", "").strip()
+    if configured:
+        started_in, auto_project = Path(configured), False
+    else:
+        started_in, auto_project = _start_project(workspace_dir, session_id, project)
+    active_workspace: Path | None = started_in
 
     # Track user-selected model override
     override_model: str | None = None
@@ -1307,6 +1361,7 @@ async def chat_mode() -> None:
         models=registry.count,
         providers=sorted({m.provider or "unknown" for m in registry.get_all()}),
         session_id=session_id,
+        project=started_in,
     )
 
     try:
@@ -1398,6 +1453,8 @@ async def chat_mode() -> None:
             # langsung dikonsumsi console.input() berikutnya → re-trigger.
             _flush_stdin_buffer()
     finally:
+        if auto_project:
+            _remove_if_unused(started_in)
         # The client may already be mid-teardown when the user interrupts the
         # loop; a second interrupt here would replace a clean exit with a
         # traceback.
@@ -1657,7 +1714,8 @@ Examples:
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # chat command
-    subparsers.add_parser("chat", help="Interactive chat mode with IDE & Workspace")
+    chat_parser = subparsers.add_parser("chat", help="Interactive chat mode with IDE & Workspace")
+    chat_parser.add_argument("--project", "-p", help="Open this project in workspace/projects (default: a new one)")
 
     # ask command
     ask_parser = subparsers.add_parser("ask", help="One-shot question")
@@ -1694,7 +1752,7 @@ Examples:
     args = parser.parse_args()
 
     if args.command == "chat" or args.command is None:
-        _run_async(chat_mode)
+        _run_async(chat_mode, getattr(args, "project", None))
     elif args.command == "ask":
         _run_async(ask_cmd, args.question, getattr(args, "model", None))
     elif args.command == "models":

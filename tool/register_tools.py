@@ -60,6 +60,7 @@ from tool.execute.execute_local_ops.local_ops_tool import (
 )
 from tool.execute.execute_skills.skill_tool import load_skill
 from tool.execute.execute_upload_file.read_file_tool import list_directory, read_file
+from tool.execute.execute_web_search.web_reader import web_read, web_research
 from tool.execute.execute_web_search.web_search_tool import web_search
 from tool.registry.tool_registry import ToolRegistry
 from tool.registry.tool_schema import ParamType, ToolParameter, ToolSchema
@@ -724,8 +725,36 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
 
     reg.register(
         ToolSchema(
+            name="web_research",
+            description=(
+                "Search the web, open the best pages, and return what they actually say, with "
+                "URLs. Use this for anything current or factual, instead of web_search."
+            ),
+            parameters=[
+                ToolParameter(name="query", param_type=ParamType.STRING, description="What to look for.", required=True),
+                ToolParameter(name="max_pages", param_type=ParamType.INTEGER, description="Pages to read, 1 to 6. Default 4.", required=False),
+                workspace_param,
+            ],
+        ),
+        web_research,
+    )
+    reg.register(
+        ToolSchema(
+            name="web_read",
+            description="Open one web page or PDF and return its main content. Renders JavaScript sites in a browser when needed.",
+            parameters=[
+                ToolParameter(name="url", param_type=ParamType.STRING, description="Full http or https address.", required=True),
+                ToolParameter(name="query", param_type=ParamType.STRING, description="What you are looking for, to keep the relevant parts of long pages.", required=False),
+                ToolParameter(name="max_chars", param_type=ParamType.INTEGER, description="Most text to return. Default 8000.", required=False),
+            ],
+        ),
+        web_read,
+    )
+
+    reg.register(
+        ToolSchema(
             name="load_skill",
-            description="Load a step-by-step guide by name, such as fix-bug, add-feature, clean-code, design-ui, build-web, or build-backend.",
+            description="Load a step-by-step guide by name, such as fix-bug, add-feature, clean-code, web-research, design-ui, build-web, or build-backend.",
             parameters=[
                 ToolParameter(name="name", param_type=ParamType.STRING, description="Skill name.", required=True),
             ],

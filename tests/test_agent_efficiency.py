@@ -101,6 +101,7 @@ async def test_pipeline_search_really_calls_web_search(tmp_path: Any) -> None:
         return {"ok": True, "results": [{"title": "T", "url": "http://u", "snippet": "fact"}]}
 
     original = registry._tools.get("web_search")
+    research = registry._tools.pop("web_research", None)
     registry.register(
         ToolSchema(
             name="web_search",
@@ -118,6 +119,8 @@ async def test_pipeline_search_really_calls_web_search(tmp_path: Any) -> None:
     finally:
         if original:
             registry._tools["web_search"] = original
+        if research:
+            registry._tools["web_research"] = research
     assert seen == [("harga kopi", 4)]
     assert state.web_results[0].snippet == "fact"
 

@@ -39,7 +39,7 @@ from security.web_access import WebSecurityMiddleware, is_loopback_host, set_pub
 from tool.execute.execute_code_intel import quality_tools
 from utils.helpers import format_tokens, generate_session_id, is_valid_session_id
 from utils.logger import get_logger
-from utils.workspace_context import WORKSPACE_ROOT, session_workspace
+from utils.workspace_context import SESSIONS_ROOT, session_workspace
 from web.team_api import router as team_router
 
 logger = get_logger(__name__)
@@ -541,6 +541,7 @@ async def session_messages(session_id: str) -> dict[str, Any]:
                 "timestamp": m.timestamp,
                 "model_used": m.model_used,
                 "token_count": m.token_count,
+                "tool_trace": m.tool_trace,
             }
             for m in history
         ],
@@ -568,10 +569,10 @@ async def delete_session(session_id: str) -> dict[str, Any]:
         orch.session_manager.delete_session(session_id)
     _override_models.pop(session_id, None)
     # The chat's folder holds its vault, graph, memory, and files. Only ever a
-    # direct child of the workspace root, under an id already checked to be plain.
+    # direct child of the sessions folder, under an id already checked to be plain.
     if is_valid_session_id(session_id):
-        folder = WORKSPACE_ROOT / session_id
-        if folder.is_dir() and folder.parent == WORKSPACE_ROOT:
+        folder = SESSIONS_ROOT / session_id
+        if folder.is_dir():
             await asyncio.to_thread(shutil.rmtree, folder, ignore_errors=True)
     return {"status": "ok", "session_id": session_id, "deleted": True}
 
@@ -579,7 +580,8 @@ async def delete_session(session_id: str) -> dict[str, Any]:
 def _stack(session_id: str) -> session_stack.SessionStack:
     if not is_valid_session_id(session_id):
         raise HTTPException(status_code=400, detail="Invalid session id")
-    return session_stack.SessionStack(session_id, session_workspace(session_id))
+    # Just looking at a chat must not leave an empty folder behind.
+    return session_stack.SessionStack(session_id, session_workspace(session_id, create=False))
 
 
 @app.get("/api/session/{session_id}/stack")
@@ -600,6 +602,7 @@ async def update_session_stack(session_id: str, payload: dict[str, Any]) -> dict
 async def build_session_graph(session_id: str) -> dict[str, Any]:
     """Build or rebuild this chat's code graph now."""
     stack = _stack(session_id)
+    stack.workspace.mkdir(parents=True, exist_ok=True)
     result = await quality_tools.code_graph("build", workspace_path=str(stack.workspace))
     return {"result": result, "stack": await asyncio.to_thread(stack.status)}
 
@@ -608,6 +611,7 @@ async def build_session_graph(session_id: str) -> dict[str, Any]:
 async def scan_session(session_id: str) -> dict[str, Any]:
     """Run aislop over this chat's folder now."""
     stack = _stack(session_id)
+    stack.workspace.mkdir(parents=True, exist_ok=True)
     result = await quality_tools.aislop_scan(workspace_path=str(stack.workspace))
     return {"result": result, "stack": await asyncio.to_thread(stack.status)}
 

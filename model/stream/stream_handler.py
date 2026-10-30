@@ -56,15 +56,20 @@ class StreamAggregator:
         self,
         on_content_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
+        on_tool_delta: Callable[[int, str, str], None] | None = None,
     ) -> None:
         """Initialize the aggregator.
 
         Args:
             on_content_chunk: Optional callback for each content chunk (for live display).
             on_thinking_chunk: Optional callback for each thinking chunk.
+            on_tool_delta: Optional callback with (index, name, arguments so far)
+                while a tool call is still being written. Writing a large file can
+                take the model a long time, and nothing else is visible meanwhile.
         """
         self.on_content_chunk = on_content_chunk
         self.on_thinking_chunk = on_thinking_chunk
+        self.on_tool_delta = on_tool_delta
 
     async def aggregate(
         self,
@@ -169,6 +174,11 @@ class StreamAggregator:
                         buf["name"] = func["name"]
                     if func.get("arguments"):
                         buf["arguments"] += func["arguments"]
+                    if self.on_tool_delta and buf["name"]:
+                        try:
+                            self.on_tool_delta(idx, buf["name"], buf["arguments"])
+                        except Exception as cb_err:
+                            logger.debug(f"[stream] on_tool_delta display error: {cb_err}")
 
         # Usage in chunk
         usage = chunk.get("usage")

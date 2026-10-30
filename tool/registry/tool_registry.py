@@ -33,6 +33,11 @@ _TOOL_ALIASES: dict[str, str] = {
     "run_shell": "execute_command",
     "cmd": "execute_command",
     "read": "read_file",
+    "browse": "web_read",
+    "fetch": "web_read",
+    "open_url": "web_read",
+    "read_url": "web_read",
+    "research": "web_research",
     "cat": "read_file",
     "open_file": "read_file",
     "view_file": "read_file",
@@ -79,6 +84,7 @@ WORKSPACE_TOOLS: dict[str, str] = {
             "vault_graph_build", "vault_neighbours", "vault_explain",
             "vault_health", "vault_search", "vault_read", "vault_recall", "vault_write",
             "project_overview", "code_outline", "find_symbol", "run_checks", "code_graph", "aislop_scan",
+            "web_research",
         ),
         "workspace_path",
     ),
@@ -92,6 +98,7 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset({
     "git_diff", "json_query", "web_search", "time_now", "vault_search", "vault_read",
     "vault_recall", "vault_neighbours", "vault_explain", "memory_recall", "memory_rank_files",
     "graphify_query", "project_overview", "code_outline", "find_symbol", "load_skill",
+    "web_research", "web_read",
 })
 
 

@@ -1,3 +1,59 @@
+# Only source code, tests, README, LICENSE, and .env.example are published.
+# A leading "/" means the project root. Without it, "vault/" also hides
+# tool/execute/execute_local_memory/vault/, which is source code.
+
+# === Secrets ===
+.env
+.env.*
+!.env.example
+.vault.json
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+credentials*.json
+secrets.json
+secrets.yaml
+secrets.yml
+
+# === Private data: chats, memory, notes, audit results ===
+/workspace/
+/vault/
+/reports/
+/audit/
+/logs/
+/tool.orphan/
+brain/memory/chat_store/
+brain/memory/store/
+web/data/
+.agent_memory/
+.agent_backups/
+.vault/
+graphify-out/
+audit.jsonl
+*.jsonl
+*.db
+*.sqlite3
+*.log
+
+# === Docs: only README.md is public, plus the skills the agent loads ===
+.internal/
+*.md
+!README.md
+!brain/skills/*.md
+add_model.md
+
+# === Local tooling ===
+.claude/
+.relaycode.json
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
 # === Python ===
 __pycache__/
 *.py[cod]
@@ -7,63 +63,30 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-audit/
-reports/
-*.json
-add_model.md
-
-
-# === Environment & secrets ===
-.env
-.env.*
-!.env.example
 .venv/
 venv/
 env/
-
-# === IDE / tooling cache ===
-.vscode/
-.idea/
-.relaycode.json
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
 htmlcov/
-*.swp
-*.swo
-*~
 
-# === Agent runtime data ===
-.agent_memory/
-.agent_backups/
-audit.jsonl
-graphify-out/
-vault/
-workspace/
-*.db
-*.sqlite3
-logs/
-*.log
-tunnel.log
+# === Generated JSON. Add an exception here if a config file must be published ===
+*.json
+!pyrightconfig.json
 
-# === Docs: only README.md is public ===
-.internal/
-*.md
-!README.md
-!LICENSE
-
-# === Backups, archives, scratch ===
+# === Backups, archives, media ===
 *.bak
 *.tar.gz
 *.zip
 *.orphan
-tool.orphan/
 _t.py
-
-# === Screenshots / media ===
 Screenshot_*.png
 
 # === OS ===
 .DS_Store
 Thumbs.db
+
+# === Stale lock file. requirements.lock is the real one ===
+uv.lock

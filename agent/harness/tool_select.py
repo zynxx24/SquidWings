@@ -14,17 +14,17 @@ _BY_TASK: dict[TaskType, list[str]] = {
     TaskType.CODE: [
         "read_file", "file_patch", "file_write", "file_search", "execute_command", "run_checks",
         "find_symbol", "code_outline", "project_overview", "code_graph", "aislop_scan",
-        "list_directory", "load_skill", "git_diff", "vault_recall", "web_search",
+        "list_directory", "web_research", "web_read", "load_skill", "git_diff", "vault_recall",
     ],
     TaskType.ACTIVITY: [
-        "read_file", "file_write", "file_patch", "file_search", "web_search", "execute_command",
-        "list_directory", "time_now", "vault_recall", "vault_write", "load_skill",
+        "web_research", "web_read", "read_file", "file_write", "file_patch", "file_search",
+        "execute_command", "list_directory", "time_now", "vault_recall", "vault_write", "load_skill",
     ],
-    TaskType.SCHOOL_TASK: ["web_search", "read_file", "file_write", "vault_recall", "time_now"],
+    TaskType.SCHOOL_TASK: ["web_research", "web_read", "read_file", "file_write", "vault_recall", "time_now"],
     # Small models make arithmetic slips; running the sum in Python avoids them.
     TaskType.MATH: ["execute_command"],
-    TaskType.REASON: ["web_search", "read_file", "vault_recall", "load_skill"],
-    TaskType.MULTIMODAL: ["read_file", "web_search"],
+    TaskType.REASON: ["web_research", "web_read", "read_file", "vault_recall", "load_skill"],
+    TaskType.MULTIMODAL: ["read_file", "web_read"],
     TaskType.GENERATE_IMG: [],
 }
 

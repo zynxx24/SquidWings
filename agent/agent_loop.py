@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -50,6 +51,11 @@ from .harness.verifier import verify_turn
 
 logger = get_logger(__name__)
 
+# Web pages are the evidence for the answer: a small model needs them whole too.
+_RESULT_FLOOR = {"web_research": 16_000, "web_read": 12_000}
+_TOOL_PROGRESS_STEP = 1_500
+# The file or command in tool arguments that are still being written.
+_PARTIAL_TARGET_RE = re.compile(r'"(?:path|file_path|dir_path|command|query|url|name)"\s*:\s*"((?:[^"\\]|\\.)*)"?')
 REASONING_RETRIES = 2
 MAX_REASONING_TOKENS = 65_536
 MAX_LOCKOUT_WAIT_SECONDS = 30.0
@@ -423,7 +429,7 @@ class AgentLoop:
 
             # Gate the claimed result before the user relies on it.
             if harness:
-                harness.emit(type="status", text="Verifying result")
+                harness.emit(type="status", text="Memeriksa hasil")
                 issues, passed = await verify_turn(
                     parsed.content or "",
                     result.tool_calls_history,
@@ -436,6 +442,7 @@ class AgentLoop:
                     verify_rounds_left -= 1
                     harness.stats.verify_rounds += 1
                     logger.info(f"[agent_loop] Verification failed: {issues}")
+                    harness.emit(type="status", note=True, text=f"Pemeriksaan menemukan {len(issues)} masalah, diperbaiki")
                     problem = "\n".join(f"- {issue}" for issue in issues)
                     feedback = (
                         "Pemeriksaan otomatis menemukan masalah pada hasilmu:\n"
@@ -521,6 +528,7 @@ class AgentLoop:
             aggregator = StreamAggregator(
                 on_content_chunk=_on_content,
                 on_thinking_chunk=_on_thinking,
+                on_tool_delta=self._tool_progress() if self._harness else None,
             )
             stream_iter = self._api_client.chat_completion_stream(
                 model=model_id,
@@ -563,9 +571,54 @@ class AgentLoop:
                     f"with max_tokens={max_tokens}"
                 )
                 if harness:
-                    harness.emit(type="status", text=f"Model is busy, retrying in {wait:.0f}s")
+                    harness.emit(type="status", note=True, text=f"Model sibuk, mencoba lagi dalam {wait:.0f} detik")
                 await asyncio.sleep(wait)
         raise AssertionError("unreachable")
+
+    def _tool_progress(self) -> Callable[[int, str, str], None]:
+        """Report a tool call while the model is still writing it, at a sensible rate."""
+        harness = self._harness
+        reported: dict[int, tuple[str, int]] = {}
+
+        def report(index: int, name: str, arguments: str) -> None:
+            detail = _PARTIAL_TARGET_RE.search(arguments)
+            target = detail.group(1)[:120] if detail else ""
+            last_target, last_size = reported.get(index, ("", -_TOOL_PROGRESS_STEP))
+            if target == last_target and len(arguments) - last_size < _TOOL_PROGRESS_STEP:
+                return
+            reported[index] = (target, len(arguments))
+            if harness:
+                harness.emit(type="tool", phase="prepare", index=index, name=name, detail=target, chars=len(arguments))
+
+        return report
+
+    @staticmethod
+    def _result_meta(tool_call: dict[str, Any], tool_result: dict[str, Any]) -> str:
+        """A short fact about what a tool did, shown next to it."""
+        name = tool_call.get("name", "")
+        arguments = tool_call.get("arguments")
+        arguments = arguments if isinstance(arguments, dict) else {}
+        payload = tool_result.get("result")
+        payload = payload if isinstance(payload, dict) else {}
+        if tool_failed(tool_result):
+            return ""
+        if name == "file_patch":
+            removed = str(arguments.get("search") or "").count("\n") + 1
+            added = str(arguments.get("replace") or "").count("\n") + 1
+            return f"+{added} −{removed}"
+        if name == "file_write":
+            return f"{str(arguments.get('content') or '').count(chr(10)) + 1} baris"
+        if name == "web_research":
+            return f"{payload.get('pages_read', 0)} halaman dibaca"
+        if name == "web_search":
+            return f"{len(payload.get('results') or [])} hasil"
+        if name == "web_read":
+            return f"{int(payload.get('total_chars') or 0) // 1000} rb karakter"
+        if name == "run_checks" and payload.get("passed") is not None:
+            return "lulus" if payload["passed"] else "gagal"
+        if name == "aislop_scan" and payload.get("score") is not None:
+            return f"skor {payload['score']}"
+        return ""
 
     async def _run_tool(self, tool_call: dict[str, Any], harness: Harness | None) -> dict[str, Any]:
         """Execute one call, reporting progress when supervised."""
@@ -584,6 +637,7 @@ class AgentLoop:
                 ms=round(tool_result.get("latency_ms", 0)),
                 detail=self._call_detail(tool_call),
                 error=tool_failed(tool_result) or "",
+                meta=self._result_meta(tool_call, tool_result),
             )
         return tool_result
 
@@ -591,7 +645,7 @@ class AgentLoop:
         """Ask the advisor model, if there is one, and count the call."""
         if not harness.advisor_model:
             return ""
-        harness.emit(type="status", text="Consulting a stronger model")
+        harness.emit(type="status", note=True, text="Meminta saran model yang lebih kuat")
         harness.stats.advisor_calls += 1
         return await ask_advisor(
             self._api_client,
@@ -607,7 +661,7 @@ class AgentLoop:
         if not target or target == model_id:
             return model_id
         logger.info(f"[agent_loop] Escalating {model_id} -> {target}")
-        harness.emit(type="status", text=f"Escalating to {target}")
+        harness.emit(type="status", note=True, text=f"Diserahkan ke {target}")
         harness.stats.escalated_to = target
         result.model = target
         return target
@@ -782,5 +836,6 @@ class AgentLoop:
         except (TypeError, ValueError):
             text = str(content)
         if self._harness:
-            return clip_text(text, self._harness.scaffold.tool_result_chars)
+            limit = max(self._harness.scaffold.tool_result_chars, _RESULT_FLOOR.get(str(tool_result.get("tool_name")), 0))
+            return clip_text(text, limit)
         return text
