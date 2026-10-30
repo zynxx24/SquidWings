@@ -11,6 +11,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from agent.team_orchestrator import team_templates
+
 router = APIRouter(prefix="/api/teams", tags=["AI teams"])
 
 
@@ -20,6 +22,7 @@ class MemberInput(BaseModel):
     role: str = Field(min_length=1, max_length=120)
     model_id: str = Field(min_length=1, max_length=160)
     instructions: str = Field(default="", max_length=4000)
+    depends_on: list[str] = Field(default_factory=list, max_length=6)
 
 
 class TeamInput(BaseModel):
@@ -27,6 +30,7 @@ class TeamInput(BaseModel):
     description: str = Field(default="", max_length=1000)
     members: list[MemberInput] = Field(min_length=2, max_length=6)
     lead_id: str | None = None
+    reviewer_id: str | None = None
 
 
 class RunInput(BaseModel):
@@ -50,11 +54,19 @@ async def list_teams(request: Request) -> dict[str, Any]:
     return {"teams": [asdict(team) for team in manager.store.list_teams()]}
 
 
+@router.get("/templates")
+async def list_templates(request: Request) -> dict[str, Any]:
+    manager = service(request)
+    models = [m.id for m in manager.orchestrator.registry.get_all() if m.supports_tools]
+    return {"templates": team_templates(models)}
+
+
 @router.post("", status_code=201)
 async def create_team(payload: TeamInput, request: Request) -> dict[str, Any]:
     try:
         team = service(request).create_team(
-            payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id
+            payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id,
+            payload.reviewer_id,
         )
         return asdict(team)
     except ValueError as exc:
@@ -65,7 +77,8 @@ async def create_team(payload: TeamInput, request: Request) -> dict[str, Any]:
 async def update_team(team_id: str, payload: TeamInput, request: Request) -> dict[str, Any]:
     try:
         team = await service(request).update_team(
-            team_id, payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id
+            team_id, payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id,
+            payload.reviewer_id,
         )
         return asdict(team)
     except KeyError as exc:

@@ -26,6 +26,8 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
+_MAX_ATTEMPTS = 6
+
 # System prompt untuk auto-enhance
 _ENHANCER_SYSTEM_PROMPT = """Kamu adalah AI Prompt Enhancer spesialis pembuatan aplikasi.
 Tugas kamu HANYA satu: menerima deskripsi singkat aplikasi dari user,
@@ -103,7 +105,7 @@ async def auto_generate(
         raise ValueError("base_url is required for auto_generate")
 
     attempt = 0
-    while True:
+    while attempt < _MAX_ATTEMPTS:
         attempt += 1
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
@@ -115,6 +117,13 @@ async def auto_generate(
 
             if response.status_code != 200:
                 error_msg = response.text[:200]
+                # A rejected request or key will not fix itself by retrying.
+                if 400 <= response.status_code < 500 and response.status_code != 429:
+                    return {
+                        "success": False,
+                        "original_prompt": user_prompt,
+                        "error": f"status={response.status_code} body={error_msg}",
+                    }
                 backoff = min(attempt * 1.5, 6.0)
                 logger.warning(
                     f"[auto_generate] API error (attempt {attempt}): "
@@ -151,6 +160,12 @@ async def auto_generate(
             raise
         except Exception as e:
             backoff = min(attempt * 1.5, 6.0)
-            logger.warning(f"[auto_generate] Exception (attempt {attempt}): {e}. Non-stop fallback retrying in {backoff:.1f}s...")
+            logger.warning(f"[auto_generate] Exception (attempt {attempt}): {e}. Retrying in {backoff:.1f}s...")
             await asyncio.sleep(backoff)
             continue
+
+    return {
+        "success": False,
+        "original_prompt": user_prompt,
+        "error": f"No usable response after {_MAX_ATTEMPTS} attempts",
+    }

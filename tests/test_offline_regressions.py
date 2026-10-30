@@ -11,20 +11,6 @@ from agent.team_orchestrator import Team, TeamMember, TeamOrchestrator, TeamRun,
 from model.connection.response_handler import ParsedResponse
 from tool.registry.tool_registry import ToolRegistry
 from tool.registry.tool_schema import ToolSchema
-from tool.sandbox.permission_guard import PermissionGuard
-
-
-def test_permission_guard_uses_path_boundaries(tmp_path: Path) -> None:
-    root = tmp_path / "project"
-    sibling = tmp_path / "project-private"
-    root.mkdir()
-    sibling.mkdir()
-    guard = PermissionGuard(root)
-    assert guard.check_permission("write", str(root / "ok.txt"))
-    assert not guard.check_permission("write", str(sibling / "stolen.txt"))
-    assert not guard.check_permission("delete", str(sibling / "stolen.txt"))
-    assert not guard.check_permission("delete", str(root))
-    assert not guard.check_permission("write", "/etc/squidwings")
 
 
 def test_team_store_skips_only_the_damaged_run(tmp_path: Path) -> None:
@@ -190,102 +176,116 @@ async def test_tool_call_resets_thinking_only_streak() -> None:
     assert escalated == []
 
 
-def test_append_to_system_message_handles_str_and_cached_blocks() -> None:
-    """_append_to_system_message must handle both string content and cached block lists."""
-    from main import _append_to_system_message
+def test_append_system_handles_str_and_cached_blocks() -> None:
+    """Appending must not disturb a cached block, or the provider cache is lost."""
+    from agent.orchestrator import Orchestrator
 
-    # 1. Plain string content
-    msg_str = {"role": "system", "content": "Initial prompt"}
-    _append_to_system_message(msg_str, "Skill text", separator="\n")
-    assert msg_str["content"] == "Initial prompt\nSkill text"
+    plain = [{"role": "system", "content": "Initial"}]
+    Orchestrator._append_system(plain, " more")
+    assert plain[0]["content"] == "Initial more"
 
-    # 2. Anthropic prompt caching list of blocks
-    msg_cached = {
-        "role": "system",
-        "content": [
-            {
-                "type": "text",
-                "text": "Base system prompt",
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-    }
-    _append_to_system_message(msg_cached, "Skill prompt", separator="\n")
-    assert isinstance(msg_cached["content"], list)
-    assert len(msg_cached["content"]) == 1
-    assert msg_cached["content"][0]["text"] == "Base system prompt\nSkill prompt"
-    # cache_control must be preserved on the block
-    assert msg_cached["content"][0]["cache_control"] == {"type": "ephemeral"}
-
-    # 3. Vault memory appending to cached block
-    _append_to_system_message(msg_cached, "\nVault memory context", separator="")
-    assert msg_cached["content"][0]["text"] == "Base system prompt\nSkill prompt\nVault memory context"
+    cached_block = {"type": "text", "text": "Base", "cache_control": {"type": "ephemeral"}}
+    cached = [{"role": "system", "content": [cached_block]}]
+    Orchestrator._append_system(cached, "Volatile")
+    assert cached[0]["content"][0] == cached_block
+    assert cached[0]["content"][1] == {"type": "text", "text": "Volatile"}
 
 
-@pytest.mark.asyncio
-async def test_fallback_advances_chain_and_recovers_to_previous_model() -> None:
-    """When a primary model fails and first fallback raises (e.g. 404),
-
-    the fallback loop must continue to the next model or previous working model without crashing.
-    """
-    from unittest.mock import AsyncMock, MagicMock
-    from main import process_input
+async def test_fallback_moves_past_failing_models_to_one_that_answers(tmp_path) -> None:
+    """A failing primary and a failing first fallback must not end the request."""
+    from agent.orchestrator import Orchestrator
+    from brain.memory.conversation_store import ConversationStore
+    from config.constants import ResponseStatus
+    from config.settings import Settings
     from model.registry.model_info import ModelInfo
-    from config.constants import TaskType
 
-    api_client = MagicMock()
-    # First model (primary) fails in stream
-    # Fallback #1 (e.g. 404) raises exception
-    # Fallback #2 (previous model) returns valid response
-    api_client.chat_completion_stream = MagicMock(side_effect=RuntimeError("Primary model failed"))
-    api_client.chat_completion = AsyncMock(
-        side_effect=[
-            RuntimeError("Model 'ag/claude-opus-4-6-thinking' [404]: Requested entity was not found"),
-            {
-                "choices": [{"message": {"content": "Berhasil dijawab oleh model sebelumnya"}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 10, "completion_tokens": 20},
-            },
-        ]
-    )
+    good = {"choices": [{"message": {"content": "Berhasil"}, "finish_reason": "stop"}], "usage": {}}
+    calls: list[str] = []
 
-    classifier = MagicMock()
-    classifier.classify_with_difficulty.return_value = (
-        MagicMock(task_type=TaskType.REASON, confidence=0.9), "medium"
-    )
+    class Client:
+        provider_ids = ["router"]
 
-    router = MagicMock()
-    router.route.return_value = ModelInfo(id="kg/claude-sonnet-4-6", display_name="Sonnet", provider="kg")
-    router._default_model = "ag/gemini-3.8-flash-high"
+        async def chat_completion(self, **kwargs):
+            calls.append(kwargs["model"])
+            if kwargs["model"] != "ag/third":
+                raise RuntimeError(f"{kwargs['model']} is down")
+            return good
 
-    fb_model_1 = ModelInfo(id="ag/claude-opus-4-6-thinking", display_name="Opus", provider="ag")
-    fallback = MagicMock()
-    fallback._tried = {}
-    fallback.get_next.side_effect = [fb_model_1, None]
+    orch = Orchestrator.from_settings(Settings(), api_client=Client())
+    store = ConversationStore(storage_dir=tmp_path)
+    orch._conversation_store = store
+    orch._context_assembler._store = store
+    for model_id in ("ag/first", "ag/second", "ag/third"):
+        orch.registry.register(ModelInfo(id=model_id, display_name=model_id, provider="ag"))
 
-    registry = MagicMock()
-    prev_model = ModelInfo(id="kg/claude-haiku-5-5", display_name="Haiku", provider="kg")
-    registry.get.side_effect = lambda mid: prev_model if mid == "kg/claude-haiku-5-5" else fb_model_1
+    response = await orch.process(user_input="halo", session_id="s", override_model="ag/first", stream=False)
 
-    context_assembler = MagicMock()
-    context_assembler.assemble.return_value = MagicMock(messages=[{"role": "user", "content": "hi"}])
-    conversation_store = MagicMock()
-    health_checker = MagicMock()
+    assert response.content == "Berhasil"
+    assert response.status == ResponseStatus.FALLBACK_USED
+    assert calls[0] == "ag/first" and calls[-1] == "ag/third"
 
-    res = await process_input(
-        user_input="test query",
-        session_id="test-fallback-sess",
-        api_client=api_client,
-        classifier=classifier,
-        router=router,
-        context_assembler=context_assembler,
-        conversation_store=conversation_store,
-        health_checker=health_checker,
-        fallback=fallback,
-        stream=True,
-        registry=registry,
-        previous_model="kg/claude-haiku-5-5",
-    )
 
-    assert "Berhasil dijawab oleh model sebelumnya" in res
-    assert api_client.chat_completion.call_count == 2
+# --- audit fixes (2026-10-30) ---
 
+
+def _retries(error, attempt):
+    from model.connection.api_client import APIClient
+    from model.connection.providers import Provider
+
+    return APIClient._should_retry_transient(Provider(id="x", transient_retries=3), error, attempt)
+
+
+def test_bansos_never_retries_a_request_that_cannot_succeed():
+    from utils.exceptions import ModelError
+
+    assert not _retries(ModelError("bad", status_code=401), 1)
+    assert not _retries(ModelError("bad", status_code=400), 1)
+
+
+def test_bansos_retries_transient_errors_up_to_the_cap():
+    from utils.exceptions import ModelError, RateLimitError
+
+    assert _retries(ModelError("boom", status_code=503), 1)
+    assert _retries(RateLimitError("slow"), 2)
+    assert _retries(RuntimeError("network"), 2)
+    assert not _retries(RuntimeError("network"), 3)
+
+
+def test_empty_model_list_does_not_wipe_the_registry():
+    import asyncio
+
+    from model.connection.api_client import APIClient
+
+    class Registry:
+        model_ids = ["ag/a", "bansos/b"]
+        removed: list = []
+
+        def unregister(self, model_id):
+            self.removed.append(model_id)
+
+        def register_from_api_models(self, items):
+            pass
+
+    async def empty():
+        return []
+
+    client = APIClient("http://router.invalid/v1", "key")
+    client._providers = []
+    client.list_models = empty
+    registry = Registry()
+    asyncio.run(APIClient.sync_all_models(client, registry))
+    assert registry.removed == []
+
+
+def test_mark_unavailable_expires_and_blocks_routing(monkeypatch):
+    from model.connection import health_check
+    from model.connection.health_check import HealthChecker
+
+    now = [100.0]
+    monkeypatch.setattr(health_check.time, "monotonic", lambda: now[0])
+    checker = HealthChecker()
+    checker.mark_unavailable("m", 60)
+    assert not checker.is_available("m")
+    assert checker.filter_healthy(["m", "n"]) == ["n"]
+    now[0] = 161.0
+    assert checker.is_available("m")

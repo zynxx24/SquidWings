@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from brain.memory.conversation_store import ConversationStore
 from tool.execute.execute_local_memory import session_distill
 

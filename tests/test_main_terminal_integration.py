@@ -2,15 +2,16 @@
 Integration tests for main.py terminal CLI markdown support and code minimization.
 """
 
+import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any
+from unittest.mock import MagicMock
 
-import pytest
 from rich.console import Console
 
 from main import _display_help, _handle_ide_command, process_input
 from model.registry.model_registry import ModelRegistry
-from utils.cli_formatter import SESSION_CODE_TRACKER, TerminalFormatConfig
+from utils.cli_formatter import TerminalFormatConfig
 
 
 def test_display_help_contains_new_commands():
@@ -84,161 +85,67 @@ def test_handle_ide_command_code_and_format(tmp_path: Path):
     assert cfg.syntax_theme == "nord"
 
 
-@pytest.mark.asyncio
-async def test_process_input_non_stream_markdown(tmp_path: Path):
-    cfg = TerminalFormatConfig(code_display="minimized", min_lines_threshold=2)
+def real_orchestrator(tmp_path: Path, *replies: dict) -> Any:
+    from agent.orchestrator import Orchestrator
+    from brain.memory.conversation_store import ConversationStore
+    from config.settings import Settings
+    from model.registry.model_info import ModelCapabilities, ModelInfo
 
-    # Mock API Client
-    api_client = MagicMock()
-    mock_response = {
-        "choices": [
-            {
-                "message": {
-                    "content": "Here is the python code:\n\n```python\nx = 1\ny = 2\nz = 3\nprint(x + y + z)\n```"
-                },
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 25},
-    }
-    api_client.chat_completion = AsyncMock(return_value=mock_response)
+    queue = list(replies)
 
-    # Mock Classifier & Router
-    classifier = MagicMock()
-    classification = MagicMock()
-    classification.task_type.value = "code"
-    from brain.classifier.intent_classifier import TaskType
-    classification.task_type = TaskType.CODE
-    classification.confidence = 0.95
-    classifier.classify_with_difficulty.return_value = (classification, "easy")
+    class Client:
+        async def chat_completion(self, **_kwargs):
+            return queue.pop(0)
 
-    model_mock = MagicMock()
-    model_mock.id = "test-model"
-    model_mock.provider = "ag"
-    model_mock.display_name = "Test Model"
-    model_mock.supports_tools = False
-
-    router = MagicMock()
-    router.route.return_value = model_mock
-
-    context_assembler = MagicMock()
-    ctx_mock = MagicMock()
-    ctx_mock.messages = [{"role": "user", "content": "test"}]
-    context_assembler.assemble.return_value = ctx_mock
-
-    conversation_store = MagicMock()
-    health_checker = MagicMock()
-    fallback = MagicMock()
-
-    SESSION_CODE_TRACKER.clear()
-
-    res = await process_input(
-        user_input="test code",
-        session_id="test-session",
-        api_client=api_client,
-        classifier=classifier,
-        router=router,
-        context_assembler=context_assembler,
-        conversation_store=conversation_store,
-        health_checker=health_checker,
-        fallback=fallback,
-        stream=False,
-        terminal_config=cfg,
+    orch = Orchestrator.from_settings(Settings(), api_client=Client())
+    store = ConversationStore(storage_dir=tmp_path / "chat")
+    orch._conversation_store = store
+    orch._context_assembler._store = store
+    orch.registry.register(
+        ModelInfo(id="ag/m", display_name="M", provider="ag", capabilities=ModelCapabilities(tools=True))
     )
-
-    assert "Here is the python code" in res
-    assert SESSION_CODE_TRACKER.count() >= 1
-    block = SESSION_CODE_TRACKER.get_block(1)
-    assert block is not None
-    assert block.language == "python"
-    assert "print(x + y + z)" in block.code
+    return orch
 
 
-@pytest.mark.asyncio
-async def test_process_input_autonomous_tool_loop(tmp_path: Path):
-    """Test that process_input automatically detects and executes DSML/tool calls and loops to final response."""
-    cfg = TerminalFormatConfig()
-
-    # Step 1: Model responds with DSML invoke
-    dsml_output = (
-        '｜DSML｜｜ invoke name="execute_command">\n'
-        '<｜｜DSML｜｜ parameter name="command" string="true">echo "hello from workspace"</｜｜DSML｜｜ parameter>\n'
-        '</｜｜DSML｜｜ invoke>\n'
-        '</｜｜DSML｜｜ calls>'
-    )
-    # Step 2: After tool execution, model responds with final answer
-    final_output = "Hasil eksekusi: workspace berjalan lancar."
-
-    api_client = MagicMock()
-    api_client.chat_completion = AsyncMock(
-        side_effect=[
-            {
-                "choices": [{"message": {"content": dsml_output}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 15, "completion_tokens": 30},
-            },
-            {
-                "choices": [{"message": {"content": final_output}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 40, "completion_tokens": 20},
-            },
+def reply(content: str = "", calls: list | None = None) -> dict:
+    message: dict = {"role": "assistant", "content": content}
+    if calls:
+        message["tool_calls"] = [
+            {"id": f"c{i}", "type": "function", "function": {"name": n, "arguments": json.dumps(a)}}
+            for i, (n, a) in enumerate(calls)
         ]
+    return {"choices": [{"message": message, "finish_reason": "tool_calls" if calls else "stop"}], "usage": {}}
+
+
+async def test_process_input_returns_and_shows_the_answer(tmp_path: Path, capsys: Any) -> None:
+    orch = real_orchestrator(tmp_path, reply("Halo **dunia**"))
+    result = await process_input(
+        user_input="halo", session_id="s", orchestrator=orch, stream=False, override_model="ag/m",
     )
+    assert result == "Halo **dunia**"
+    assert "dunia" in capsys.readouterr().out
 
-    classifier = MagicMock()
-    from brain.classifier.intent_classifier import TaskType
-    classification = MagicMock()
-    classification.task_type = TaskType.ACTIVITY
-    classification.confidence = 0.95
-    classifier.classify_with_difficulty.return_value = (classification, "easy")
 
-    model_mock = MagicMock()
-    model_mock.id = "kg/deepseek-4-1-flash"
-    model_mock.provider = "kg"
-    model_mock.display_name = "DeepSeek 4.1 Flash"
-    model_mock.supports_tools = True
-
-    router = MagicMock()
-    router.route.return_value = model_mock
-
-    context_assembler = MagicMock()
-    ctx_mock = MagicMock()
-    ctx_mock.messages = [{"role": "user", "content": "cek workspace"}]
-    context_assembler.assemble.return_value = ctx_mock
-
-    conversation_store = MagicMock()
-    health_checker = MagicMock()
-    fallback = MagicMock()
-
-    tool_registry = MagicMock()
-    tool_registry.get_all_schemas.return_value = [{"type": "function", "function": {"name": "execute_command"}}]
-    tool_registry.execute = AsyncMock(return_value={"stdout": "hello from workspace\n", "exit_code": 0})
-
-    res = await process_input(
-        user_input="cek workspace",
-        session_id="test-session-tool",
-        api_client=api_client,
-        classifier=classifier,
-        router=router,
-        context_assembler=context_assembler,
-        conversation_store=conversation_store,
-        health_checker=health_checker,
-        fallback=fallback,
-        stream=False,
-        terminal_config=cfg,
-        tool_registry=tool_registry,
-        active_workspace=tmp_path,
+async def test_process_input_runs_tools_through_the_orchestrator(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    orch = real_orchestrator(
+        tmp_path,
+        reply("", [("file_write", {"path": "a.txt", "content": "isi"})]),
+        reply("Selesai."),
     )
+    result = await process_input(
+        user_input="tulis file a.txt", session_id="s", orchestrator=orch, stream=False,
+        override_model="ag/m", active_workspace=workspace,
+    )
+    assert result == "Selesai."
+    assert (workspace / "a.txt").read_text() == "isi"
 
-    # Verify tool was called automatically with cwd set to active_workspace
-    tool_registry.execute.assert_called_once()
-    called_name, called_args = tool_registry.execute.call_args[0]
-    assert called_name == "execute_command"
-    assert called_args["command"] == 'echo "hello from workspace"'
-    assert called_args["cwd"] == str(tmp_path)
 
-    # Verify API was called twice (round 1: invoke tool, round 2: answer with result)
-    assert api_client.chat_completion.call_count == 2
-
-    # Verify final response is clean without DSML tags
-    assert "Hasil eksekusi: workspace berjalan lancar." in res
-    assert "DSML" not in res
-
+async def test_process_input_reports_failure_without_raising(tmp_path: Path) -> None:
+    orch = real_orchestrator(tmp_path)
+    orch._api_client.chat_completion = None  # any call now fails
+    result = await process_input(
+        user_input="halo", session_id="s", orchestrator=orch, stream=False, override_model="ag/m",
+    )
+    assert isinstance(result, str) and result

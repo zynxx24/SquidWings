@@ -17,9 +17,10 @@ Storage is deliberately compact — only what the next model *needs*.
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,7 @@ _MAX_PLAN_CHARS    = 1_200
 _MAX_COMPILE_CHARS = 3_000
 
 
-class AgentStage(str, Enum):
+class AgentStage(StrEnum):
     """Pipeline stage — what the agent was doing when it checkpointed."""
     IDLE     = "idle"
     PLAN     = "plan"
@@ -60,7 +61,7 @@ class WebResult:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "WebResult":
+    def from_dict(cls, d: dict[str, Any]) -> WebResult:
         return cls(
             query=d.get("query", ""),
             title=d.get("title", ""),
@@ -87,7 +88,7 @@ class ToolCheckpoint:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "ToolCheckpoint":
+    def from_dict(cls, d: dict[str, Any]) -> ToolCheckpoint:
         return cls(
             name=d.get("name", ""),
             arguments=d.get("arguments", {}),
@@ -138,7 +139,7 @@ class WorkingMemoryState:
         }
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "WorkingMemoryState":
+    def from_dict(cls, d: dict[str, Any]) -> WorkingMemoryState:
         return cls(
             session_id=d.get("session_id", ""),
             turn_id=d.get("turn_id", ""),
@@ -318,11 +319,13 @@ class AgentWorkingMemory:
     # ------------------------------------------------------------------ #
 
     def _path(self, session_id: str, turn_id: str) -> Path:
-        return self._dir / f"{session_id}-{turn_id}.json"
+        # Both ids come from callers and end up in a file name.
+        name = re.sub(r"[^A-Za-z0-9._-]", "_", f"{session_id}-{turn_id}").lstrip(".")
+        return self._dir / f"{name}.json"
 
     def _load_latest_from_disk(self, session_id: str) -> WorkingMemoryState | None:
         files = sorted(
-            self._dir.glob(f"{session_id}-*.json"),
+            self._dir.glob(f"{re.sub(r'[^A-Za-z0-9._-]', '_', session_id).lstrip('.')}-*.json"),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )

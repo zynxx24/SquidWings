@@ -1,4 +1,4 @@
-"""Tool executors for the smart memory layer."""
+"""Tool access to project memory."""
 
 from __future__ import annotations
 
@@ -6,49 +6,34 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from brain.memory.smart_memory import SmartMemory
+from brain.memory.project_memory import ProjectMemory
 from config.settings import get_settings
+from tool.execute.execute_local_memory import user_profile
 from tool.execute.execute_local_ops.path_guard import PathGuardError, resolve_workspace
-from utils.logger import get_logger
-
-logger = get_logger(__name__)
 
 
 def _error(message: str, **extra: Any) -> dict[str, Any]:
-    payload: dict[str, Any] = {"ok": False, "error": message}
-    payload.update(extra)
-    return payload
-
-
-def _ok(**payload: Any) -> dict[str, Any]:
-    base: dict[str, Any] = {"ok": True}
-    base.update(payload)
-    return base
+    return {"ok": False, "error": message, **extra}
 
 
 def _workspace(workspace_path: str | None) -> Path:
     return resolve_workspace(workspace_path, get_settings().project_root)
 
 
-def _recall_sync(
-    workspace: Path, query: str, limit: int, token_budget: int
-) -> dict[str, Any]:
-    sm = SmartMemory(workspace)
-    files = sm.score_files(query, limit=limit)
-    summary = sm.build_summary(token_budget=token_budget)
-    return _ok(
-        summary=summary,
-        files=[
-            {
-                "path": f.rel_path,
-                "score": f.score,
-                "reason": f.reason,
-                "status": f.status,
-            }
-            for f in files
-        ],
-        keywords=sorted(query.lower().split())[:20] if query else [],
-    )
+def _file_rows(memory: ProjectMemory, query: str, limit: int, prefer_ext: list[str] | None) -> list[dict[str, Any]]:
+    return [
+        {"path": f.rel_path, "score": f.score, "reason": f.reason, "status": f.status, "size": f.size}
+        for f in memory.score_files(query, limit=limit, prefer_ext=prefer_ext)
+    ]
+
+
+def _recall_sync(workspace: Path, query: str, limit: int, token_budget: int) -> dict[str, Any]:
+    memory = ProjectMemory(workspace)
+    return {
+        "ok": True,
+        "summary": memory.summary(token_budget=token_budget),
+        "files": _file_rows(memory, query, limit, None),
+    }
 
 
 async def memory_recall(
@@ -66,23 +51,15 @@ async def memory_recall(
     )
 
 
-def _remember_sync(
-    workspace: Path, kind: str, text: str, why: str
-) -> dict[str, Any]:
-    sm = SmartMemory(workspace)
-    kind = kind.strip().lower()
-    if kind == "decision":
-        added = sm._add_decision(text)
-    elif kind == "fact":
-        added = sm._add_fact(text)
-    elif kind == "error":
-        added = sm._add_error(text)
-    elif kind == "progress":
-        sm.raw.record_progress(text, status="done", detail=why)
-        added = True
+def _remember_sync(workspace: Path, kind: str, text: str, why: str) -> dict[str, Any]:
+    normalized = kind.strip().lower()
+    if normalized in {"user", "preference"}:
+        added: bool | None = user_profile.remember(text)
     else:
-        return _error(f"unknown kind: {kind}")
-    return _ok(kind=kind, added=added, deduped=not added)
+        added = ProjectMemory(workspace).remember(normalized, text, why)
+    if added is None:
+        return _error(f"unknown kind: {kind}. Use user, decision, fact, error, or progress.")
+    return {"ok": True, "kind": kind, "added": added, "deduped": not added}
 
 
 async def memory_remember(
@@ -98,49 +75,6 @@ async def memory_remember(
     return await asyncio.to_thread(_remember_sync, workspace, kind, text, why)
 
 
-def _capture_sync(
-    workspace: Path, user_input: str, assistant_output: str, model_id: str
-) -> dict[str, Any]:
-    sm = SmartMemory(workspace)
-    captured = sm.capture_from_turn(user_input, assistant_output, model_id=model_id)
-    return _ok(**captured)
-
-
-async def memory_capture(
-    user_input: str,
-    assistant_output: str,
-    model_id: str = "",
-    workspace_path: str | None = None,
-) -> dict[str, Any]:
-    try:
-        workspace = _workspace(workspace_path)
-    except PathGuardError as exc:
-        return _error(str(exc))
-    return await asyncio.to_thread(
-        _capture_sync, workspace, user_input, assistant_output, model_id
-    )
-
-
-def _rank_sync(
-    workspace: Path, query: str, limit: int, prefer_ext: list[str] | None
-) -> dict[str, Any]:
-    sm = SmartMemory(workspace)
-    files = sm.score_files(query, limit=limit, prefer_ext=prefer_ext)
-    return _ok(
-        count=len(files),
-        files=[
-            {
-                "path": f.rel_path,
-                "score": f.score,
-                "reason": f.reason,
-                "status": f.status,
-                "size": f.size,
-            }
-            for f in files
-        ],
-    )
-
-
 async def memory_rank_files(
     query: str = "",
     limit: int = 20,
@@ -151,14 +85,27 @@ async def memory_rank_files(
         workspace = _workspace(workspace_path)
     except PathGuardError as exc:
         return _error(str(exc))
-    return await asyncio.to_thread(
-        _rank_sync, workspace, query, max(1, min(100, limit)), prefer_ext
-    )
+
+    def rank() -> dict[str, Any]:
+        files = _file_rows(ProjectMemory(workspace), query, max(1, min(100, limit)), prefer_ext)
+        return {"ok": True, "count": len(files), "files": files}
+
+    return await asyncio.to_thread(rank)
 
 
-__all__ = [
-    "memory_recall",
-    "memory_remember",
-    "memory_capture",
-    "memory_rank_files",
-]
+def _forget_sync(workspace: Path, text: str) -> dict[str, Any]:
+    from_project = ProjectMemory(workspace).forget(text)
+    from_profile = user_profile.forget(text)
+    return {"ok": True, "removed": from_project + from_profile}
+
+
+async def memory_forget(text: str, workspace_path: str | None = None) -> dict[str, Any]:
+    """Remove remembered items that match, from the project and the user profile."""
+    try:
+        workspace = _workspace(workspace_path)
+    except PathGuardError as exc:
+        return _error(str(exc))
+    return await asyncio.to_thread(_forget_sync, workspace, text)
+
+
+__all__ = ["memory_forget", "memory_rank_files", "memory_recall", "memory_remember"]

@@ -20,6 +20,8 @@ ignore = ["E501"]
 # Short aliases are an intentional convention in the vault package and its tests
 # (C=constants, F=frontmatter, G=graph, V=vault).
 "tool/execute/execute_local_memory/**" = ["N812"]
+"agent/harness/**" = ["N812"]
+"agent/session_stack.py" = ["N812"]
 "tests/test_vault_memory.py" = ["N812"]
 
 [tool.pytest.ini_options]

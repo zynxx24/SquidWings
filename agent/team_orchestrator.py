@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -12,6 +13,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from agent import session_stack
+from agent.harness import Tier, tier_for
 from agent.orchestrator import AgentResponse, Orchestrator
 from config.constants import ResponseStatus
 from utils.logger import get_logger
@@ -19,6 +22,9 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 MAX_TEAM_MEMBERS = 6
 MAX_CONTEXT_CHARS = 60_000
+MAX_REVIEW_ROUNDS = 2
+_MEMBER_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
+_VERDICT_RE = re.compile(r"VERDICT:\s*(PASS|REVISE)", re.IGNORECASE)
 
 
 @dataclass
@@ -28,6 +34,7 @@ class TeamMember:
     role: str
     model_id: str
     instructions: str = ""
+    depends_on: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -39,6 +46,7 @@ class Team:
     lead_id: str
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    reviewer_id: str | None = None
 
 
 @dataclass
@@ -54,10 +62,37 @@ class TeamRun:
     started_at: float | None = None
     completed_at: float | None = None
     total_tokens: int = 0
+    reviews: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def finished(self) -> bool:
         return self.status in {"completed", "failed", "cancelled"}
+
+
+def execution_layers(members: list[TeamMember]) -> list[list[TeamMember]]:
+    """Group members into layers that can run in parallel, in dependency order.
+
+    Dependencies on members outside the list (the lead, the reviewer) are
+    ignored, because those always run after the workers.
+
+    Raises:
+        ValueError: If the dependencies contain a cycle.
+    """
+    ids = {member.id for member in members}
+    pending = {m.id: {d for d in m.depends_on if d in ids} for m in members}
+    by_id = {member.id: member for member in members}
+    layers: list[list[TeamMember]] = []
+    while pending:
+        ready = [member_id for member_id, deps in pending.items() if not deps]
+        if not ready:
+            names = ", ".join(by_id[member_id].name for member_id in pending)
+            raise ValueError(f"The flow has a cycle between: {names}.")
+        layers.append([by_id[member_id] for member_id in ready])
+        for member_id in ready:
+            del pending[member_id]
+        for deps in pending.values():
+            deps.difference_update(ready)
+    return layers
 
 
 class TeamEventHub:
@@ -175,8 +210,73 @@ class TeamStore:
         self.save_run(run)
 
 
+def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
+    """Ready-made teams, with models chosen by tier from what is registered.
+
+    The pattern throughout: cheap models do the volume of work, and the one
+    strong model is spent where it pays most, on judging the result.
+    """
+    if not model_ids:
+        return []
+
+    def pick(*preferred: Tier) -> str:
+        for tier in preferred:
+            for model_id in model_ids:
+                if tier_for(model_id) == tier:
+                    return model_id
+        return model_ids[0]
+
+    lite = pick(Tier.LITE, Tier.STANDARD, Tier.FRONTIER)
+    mid = pick(Tier.STANDARD, Tier.LITE, Tier.FRONTIER)
+    top = pick(Tier.FRONTIER, Tier.STANDARD, Tier.LITE)
+
+    def member(id_: str, name: str, role: str, model: str, *after: str) -> dict[str, Any]:
+        return {"id": id_, "name": name, "role": role, "model_id": model, "instructions": "", "depends_on": list(after)}
+
+    return [
+        {
+            "key": "build",
+            "name": "Bangun dan verifikasi",
+            "description": "Model murah merencanakan, membangun, dan menguji. Model kuat menilai hasilnya.",
+            "members": [
+                member("planner", "Perencana", "Memecah tugas menjadi langkah kecil yang bisa dicek", mid),
+                member("builder", "Pembangun", "Menulis kode dan file sesuai rencana", lite, "planner"),
+                member("tester", "Penguji", "Menjalankan hasilnya dan melaporkan yang benar-benar rusak", lite, "builder"),
+                member("lead", "Lead", "Memperbaiki temuan penguji dan menulis jawaban akhir", mid),
+                member("reviewer", "Reviewer", "Memeriksa hasil terhadap tugas secara independen", top),
+            ],
+            "lead_id": "lead",
+            "reviewer_id": "reviewer",
+        },
+        {
+            "key": "research",
+            "name": "Riset dan tulis",
+            "description": "Dua peneliti bekerja paralel, penulis menyatukan, pemeriksa fakta memverifikasi.",
+            "members": [
+                member("sources", "Pencari sumber", "Mencari sumber utama dan fakta penting", lite),
+                member("analyst", "Analis", "Mencari argumen tandingan dan celah", lite),
+                member("writer", "Penulis", "Menyatukan riset menjadi satu jawaban yang jelas", mid),
+                member("checker", "Pemeriksa fakta", "Mencocokkan klaim dengan sumbernya", top),
+            ],
+            "lead_id": "writer",
+            "reviewer_id": "checker",
+        },
+        {
+            "key": "second-opinion",
+            "name": "Pendapat kedua",
+            "description": "Model murah menjawab, model kuat memeriksa. Cara termurah menangkap kesalahan.",
+            "members": [
+                member("worker", "Pekerja", "Mengerjakan tugas dan menunjukkan alasannya", lite),
+                member("reviewer", "Reviewer", "Mencari kesalahan dan meminta perbaikan", top),
+            ],
+            "lead_id": "worker",
+            "reviewer_id": "reviewer",
+        },
+    ]
+
+
 class TeamOrchestrator:
-    """Runs specialists concurrently, then asks the selected lead to synthesize."""
+    """Runs a team's flow: workers in dependency order, the lead, then an optional review."""
 
     def __init__(self, orchestrator: Orchestrator, store: TeamStore) -> None:
         self.orchestrator = orchestrator
@@ -189,36 +289,22 @@ class TeamOrchestrator:
     def run_tasks(self) -> dict[str, asyncio.Task[None]]:
         return self._tasks
 
-    def create_team(self, name: str, description: str, members: list[dict[str, Any]], lead_id: str | None) -> Team:
-        if not 2 <= len(members) <= MAX_TEAM_MEMBERS:
-            raise ValueError(f"A team needs 2–{MAX_TEAM_MEMBERS} members.")
-        seen: set[str] = set()
-        parsed: list[TeamMember] = []
-        for member in members:
-            member_id = member.get("id") or uuid.uuid4().hex[:10]
-            if member_id in seen:
-                raise ValueError("Member IDs must be unique.")
-            seen.add(member_id)
-            model_id = member["model_id"]
-            if self.orchestrator.registry.get(model_id) is None:
-                raise ValueError(f"Unknown model: {model_id}")
-            parsed.append(TeamMember(
-                id=member_id,
-                name=str(member["name"]).strip(),
-                role=str(member["role"]).strip(),
-                model_id=model_id,
-                instructions=str(member.get("instructions", "")).strip(),
-            ))
-        if any(not member.name or not member.role for member in parsed):
-            raise ValueError("Every member needs a name and role.")
-        if lead_id and lead_id not in seen:
-            raise ValueError("The lead must be a team member.")
+    def create_team(
+        self,
+        name: str,
+        description: str,
+        members: list[dict[str, Any]],
+        lead_id: str | None,
+        reviewer_id: str | None = None,
+    ) -> Team:
+        parsed = self._validate_members(members, lead_id, reviewer_id)
         team = Team(
             id=f"team-{uuid.uuid4().hex[:12]}",
             name=name.strip(),
             description=description.strip(),
             members=parsed,
             lead_id=lead_id or parsed[0].id,
+            reviewer_id=reviewer_id or None,
         )
         if not team.name:
             raise ValueError("Team name cannot be empty.")
@@ -226,7 +312,10 @@ class TeamOrchestrator:
         return team
 
     def _validate_members(
-        self, members: list[dict[str, Any]], lead_id: str | None
+        self,
+        members: list[dict[str, Any]],
+        lead_id: str | None,
+        reviewer_id: str | None = None,
     ) -> list[TeamMember]:
         if not 2 <= len(members) <= MAX_TEAM_MEMBERS:
             raise ValueError(f"A team needs 2–{MAX_TEAM_MEMBERS} members.")
@@ -234,6 +323,9 @@ class TeamOrchestrator:
         parsed: list[TeamMember] = []
         for member in members:
             member_id = member.get("id") or uuid.uuid4().hex[:10]
+            # Ends up in a session id, and from there in a file name.
+            if not _MEMBER_ID_RE.fullmatch(member_id):
+                raise ValueError("Member IDs may only contain letters, digits, _ and -.")
             if member_id in seen:
                 raise ValueError("Member IDs must be unique.")
             seen.add(member_id)
@@ -246,20 +338,40 @@ class TeamOrchestrator:
                 role=str(member["role"]).strip(),
                 model_id=model_id,
                 instructions=str(member.get("instructions", "")).strip(),
+                depends_on=[str(d) for d in member.get("depends_on") or []],
             ))
-        if any(not member.name or not member.role for member in parsed):
+        if any(not item.name or not item.role for item in parsed):
             raise ValueError("Every member needs a name and role.")
         if lead_id and lead_id not in seen:
             raise ValueError("The lead must be a team member.")
+        if reviewer_id:
+            if reviewer_id not in seen:
+                raise ValueError("The reviewer must be a team member.")
+            if reviewer_id == (lead_id or parsed[0].id):
+                raise ValueError("The lead cannot review its own work.")
+        for item in parsed:
+            if item.id in item.depends_on:
+                raise ValueError(f"{item.name} cannot depend on itself.")
+            if any(d not in seen for d in item.depends_on):
+                raise ValueError(f"{item.name} depends on an unknown member.")
+        execution_layers(parsed)
         return parsed
 
-    async def update_team(self, team_id: str, name: str, description: str, members: list[dict[str, Any]], lead_id: str | None) -> Team:
+    async def update_team(
+        self,
+        team_id: str,
+        name: str,
+        description: str,
+        members: list[dict[str, Any]],
+        lead_id: str | None,
+        reviewer_id: str | None = None,
+    ) -> Team:
         if any(not run.finished for run in self.store.list_runs(team_id)):
             raise ValueError("Wait for active team runs to finish before editing.")
         existing = self.store.get_team(team_id)
         if existing is None:
             raise KeyError(team_id)
-        parsed = self._validate_members(members, lead_id)
+        parsed = self._validate_members(members, lead_id, reviewer_id)
         if not name.strip():
             raise ValueError("Team name cannot be empty.")
         replacement = Team(
@@ -270,6 +382,7 @@ class TeamOrchestrator:
             lead_id=lead_id or parsed[0].id,
             created_at=existing.created_at,
             updated_at=time.time(),
+            reviewer_id=reviewer_id or None,
         )
         self.store.put_team(replacement)
         return replacement
@@ -317,19 +430,21 @@ class TeamOrchestrator:
         run.status = "running"
         run.started_at = time.time()
         self._checkpoint(run, "run_started")
+        # Everyone in a run shares one folder, so one agent can read another's files.
+        session_stack.enter(run.id)
         try:
-            workers = [
-                self._run_member(run, team, member, is_lead=False)
-                for member in team.members
-            ]
-            await asyncio.gather(*workers)
-            successful = [a for a in run.agents.values() if a["status"] == "completed"]
-            if not successful:
+            lead = next(member for member in team.members if member.id == team.lead_id)
+            workers = [m for m in team.members if m.id not in {team.lead_id, team.reviewer_id}]
+            for layer in execution_layers(workers):
+                await asyncio.gather(*(self._run_member(run, team, m) for m in layer))
+            if workers and not any(run.agents[m.id]["status"] == "completed" for m in workers):
                 raise RuntimeError("All team members failed. Check their individual errors.")
+
             run.status = "synthesizing"
             self._checkpoint(run, "synthesis_started")
-            lead = next(member for member in team.members if member.id == team.lead_id)
-            await self._run_member(run, team, lead, is_lead=True)
+            await self._run_member(run, team, lead, mode="lead")
+            await self._review_loop(run, team, lead)
+
             lead_agent = run.agents[lead.id]
             if lead_agent["status"] != "completed":
                 raise RuntimeError(lead_agent["error"] or "Lead synthesis failed.")
@@ -350,16 +465,55 @@ class TeamOrchestrator:
             run.completed_at = time.time()
             self._checkpoint(run, "run_finished")
 
+    async def _review_loop(self, run: TeamRun, team: Team, lead: TeamMember) -> None:
+        """Let the reviewer send the draft back until it passes or rounds run out."""
+        reviewer = next((m for m in team.members if m.id == team.reviewer_id), None)
+        if reviewer is None or run.agents[lead.id]["status"] != "completed":
+            return
+        for round_number in range(1, MAX_REVIEW_ROUNDS + 2):
+            run.status = "reviewing"
+            await self._run_member(run, team, reviewer, mode="reviewer", round_number=round_number)
+            state = run.agents[reviewer.id]
+            if state["status"] != "completed":
+                # A broken reviewer must not lose the lead's finished answer.
+                run.reviews.append({"round": round_number, "verdict": "skipped", "notes": state["error"]})
+                return
+            feedback = state["content"]
+            match = _VERDICT_RE.search(feedback)
+            verdict = match.group(1).upper() if match else "PASS"
+            run.reviews.append({"round": round_number, "verdict": verdict, "notes": feedback[:4000]})
+            self._checkpoint(run, "review_finished", reviewer.id)
+            if verdict == "PASS" or round_number > MAX_REVIEW_ROUNDS:
+                return
+            run.status = "revising"
+            await self._run_member(run, team, lead, mode="revision", feedback=feedback)
+            if run.agents[lead.id]["status"] != "completed":
+                return
+
     @staticmethod
-    def _member_prompt(member: TeamMember, task: str, is_lead: bool) -> str:
+    def _member_prompt(member: TeamMember, task: str, mode: str = "worker") -> str:
         instruction = f"\nAdditional instructions: {member.instructions}" if member.instructions else ""
-        if is_lead:
+        if mode == "lead":
             return (
                 f"You are {member.name}, the lead of an AI team. Role: {member.role}.{instruction}\n"
                 "The specialists have independently worked on the user's task below. "
                 "Read their reports critically, resolve conflicts, and produce one complete final answer. "
                 "Do not mention internal orchestration or invent work not present in the reports. "
                 "If specialists failed, use the useful available reports and note important limitations."
+            )
+        if mode == "revision":
+            return (
+                f"You are {member.name}, the lead of an AI team. Role: {member.role}.{instruction}\n"
+                "A reviewer rejected your draft. Fix every problem they list and return the complete "
+                "corrected final answer, not just the changes. Do not mention the review."
+            )
+        if mode == "reviewer":
+            return (
+                f"You are {member.name}, an independent reviewer. Role: {member.role}.{instruction}\n"
+                "Check the draft below against the user's task. If the team wrote files, open them "
+                "and check them yourself. Look for wrong facts, missing requirements, and claims the "
+                "work does not support. The first line of your reply must be exactly VERDICT: PASS or "
+                "VERDICT: REVISE. If REVISE, list each concrete problem and how to fix it."
             )
         return (
             f"You are {member.name}, a specialist in an AI team. Role: {member.role}.{instruction}\n"
@@ -368,33 +522,67 @@ class TeamOrchestrator:
             "and explicitly identify risks or missing information. Return only your report."
         )
 
-    async def _run_member(self, run: TeamRun, team: Team, member: TeamMember, is_lead: bool) -> None:
+    @staticmethod
+    def _report(state: dict[str, Any]) -> str:
+        body = state["content"] if state["status"] == "completed" else f"FAILED: {state['error']}"
+        return f"## {state['name']} — {state['role']}\n{body}"
+
+    def _member_context(
+        self, run: TeamRun, team: Team, member: TeamMember, mode: str, feedback: str
+    ) -> str:
+        """The task plus only the reports this member should see."""
+        context = f"[TEAM TASK]\n{run.task}"
+        if mode in {"lead", "revision"}:
+            excluded = {team.lead_id, team.reviewer_id}
+            reports = "\n\n".join(
+                self._report(state) for member_id, state in run.agents.items() if member_id not in excluded
+            )
+            if reports:
+                context += f"\n\n[SPECIALIST REPORTS]\n{reports[-MAX_CONTEXT_CHARS:]}"
+        if mode == "revision":
+            draft = run.agents[team.lead_id]["content"]
+            context += f"\n\n[YOUR DRAFT]\n{draft[-MAX_CONTEXT_CHARS:]}\n\n[REVIEW]\n{feedback[-MAX_CONTEXT_CHARS:]}"
+        if mode == "reviewer":
+            context += f"\n\n[DRAFT TO REVIEW]\n{run.agents[team.lead_id]['content'][-MAX_CONTEXT_CHARS:]}"
+        if mode == "worker" and member.depends_on:
+            reports = "\n\n".join(
+                self._report(run.agents[d]) for d in member.depends_on if d in run.agents
+            )
+            context += f"\n\n[REPORTS FROM EARLIER STEPS]\n{reports[-MAX_CONTEXT_CHARS:]}"
+        return context
+
+    async def _run_member(
+        self,
+        run: TeamRun,
+        team: Team,
+        member: TeamMember,
+        mode: str = "worker",
+        feedback: str = "",
+        round_number: int = 0,
+    ) -> None:
         agent = run.agents[member.id]
         agent["status"] = "running"
+        agent["error"] = ""
         agent["started_at"] = time.time()
         self._checkpoint(run, "agent_started", member.id)
-        prompt = self._member_prompt(member, run.task, is_lead)
-        workspace_context = f"[TEAM TASK]\n{run.task}"
-        if is_lead:
-            reports = "\n\n".join(
-                f"## {state['name']} — {state['role']}\n"
-                + (state["content"] if state["status"] == "completed" else f"FAILED: {state['error']}")
-                for state in run.agents.values()
-            )
-            workspace_context += f"\n\n[SPECIALIST REPORTS]\n{reports[-MAX_CONTEXT_CHARS:]}"
+        suffix = f"{mode}{round_number}" if round_number else mode
         try:
             response: AgentResponse = await self.orchestrator.process(
-                user_input=prompt,
-                session_id=f"{run.id}-{member.id}-{'lead' if is_lead else 'worker'}",
+                user_input=self._member_prompt(member, run.task, mode),
+                session_id=f"{run.id}-{member.id}-{suffix}",
                 override_model=member.model_id,
                 stream=False,
-                workspace_context=workspace_context,
+                workspace_context=self._member_context(run, team, member, mode, feedback),
+                task_hint=run.task,
+                persist=False,
             )
             if response.status not in {ResponseStatus.SUCCESS, ResponseStatus.FALLBACK_USED}:
                 raise RuntimeError(response.error_message or response.content or "Model request failed")
             agent.update(
                 status="completed", content=response.content, model_id=response.model_used,
-                tokens=response.total_tokens, latency_ms=round(response.latency_ms, 1),
+                tokens=agent.get("tokens", 0) + response.total_tokens,
+                latency_ms=round(response.latency_ms, 1),
+                tools=len(response.tool_calls),
             )
             run.total_tokens += response.total_tokens
         except asyncio.CancelledError:
@@ -403,7 +591,7 @@ class TeamOrchestrator:
         except Exception as exc:
             logger.warning("[teams] %s failed in %s: %s", member.name, run.id, exc)
             agent.update(status="failed", error=str(exc))
-            if is_lead:
+            if mode == "lead":
                 raise
         finally:
             agent["completed_at"] = time.time()

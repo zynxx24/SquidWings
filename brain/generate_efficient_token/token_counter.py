@@ -7,6 +7,7 @@ approximation for other models (DeepSeek, Gemini).
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 from utils.logger import get_logger
@@ -40,6 +41,10 @@ class TokenCounter:
         try:
             import tiktoken
             self._tiktoken_encoder = tiktoken.get_encoding("cl100k_base")
+            # History is re-counted every turn and is mostly unchanged.
+            self._count_encoded = lru_cache(maxsize=4096)(
+                lambda text: len(self._tiktoken_encoder.encode(text))
+            )
             self._tiktoken_available = True
             logger.debug("[token_counter] tiktoken loaded (cl100k_base)")
         except (ImportError, Exception):
@@ -62,7 +67,7 @@ class TokenCounter:
         # Use tiktoken for accurate counting when available
         if self._tiktoken_available and self._tiktoken_encoder:
             try:
-                return len(self._tiktoken_encoder.encode(text))
+                return self._count_encoded(text)
             except Exception:
                 pass
 

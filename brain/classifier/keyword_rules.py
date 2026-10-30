@@ -6,6 +6,9 @@ Maps keywords and phrases (Bahasa Indonesia + English) to task types.
 
 from __future__ import annotations
 
+import re
+from functools import lru_cache
+
 from config.constants import TaskType
 
 # Keyword → TaskType mapping
@@ -18,19 +21,28 @@ KEYWORD_RULES: dict[TaskType, list[tuple[str, float]]] = {
         ("buat kode", 0.95),
         ("tulis kode", 0.95),
         ("coding", 0.9),
-        ("program", 0.8),
+        ("program", 0.5),
         ("script", 0.85),
         ("fungsi", 0.7),
-        ("class", 0.7),
+        ("class", 0.4),
         ("debug", 0.9),
         ("fix bug", 0.9),
         ("refactor", 0.85),
         ("implementasi", 0.8),
-        ("api", 0.6),
+        ("api", 0.5),
         ("database", 0.6),
         ("frontend", 0.7),
         ("backend", 0.7),
         # English
+        ("kode", 0.8),
+        ("python", 0.8),
+        ("javascript", 0.8),
+        ("typescript", 0.8),
+        ("bug", 0.8),
+        ("stack trace", 0.9),
+        ("pytest", 0.9),
+        ("commit", 0.7),
+        ("repository", 0.6),
         ("write code", 0.95),
         ("create function", 0.9),
         ("implement", 0.8),
@@ -53,7 +65,7 @@ KEYWORD_RULES: dict[TaskType, list[tuple[str, float]]] = {
         ("probabilitas", 0.85),
         ("integral", 0.9),
         ("turunan", 0.9),
-        ("limit", 0.7),
+        ("limit", 0.35),
         ("matriks", 0.85),
         ("vektor", 0.8),
         # English
@@ -164,6 +176,23 @@ KEYWORD_RULES: dict[TaskType, list[tuple[str, float]]] = {
 }
 
 
+# Indonesian affixes, so "menghitung" and "hitungan" still count as "hitung".
+_PREFIXES = "me|mem|men|meng|meny|di|ter|ber|pe|pem|pen|peng|peny"
+_SUFFIXES = "nya|kan|an|i|lah|ku|mu|s"
+# Short words stay exact: with affixes, "api" would also match "terapi".
+_MIN_AFFIX_LENGTH = 5
+
+
+@lru_cache(maxsize=1024)
+def _keyword_regex(keyword: str) -> re.Pattern[str]:
+    """Match a keyword as whole words. Substrings caused false positives such
+    as "api" inside "sapi", which sent chat about cows to the coding route."""
+    body = re.escape(keyword.lower())
+    if len(keyword) >= _MIN_AFFIX_LENGTH and " " not in keyword:
+        body = f"(?:{_PREFIXES})?{body}(?:{_SUFFIXES})?"
+    return re.compile(rf"(?<![a-z0-9_]){body}(?![a-z0-9_])")
+
+
 def get_keyword_matches(text: str) -> list[tuple[TaskType, float]]:
     """Find all keyword matches in text.
 
@@ -174,11 +203,9 @@ def get_keyword_matches(text: str) -> list[tuple[TaskType, float]]:
         list of (TaskType, weight) tuples for all matches.
     """
     text_lower = text.lower()
-    matches: list[tuple[TaskType, float]] = []
-
-    for task_type, keywords in KEYWORD_RULES.items():
-        for keyword, weight in keywords:
-            if keyword.lower() in text_lower:
-                matches.append((task_type, weight))
-
-    return matches
+    return [
+        (task_type, weight)
+        for task_type, rules in KEYWORD_RULES.items()
+        for keyword, weight in rules
+        if _keyword_regex(keyword).search(text_lower)
+    ]

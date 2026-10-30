@@ -13,8 +13,11 @@ Provides REST + WebSocket endpoints for the agent:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
+import os
+import shutil
 import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -26,13 +29,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from agent import session_stack
 from agent.orchestrator import Orchestrator
 from agent.team_orchestrator import TeamOrchestrator, TeamStore
 from brain.classifier.continuation import is_continuation_input
 from config.settings import get_settings
-from utils.helpers import format_tokens, generate_session_id
+from security import sandbox
+from security.web_access import WebSecurityMiddleware, is_loopback_host, set_public_mode
+from tool.execute.execute_code_intel import quality_tools
+from utils.helpers import format_tokens, generate_session_id, is_valid_session_id
 from utils.logger import get_logger
-from utils.workspace_context import session_workspace, set_active_workspace
+from utils.workspace_context import WORKSPACE_ROOT, session_workspace
 from web.team_api import router as team_router
 
 logger = get_logger(__name__)
@@ -65,7 +72,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         get_orchestrator()
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning(f"[web] eager orchestrator init failed: {exc}")
+    # Teams validate models against the registry, which is empty until the first
+    # sync. In the background: a slow provider must not delay startup.
+    sync_task = asyncio.create_task(ensure_models())
     yield
+    sync_task.cancel()
     await shutdown_event()
 
 
@@ -84,13 +95,31 @@ _TEAMS_ENABLED = get_settings().teams_enabled
 if _TEAMS_ENABLED:
     app.include_router(team_router)
 
+
+def _csv(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
+_settings = get_settings()
+_allowed_origins = _csv(_settings.web_allowed_origins)
+
+# The agent can run tools, so the web edge fails closed: this import is not
+# wrapped, and a server that cannot load it must not start.
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    WebSecurityMiddleware,
+    max_users=_settings.web_max_users,
+    allowed_origins=_allowed_origins,
+    allowed_hosts=_csv(_settings.web_allowed_hosts),
+    requests_per_minute=_settings.web_rate_limit_rpm,
 )
+if _allowed_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(_allowed_origins),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # Security headers (CSP, X-Frame-Options, HSTS, nosniff, referrer-policy).
 # Imported lazily so the web layer still boots if the security package is
@@ -101,6 +130,23 @@ try:
     app.add_middleware(SecurityHeadersMiddleware)
 except Exception as _sec_exc:  # pragma: no cover - defensive
     logger.warning(f"[web] security headers middleware unavailable: {_sec_exc}")
+
+
+def open_to_public() -> None:
+    """Prepare for access from other machines. There is no login.
+
+    With no working sandbox, commands would run on this machine for anyone who has
+    the URL, so the tools that run commands are switched off for public use.
+    """
+    set_public_mode(True)
+    try:
+        backend = sandbox.active_backend()
+    except sandbox.SandboxError:
+        backend = sandbox.BACKEND_NONE
+    if backend == sandbox.BACKEND_NONE:
+        disabled = {name for name in os.getenv("AGENT_DISABLED_TOOLS", "").split(",") if name}
+        os.environ["AGENT_DISABLED_TOOLS"] = ",".join(disabled | {"execute_command", "run_checks"})
+        logger.warning("[web] Public access without a sandbox: command tools are disabled")
 
 
 def get_orchestrator() -> Orchestrator:
@@ -142,6 +188,7 @@ if STATIC_DIR.exists():
 _models_synced = False
 _models_lock = asyncio.Lock()
 _FALLBACK_DEFAULT = "ag/gemini-3.8-flash-high"
+AUTO_MODEL = "auto"
 
 
 async def ensure_models(force: bool = False) -> dict[str, int]:
@@ -171,8 +218,9 @@ async def ensure_models(force: bool = False) -> dict[str, int]:
 def default_model_id() -> str:
     """Configured default if registered, otherwise the first known model."""
     orch = get_orchestrator()
-    if orch.registry.get(_FALLBACK_DEFAULT):
-        return _FALLBACK_DEFAULT
+    for candidate in (get_settings().default_model, _FALLBACK_DEFAULT):
+        if candidate and orch.registry.get(candidate):
+            return candidate
     ids = orch.registry.model_ids
     ids = ids() if callable(ids) else ids
     return next(iter(ids), _FALLBACK_DEFAULT)
@@ -286,7 +334,7 @@ if _env_bool("VIDEO_UPLOAD_ENABLED", False):
 def _ffmpeg_exe() -> str:
     import imageio_ffmpeg
 
-    return imageio_ffmpeg.get_ffmpeg_exe()
+    return str(imageio_ffmpeg.get_ffmpeg_exe())
 
 
 def _transcribe(name: str, data: bytes, is_video: bool) -> str:
@@ -368,7 +416,7 @@ def _convert_to_markdown(name: str, data: bytes) -> str:
     if _markitdown is None:
         _markitdown = MarkItDown(enable_plugins=False)
     result = _markitdown.convert_stream(io.BytesIO(data), stream_info=StreamInfo(extension=ext))
-    return result.markdown
+    return str(result.markdown)
 
 
 @app.post("/api/upload")
@@ -378,11 +426,22 @@ async def upload_file(request: Request, name: str = "file.txt") -> dict[str, Any
     ext = Path(safe_name).suffix.lower()
     if ext not in _DOC_EXTS:
         raise HTTPException(status_code=415, detail=f"File type '{ext or 'unknown'}' is not supported")
-    data = await request.body()
+    too_large = HTTPException(
+        status_code=413, detail=f"File larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB"
+    )
+    # Refuse before buffering: Content-Length can be absent or wrong, so the
+    # running total below is what actually enforces the limit.
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > MAX_UPLOAD_BYTES:
+        raise too_large
+    buffer = bytearray()
+    async for chunk in request.stream():
+        buffer.extend(chunk)
+        if len(buffer) > MAX_UPLOAD_BYTES:
+            raise too_large
+    data = bytes(buffer)
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="File larger than 20 MB")
     try:
         markdown = await asyncio.to_thread(_convert_to_markdown, safe_name, data)
     except Exception as exc:
@@ -467,13 +526,14 @@ async def session_messages(session_id: str) -> dict[str, Any]:
     history = orch.conversation_store.get_history(session_id)
     meta = orch.conversation_store.get_session_meta(session_id)
     model = _override_models.get(session_id) or meta.get("model_used") or default_model_id()
+    model_info = None if model == AUTO_MODEL else orch.registry.get(model)
     return {
         "session_id": session_id,
         "title": meta.get("title", "Chat"),
         "created_at": meta.get("created_at"),
         "updated_at": meta.get("updated_at"),
         "model_used": model,
-        "model_display": (orch.registry.get(model).display_name if orch.registry.get(model) else model),
+        "model_display": model_info.display_name if model_info else model,
         "messages": [
             {
                 "role": m.role,
@@ -507,7 +567,49 @@ async def delete_session(session_id: str) -> dict[str, Any]:
     if hasattr(orch.session_manager, "delete_session"):
         orch.session_manager.delete_session(session_id)
     _override_models.pop(session_id, None)
+    # The chat's folder holds its vault, graph, memory, and files. Only ever a
+    # direct child of the workspace root, under an id already checked to be plain.
+    if is_valid_session_id(session_id):
+        folder = WORKSPACE_ROOT / session_id
+        if folder.is_dir() and folder.parent == WORKSPACE_ROOT:
+            await asyncio.to_thread(shutil.rmtree, folder, ignore_errors=True)
     return {"status": "ok", "session_id": session_id, "deleted": True}
+
+
+def _stack(session_id: str) -> session_stack.SessionStack:
+    if not is_valid_session_id(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
+    return session_stack.SessionStack(session_id, session_workspace(session_id))
+
+
+@app.get("/api/session/{session_id}/stack")
+async def session_stack_status(session_id: str) -> dict[str, Any]:
+    """Everything this chat owns: memory, vault, graph, score, and Ponytail mode."""
+    return await asyncio.to_thread(_stack(session_id).status)
+
+
+@app.post("/api/session/{session_id}/stack")
+async def update_session_stack(session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Change this chat's Ponytail mode, or switch graphify or aislop on and off."""
+    stack = _stack(session_id)
+    await asyncio.to_thread(stack.update, **payload)
+    return await asyncio.to_thread(stack.status)
+
+
+@app.post("/api/session/{session_id}/graph")
+async def build_session_graph(session_id: str) -> dict[str, Any]:
+    """Build or rebuild this chat's code graph now."""
+    stack = _stack(session_id)
+    result = await quality_tools.code_graph("build", workspace_path=str(stack.workspace))
+    return {"result": result, "stack": await asyncio.to_thread(stack.status)}
+
+
+@app.post("/api/session/{session_id}/aislop")
+async def scan_session(session_id: str) -> dict[str, Any]:
+    """Run aislop over this chat's folder now."""
+    stack = _stack(session_id)
+    result = await quality_tools.aislop_scan(workspace_path=str(stack.workspace))
+    return {"result": result, "stack": await asyncio.to_thread(stack.status)}
 
 
 @app.post("/api/session/{session_id}/clear")
@@ -522,7 +624,13 @@ async def clear_session(session_id: str) -> dict[str, Any]:
 async def select_model(payload: dict[str, Any]) -> dict[str, Any]:
     """Set the model override for a session, restricted strictly to allowed models."""
     session_id = payload.get("session_id", "")
+    if not is_valid_session_id(session_id):
+        raise HTTPException(status_code=400, detail="Invalid session id")
     raw_model_id = payload.get("model_id")
+
+    if raw_model_id == AUTO_MODEL:
+        _override_models[session_id] = AUTO_MODEL
+        return {"status": "ok", "model_id": AUTO_MODEL, "display_name": "Auto"}
 
     if raw_model_id:
         normalized_id = raw_model_id
@@ -553,6 +661,39 @@ async def new_session() -> dict[str, Any]:
 
 # ─── WebSocket Chat ──────────────────────────────────────────────────
 
+async def _await_turn(websocket: WebSocket, turn: asyncio.Task[Any]) -> None:
+    """Wait for a turn while listening, so the user can stop it.
+
+    Closing the page stops it too, rather than spending tokens on an answer nobody
+    will read.
+
+    Raises:
+        asyncio.CancelledError: If the user pressed stop.
+        WebSocketDisconnect: If the browser went away.
+    """
+    while not turn.done():
+        incoming = asyncio.create_task(websocket.receive_text())
+        await asyncio.wait({turn, incoming}, return_when=asyncio.FIRST_COMPLETED)
+        if not incoming.done():
+            incoming.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await incoming
+            return
+        try:
+            raw = incoming.result()
+        except WebSocketDisconnect:
+            turn.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await turn
+            raise
+        with contextlib.suppress(ValueError):
+            if json.loads(raw).get("type") == "stop":
+                turn.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await turn
+                raise asyncio.CancelledError
+
+
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket) -> None:
     """WebSocket endpoint for real-time streaming chat.
@@ -571,25 +712,40 @@ async def websocket_chat(websocket: WebSocket) -> None:
     try:
         while True:
             raw = await websocket.receive_text()
-            data = json.loads(raw)
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                data = None
+            # A stop that arrives after the turn already finished has nothing to stop.
+            if isinstance(data, dict) and data.get("type") == "stop":
+                continue
+            if not isinstance(data, dict) or not isinstance(data.get("message"), str):
+                await websocket.send_json({"type": "error", "content": "Malformed request"})
+                continue
 
-            message = data.get("message", "").strip()
-            session_id = data.get("session_id", generate_session_id())
+            message = data["message"].strip()
+            session_id = data.get("session_id") or generate_session_id()
 
             if not message:
                 await websocket.send_json({"type": "error", "content": "Empty message"})
                 continue
+            # The id becomes a file name on disk; never trust the client's value.
+            if not is_valid_session_id(session_id):
+                await websocket.send_json({"type": "error", "content": "Invalid session id"})
+                continue
 
             orch = get_orchestrator()
-            override = _override_models.get(session_id) or default_model_id()
-            if not get_orchestrator().registry.get(override):
+            selected = _override_models.get(session_id) or default_model_id()
+            # None lets the orchestrator route by task type and difficulty.
+            override: str | None = None if selected == AUTO_MODEL else selected
+            if override and not get_orchestrator().registry.get(override):
                 override = default_model_id()
 
             # A bare "lanjutkan" carries no intent of its own: keep it on the
             # model that produced the previous answer so the thread of the
             # truncated work is not lost to a fresh routing decision.
             is_continue = is_continuation_input(message)
-            if is_continue and override == default_model_id():
+            if is_continue and override in (None, default_model_id()):
                 resume_model = orch.conversation_store.get_last_used_model(session_id)
                 if resume_model and orch.registry.get(resume_model):
                     override = resume_model
@@ -603,7 +759,7 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 "difficulty": difficulty,
                 "confidence": round(classification.confidence, 2),
                 "continuation": is_continue,
-                "model": override,
+                "model": override or AUTO_MODEL,
             })
 
             # Queue for thread-safe ordered streaming chunks
@@ -632,6 +788,19 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 buf.append(chunk)
                 q.put_nowait({"type": "content", "content": chunk})
 
+            def on_reset(
+                buf: list[str] = _content_buf,
+                q: asyncio.Queue[dict[str, Any] | None] = queue,
+            ) -> None:
+                buf.clear()
+                q.put_nowait({"type": "reset"})
+
+            def on_event(
+                event: dict[str, Any],
+                q: asyncio.Queue[dict[str, Any] | None] = queue,
+            ) -> None:
+                q.put_nowait({**event, "kind": event.get("type"), "type": "progress"})
+
             def on_thinking(
                 chunk: str,
                 buf: list[str] = _thinking_buf,
@@ -641,11 +810,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 q.put_nowait({"type": "thinking", "content": chunk})
 
             start_time = time.time()
-            # Save files from this chat under workspace/<session_id>/
-            set_active_workspace(session_workspace(session_id))
+            # This chat's folder, vault, graph, and Ponytail mode.
+            session_stack.enter(session_id)
 
             try:
-                response = await orch.process(
+                turn = asyncio.create_task(orch.process(
                     user_input=message,
                     session_id=session_id,
                     override_model=override,
@@ -658,7 +827,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     on_thinking_chunk=on_thinking,
                     classification=classification,
                     difficulty=difficulty,
-                )
+                    on_reset=on_reset,
+                    on_event=on_event,
+                ))
+                await _await_turn(websocket, turn)
+                response = turn.result()
 
                 # Send fallback buffered items if streaming didn't output chunks
                 if not _thinking_buf and response.thinking:
@@ -681,7 +854,12 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     "iterations": response.iterations,
                     "status": response.status.value if hasattr(response.status, "value") else str(response.status),
                     "fallback_used": response.fallback_used,
+                    "harness": response.harness,
                 })
+            except asyncio.CancelledError:
+                queue.put_nowait({"type": "stopped"})
+            except WebSocketDisconnect:
+                raise
             except Exception as proc_err:
                 logger.error(f"[ws] Orchestrator processing error: {proc_err}")
                 queue.put_nowait({"type": "error", "content": str(proc_err)})
@@ -693,7 +871,6 @@ async def websocket_chat(websocket: WebSocket) -> None:
         logger.info("[ws] Client disconnected")
     except Exception as e:
         logger.error(f"[ws] Error: {e}")
-        import contextlib
         with contextlib.suppress(Exception):
             await websocket.send_json({"type": "error", "content": str(e)})
 
@@ -709,6 +886,9 @@ def run_server(
     import uvicorn
 
     from utils.tunnel import CloudflareTunnel, get_current_tunnel
+
+    if enable_tunnel or not is_loopback_host(host):
+        open_to_public()
 
     tunnel_instance = None
     if enable_tunnel and get_current_tunnel() is None:

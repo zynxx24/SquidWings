@@ -7,6 +7,7 @@ Small, stateless utility functions used across the codebase.
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from typing import Any
 
@@ -93,6 +94,14 @@ def generate_request_id() -> str:
         UUID-based request ID string (e.g., "req-a1b2c3d4").
     """
     return f"req-{uuid.uuid4().hex[:8]}"
+
+
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+def is_valid_session_id(session_id: object) -> bool:
+    """Whether an id is safe to use as a file name (no separators, no leading dot)."""
+    return isinstance(session_id, str) and _SESSION_ID_RE.fullmatch(session_id) is not None
 
 
 def generate_session_id() -> str:

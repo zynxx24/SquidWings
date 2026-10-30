@@ -41,14 +41,14 @@ import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 try:  # pragma: no cover - optional dependency
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
     _HAVE_AESGCM = True
 except Exception:  # pragma: no cover
-    AESGCM = None
+    AESGCM = None  # type: ignore[assignment,misc]
     _HAVE_AESGCM = False
 
 
@@ -272,10 +272,7 @@ class SecretsVault:
         aad = name.encode("utf-8")
         if self._cipher == "aes-256-gcm" and _HAVE_AESGCM:
             try:
-                plaintext = cast(
-                    bytes,
-                    AESGCM(key).decrypt(nonce, ct + tag, aad),
-                )
+                plaintext = AESGCM(key).decrypt(nonce, ct + tag, aad)
                 return plaintext.decode("utf-8")
             except Exception as exc:
                 raise VaultAuthError(

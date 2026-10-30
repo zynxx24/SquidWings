@@ -21,13 +21,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime
-import json
 import os
 import re
 import select
 import sys
 import termios
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -40,44 +40,20 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.tree import Tree
 
-from brain.classifier.continuation import (
-    continuation_hint,
-    is_continuation_input,
-)
-from brain.classifier.intent_classifier import IntentClassifier
-from brain.context.context_assembler import ContextAssembler
-from brain.memory.continuation_memory import ContinuationMemory
-from brain.memory.conversation_store import ConversationStore
-from brain.memory.persistent_memory import PersistentMemory
-from brain.memory.workspace_memory import WorkspaceMemory
-from brain.prompt_must_think.base_think_prompt import ThinkPromptManager
-from config.constants import TaskType
+from agent import session_stack
+from agent.orchestrator import Orchestrator
+from brain.memory.project_memory import ProjectMemory
+from config.constants import ResponseStatus
 from config.secrets import get_secrets
 from config.settings import get_settings
 from model.connection.api_client import APIClient
-from model.connection.graphify_client import GraphifyClient
-from model.connection.health_check import HealthChecker
-from model.connection.response_handler import ParsedResponse, ResponseHandler
-from model.parser.tool_call_parser import ToolCallParser
 from model.registry.model_info import ModelInfo
 from model.registry.model_registry import ModelRegistry
-from model.settings.fallback import FallbackStrategy
-from model.settings.routing_type import Difficulty, RoutingType
-from model.stream.stream_handler import StreamAggregator
-from model.type.activity import ActivityHandler
-from model.type.base_handler import BaseTypeHandler
-from model.type.code import CodeHandler
-from model.type.generate_img import GenerateImgHandler
-from model.type.math import MathHandler
-from model.type.multimodal import MultimodalHandler
-from model.type.reason import ReasonHandler
-from model.type.school_task import SchoolTaskHandler
+from security import sandbox
+from security.web_access import is_loopback_host
 from tool.execute.execute_edit_change_file.file_editor import FileEditor
-from tool.execute.execute_local_memory.session_distill import distill_session
-from tool.execute.execute_local_memory.vault_context import (
-    build_context as build_vault_context,
-)
-from tool.register_tools import build_skills_prompt, register_all_tools
+from tool.execute.execute_local_memory import user_profile
+from utils import cli_ui
 from utils.cli_formatter import (
     SESSION_CODE_TRACKER,
     TerminalFormatConfig,
@@ -88,25 +64,11 @@ from utils.cli_formatter import (
 )
 from utils.helpers import format_tokens, generate_session_id
 from utils.logger import get_logger
-from utils.timer import Timer
+from utils.session_settings import PONYTAIL_MODES
+from utils.workspace_context import set_active_ponytail
 
 logger = get_logger(__name__)
 console = Console()
-
-# Turn counters for session distillation (memory), kept module-level so the
-# CLI loop and the fallback path share one cadence per session.
-_CLI_TURNS: dict[str, int] = {}
-
-# Handler registry
-HANDLERS: dict[TaskType, BaseTypeHandler] = {
-    TaskType.CODE: CodeHandler(),
-    TaskType.MATH: MathHandler(),
-    TaskType.ACTIVITY: ActivityHandler(),
-    TaskType.SCHOOL_TASK: SchoolTaskHandler(),
-    TaskType.GENERATE_IMG: GenerateImgHandler(),
-    TaskType.REASON: ReasonHandler(),
-    TaskType.MULTIMODAL: MultimodalHandler(),
-}
 
 # Provider colors and icons for pretty display
 PROVIDER_THEME: dict[str, dict[str, str]] = {
@@ -180,10 +142,9 @@ def _flush_stdin_buffer() -> None:
 
 def _read_user_input(prompt: str) -> str:
     """Read user input, seamlessly combining multi-line pastes into a single message."""
-    try:
-        first_line = console.input(prompt)
-    except (EOFError, KeyboardInterrupt):
-        raise
+    # input() rather than console.input(): readline must draw the prompt itself,
+    # or arrow keys and history redraw over it.
+    first_line = input(prompt)
 
     is_bracketed_paste = "\x1b[200~" in first_line
     first_line = first_line.replace("\x1b[200~", "").replace("\x1b[201~", "")
@@ -564,18 +525,6 @@ def _display_workspace_list(workspace_dir: Path, active_workspace: Path | None) 
     )
 
 
-def _build_workspace_context(workspace_path: Path, user_input: str = "") -> str:
-    """Build context string describing active workspace files for the AI.
-
-    Uses WorkspaceMemory for smart, token-efficient context.
-    """
-    if not workspace_path.exists() or not workspace_path.is_dir():
-        return ""
-
-    wm = WorkspaceMemory(workspace_path)
-    return wm.build_smart_context(user_input=user_input)
-
-
 def _is_safe_rel_path(rel_path: str) -> bool:
     """Validate that a parsed relative path is a real file path, not prose/regex garbage.
 
@@ -598,8 +547,8 @@ def _is_safe_rel_path(rel_path: str) -> bool:
     if ".." in rel_path.split("/"):
         return False
     # Block markdown/regex noise characters
-    _BANNED_CHARS = set('|<>*\\`#\n\r\t"\'')
-    if _BANNED_CHARS & set(rel_path):
+    banned_chars = set('|<>*\\`#\n\r\t"\'')
+    if banned_chars & set(rel_path):
         return False
     # Block prose-like paths (multiple spaces, ellipsis, em-dash)
     if "  " in rel_path or "..." in rel_path or " — " in rel_path:
@@ -613,14 +562,14 @@ def _is_safe_rel_path(rel_path: str) -> bool:
             continue
         # Component with spaces must end in known extension
         if " " in part:
-            _VALID_EXT = (
+            valid_ext = (
                 ".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json",
                 ".md", ".txt", ".yaml", ".yml", ".sh", ".toml", ".cfg", ".ini",
                 ".xml", ".csv", ".sql", ".env", ".php", ".rb", ".go", ".rs",
                 ".java", ".kt", ".swift", ".c", ".cpp", ".h", ".hpp",
                 ".vue", ".svelte", ".scss", ".less", ".lock", ".blade.php",
             )
-            if not any(part.endswith(ext) for ext in _VALID_EXT):
+            if not any(part.endswith(ext) for ext in valid_ext):
                 return False
     return True
 
@@ -827,6 +776,22 @@ def _handle_ide_command(
         _display_status(registry, current_model, project_root, active_workspace)
         return True, None, active_workspace
 
+    elif command in ("stack", "sesi", "session"):
+        _display_stack("")
+        return True, None, active_workspace
+
+    elif command == "ponytail":
+        _display_stack(arg)
+        return True, None, active_workspace
+
+    elif command in ("memory", "mem", "memori"):
+        _display_memory(arg, active_workspace)
+        return True, None, active_workspace
+
+    elif command in ("sandbox", "doctor"):
+        _display_doctor()
+        return True, None, active_workspace
+
     elif command in ("search", "find", "grep", "s"):
         if not arg:
             console.print("[yellow]⚠️  Usage: /search <pattern>[/yellow]")
@@ -895,7 +860,7 @@ def _handle_ide_command(
                 f"[bold white]API Base URL:[/bold white]    [cyan]{b_url}[/cyan]\n"
                 f"[bold white]API Key:[/bold white]         [dim]{masked_key}[/dim]\n"
                 f"[bold white]Auto-Generate:[/bold white]   [bright_green]Tersedia (Tool pembuat aplikasi canggih)[/bright_green]\n"
-                f"[bold white]Fallback:[/bold white]        [bright_green]Non-stop / Tanpa Henti (Unlimited)[/bright_green]\n\n"
+                f"[bold white]Fallback:[/bold white]        [bright_green]Retry otomatis, lalu pindah ke model berikutnya[/bright_green]\n\n"
                 f"[dim]💡 Edit BANSOS_API_BASE_URL & BANSOS_API_KEY di file .env kapan saja.[/dim]",
                 title="🎁 Bansos Configuration",
                 border_style="bright_yellow",
@@ -925,44 +890,156 @@ def _handle_ide_command(
 
 
 def _display_help() -> None:
-    """Display the help panel with available commands."""
-    help_table = Table(
-        title="💡 Perintah IDE & Workspace",
-        title_style="bold bright_cyan",
-        border_style="cyan",
-        box=box.ROUNDED,
-        expand=True,
-    )
-    help_table.add_column("Command", style="bold bright_green", min_width=30)
-    help_table.add_column("Keterangan", style="white")
-
-    commands = [
-        ("/bansos [on|off|status]", "Mode bansos gratis (DeepSeek V4.1 Flash via Kagiro, auto-generate & non-stop fallback)"),
-        ("/model, /m", "Buka interaktif selector untuk memilih model AI"),
-        ("/tree <tanggal-proyek>", "Buka / buat folder proyek baru (contoh: /tree 20261009-appcash)"),
-        ("/tree, /t", "Tampilkan struktur file dari workspace aktif / daftar proyek"),
-        ("/tree all", "Tampilkan tree lengkap seluruh repository agent"),
-        ("/ws, /workspace", "Lihat daftar semua proyek dalam workspace/"),
-        ("/ws <nama>", "Beralih atau buat proyek workspace"),
-        ("/create <file>", "Buat file baru di workspace aktif"),
-        ("/view <file>, /v <file>", "Preview isi file dengan syntax highlighting"),
-        ("/code [1|min|full|copy]", "Kelola tampilan kode: toggle minimize, expand, copy, atau list"),
-        ("/format", "Pengaturan format terminal CLI (Markdown, tema, minimizer, thinking)"),
-        ("/theme <nama>", "Ganti tema syntax highlighting (monokai, dracula, nord, dll.)"),
-        ("/md", "Render ulang balasan terakhir dalam format Markdown lengkap"),
-        ("/search <pola>, /s", "Cari file berdasarkan nama di workspace"),
-        ("/status, /info, /i", "Lihat status sesi, model aktif, dan workspace aktif"),
-        ("/help, /h, /?", "Tampilkan bantuan ini"),
-        ("clear", "Hapus riwayat obrolan sesi"),
-        ("exit, quit, q", "Keluar dari aplikasi"),
+    """Display the available commands, grouped by what they are for."""
+    sections = [
+        ("Proyek", [
+            ("/tree <nama>", "Buka atau buat proyek, misalnya /tree 20261009-appcash"),
+            ("/tree, /t", "Struktur file proyek aktif, atau daftar proyek"),
+            ("/tree all", "Struktur seluruh repository agent"),
+            ("/ws [nama], /workspace", "Daftar proyek, atau pindah proyek"),
+            ("/create <file>", "Buat file baru di proyek aktif"),
+            ("/view <file>, /v", "Lihat isi file"),
+            ("/search <pola>, /s", "Cari file berdasarkan nama"),
+        ]),
+        ("Model", [
+            ("/model, /m", "Pilih model"),
+            ("/bansos [on|off|status]", "Mode bansos (model gratis lewat Kagiro)"),
+            ("/status, /info, /i", "Model, proyek, sandbox, dan provider aktif"),
+        ]),
+        ("Memori", [
+            ("/memory", "Lihat apa yang diingat tentang kamu dan proyek ini"),
+            ("/memory add <teks>", "Ingat sesuatu di semua proyek"),
+            ("/memory forget <teks>", "Hapus yang salah atau sudah usang"),
+        ]),
+        ("Sesi ini", [
+            ("/stack", "Folder, vault, graph, skor aislop, dan memori milik chat ini"),
+            ("/ponytail <off|lite|full|ultra>", "Ganti mode Ponytail untuk chat ini"),
+        ]),
+        ("Keamanan", [
+            ("/sandbox", "Uji isolasi perintah agent (sama dengan: python main.py doctor)"),
+        ]),
+        ("Tampilan", [
+            ("/code [1|min|full|copy]", "Lipat, buka, atau salin blok kode"),
+            ("/format", "Atur Markdown, tema, dan tampilan thinking"),
+            ("/theme <nama>", "Tema syntax highlighting (monokai, dracula, nord, ...)"),
+            ("/md", "Tampilkan ulang jawaban terakhir sebagai Markdown"),
+            ("/paste", "Tempel teks beberapa baris"),
+        ]),
+        ("Sesi", [
+            ("/help, /h, /?", "Bantuan ini"),
+            ("clear", "Hapus riwayat obrolan sesi ini"),
+            ("exit, quit, q", "Keluar"),
+        ]),
     ]
-
-    for cmd, desc in commands:
-        help_table.add_row(cmd, desc)
-
+    table = Table(box=box.SIMPLE, expand=True, show_header=False, pad_edge=False)
+    table.add_column(style="bold bright_green", min_width=26, no_wrap=True)
+    table.add_column(style="white")
+    for title, commands in sections:
+        table.add_row(f"[bold bright_cyan]{title}[/bold bright_cyan]", "")
+        for command, description in commands:
+            table.add_row(f"  {command}", description)
+        table.add_section()
     console.print()
-    console.print(help_table)
+    console.print(table)
+
+
+def _display_memory(arg: str, active_workspace: Path | None) -> None:
+    """Show or change what the agent remembers."""
+    project = ProjectMemory.for_path(active_workspace)
+    action, _, text = arg.partition(" ")
+    action = action.lower()
+    text = text.strip()
+
+    if action == "add" and text:
+        if user_profile.remember(text):
+            console.print(f"[green]✓ diingat[/green] {escape(text)}")
+        else:
+            console.print("[yellow]Tidak disimpan: sudah ada, atau terlihat seperti kredensial.[/yellow]")
+        return
+    if action == "forget" and text:
+        removed = user_profile.forget(text) + (project.forget(text) if project else 0)
+        console.print(f"[green]✓ {removed} item dihapus[/green]" if removed else "[dim]Tidak ada yang cocok.[/dim]")
+        return
+
+    profile = user_profile.entries()
     console.print()
+    console.print("[bold bright_cyan]Tentang kamu[/bold bright_cyan] [dim](semua proyek)[/dim]")
+    if profile:
+        for line in profile:
+            console.print(f"  • {escape(line)}")
+    else:
+        console.print("  [dim]Belum ada. Coba: ingat: saya memakai pnpm[/dim]")
+    console.print()
+    label = active_workspace.name if active_workspace else "tidak ada proyek aktif"
+    console.print(f"[bold bright_cyan]Proyek[/bold bright_cyan] [dim]({escape(label)})[/dim]")
+    summary = project.summary() if project else ""
+    if summary:
+        console.print(escape(summary.replace("[MEMORY]\n", "").replace("\n[/MEMORY]", "")))
+    else:
+        console.print("  [dim]Belum ada.[/dim]")
+    console.print()
+
+
+def _display_stack(arg: str) -> None:
+    """Show what this chat owns, or change its Ponytail mode."""
+    stack = session_stack.current()
+    if stack is None:
+        console.print("[dim]Belum ada sesi aktif.[/dim]")
+        return
+    if arg:
+        if arg not in PONYTAIL_MODES:
+            console.print(f"[yellow]Mode tidak dikenal. Pilih: {', '.join(PONYTAIL_MODES)}[/yellow]")
+            return
+        stack.update(ponytail=arg)
+        set_active_ponytail(arg)
+        console.print(f"[green]✓ Ponytail sesi ini: {arg}[/green]")
+        return
+    info = stack.status()
+    graph = info["graphify"]
+    slop = info["aislop"]
+    last = slop.get("last") or {}
+    memory = info["memory"]
+    graph_text = f"{graph.get('nodes', 0)} node" if graph.get("built") else "belum dibangun"
+    rows = [
+        ("Folder", info["folder"]),
+        ("Ponytail", info["ponytail"]["mode"]),
+        ("Graphify", graph_text if graph["installed"] else "belum terpasang"),
+        ("aislop", (f"skor {last.get('score')}" if last else "belum dipindai") if slop["installed"] else "belum terpasang"),
+        ("Vault", f"{info['vault']['notes']} catatan"),
+        ("Memori", f"{memory['decisions']} keputusan, {memory['facts']} fakta, {memory['files']} file"),
+    ]
+    table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
+    table.add_column(style="dim")
+    table.add_column()
+    for label, value in rows:
+        table.add_row(label, escape(str(value)))
+    console.print()
+    console.print("[bold bright_cyan]Sesi ini[/bold bright_cyan]")
+    console.print(table)
+
+
+def _display_doctor() -> bool:
+    """Try to break out of the sandbox and show what happened."""
+    console.print()
+    console.print("[bold bright_cyan]Uji sandbox[/bold bright_cyan]")
+    results = sandbox.self_check()
+    table = Table(box=box.SIMPLE, show_header=False, pad_edge=False)
+    table.add_column(width=2)
+    table.add_column()
+    table.add_column(style="dim")
+    for check, passed, detail in results:
+        table.add_row("[green]✓[/green]" if passed else "[red]✗[/red]", escape(check), escape(detail))
+    console.print(table)
+    healthy = all(passed for _, passed, _ in results)
+    if healthy:
+        console.print("[green]Sandbox bekerja.[/green]")
+    else:
+        console.print("[red]Ada yang gagal. Kirim output ini untuk diperiksa.[/red]")
+    for backend in (sandbox.BACKEND_BWRAP, sandbox.BACKEND_DOCKER):
+        works, detail = sandbox.probe(backend)
+        console.print(f"[dim]{backend}: {'tersedia' if works else 'tidak tersedia'} ({escape(detail)})[/dim]")
+    console.print()
+    return healthy
 
 
 def _display_status(
@@ -1000,6 +1077,7 @@ def _display_status(
         status_lines.append(f"[bold]Max Output:[/bold]        {format_tokens(model_info.max_output)}")
         status_lines.append(f"[bold]Thinking:[/bold]          {model_info.thinking_format or 'N/A'}")
 
+    status_lines.append(f"[bold]Sandbox:[/bold]           {cli_ui.sandbox_label()}")
     status_lines.append(f"[bold]Project Root:[/bold]      {project_root}")
     status_lines.append(f"[bold]Total Models:[/bold]      {registry.count}")
 
@@ -1070,1049 +1148,124 @@ def _search_files(root: Path, pattern: str, max_results: int = 30) -> None:
     console.print()
 
 
-def _record_file_changes_to_memory(
-    persistent_memory: PersistentMemory,
-    session_id: str,
-    workspace_path: Path,
-    response_text: str,
-) -> None:
-    """Parse AI response for file changes and record them in memory."""
-    import re
-
-    # Detect file blocks: ### File: <path>
-    file_pattern = re.compile(
-        r"(?:###\s*File:|\*\*File:\*\*|```file:)\s*([^\n\*\#`]+)",
-    )
-    for match in file_pattern.finditer(response_text):
-        rel_path = match.group(1).strip().strip("`").strip("*")
-        if rel_path:
-            persistent_memory.record_file_touch(
-                session_id,
-                file_path=str(workspace_path / rel_path),
-                action="created",
-                summary=f"AI created/updated file: {rel_path}",
-            )
-
-    # Detect replace blocks: ```replace:<path>
-    replace_pattern = re.compile(r"```replace:([^\n]+)")
-    for match in replace_pattern.finditer(response_text):
-        rel_path = match.group(1).strip()
-        if rel_path:
-            persistent_memory.record_file_touch(
-                session_id,
-                file_path=str(workspace_path / rel_path),
-                action="edited",
-                summary=f"AI edited file: {rel_path}",
-            )
-
-
-def _append_to_system_message(
-    msg: dict[str, Any], extra_text: str, separator: str = "\n"
-) -> None:
-    """Safely append text to message content, handling both str and block lists (e.g. prompt caching)."""
-    if not extra_text:
-        return
-    content = msg.get("content")
-    if isinstance(content, list):
-        for block in reversed(content):
-            if isinstance(block, dict) and block.get("type") == "text" and "text" in block:
-                block["text"] = (block["text"] or "") + separator + extra_text
-                return
-        content.append({"type": "text", "text": extra_text})
-    elif isinstance(content, str):
-        msg["content"] = content + separator + extra_text
-    else:
-        msg["content"] = str(content or "") + separator + extra_text
-
-
-def _append_volatile_to_system_message(msg: dict[str, Any], extra_text: str) -> None:
-    """Append per-turn content without breaking the prompt-cache prefix.
-
-    ``apply_cache_control`` puts a cache breakpoint at the end of the system
-    block. Text appended *inside* that block changes the cached prefix, so
-    any volatile content (vault memory, which is rewritten every few turns by
-    session distill) would invalidate the whole cache on each edit. Appending
-    it as a separate, uncached block keeps the stable prefix cacheable and
-    still lands in the system message, after the cached part.
-    """
-    if not extra_text:
-        return
-    content = msg.get("content")
-    if isinstance(content, list) and any(
-        isinstance(block, dict) and block.get("cache_control") for block in content
-    ):
-        content.append({"type": "text", "text": extra_text})
-        return
-    _append_to_system_message(msg, extra_text, separator="")
-
-
-async def _distill_cli_session(
-    conversation_store: ConversationStore,
-    session_id: str,
-    active_workspace: Path | None,
-) -> None:
-    """Refresh the vault session note every few turns. Never raises."""
-    _CLI_TURNS[session_id] = _CLI_TURNS.get(session_id, 0) + 1
-    if _CLI_TURNS[session_id] % 3 != 0:
-        return
-    try:
-        await distill_session(
-            conversation_store,
-            session_id,
-            workspace_path=str(active_workspace) if active_workspace else None,
-        )
-    except Exception as exc:  # noqa: BLE001 - memory must not break the turn
-        logger.debug(f"[process_input] distill skipped: {exc}")
-
-
 async def process_input(
     user_input: str,
     session_id: str,
-    api_client: APIClient,
-    classifier: IntentClassifier,
-    router: RoutingType,
-    context_assembler: ContextAssembler,
-    conversation_store: ConversationStore,
-    health_checker: HealthChecker,
-    fallback: FallbackStrategy,
+    orchestrator: Orchestrator,
     stream: bool = True,
     override_model: str | None = None,
-    registry: ModelRegistry | None = None,
     active_workspace: Path | None = None,
-    memory_context: str = "",
-    tool_registry: Any = None,
-    skills_prompt: str = "",
     terminal_config: TerminalFormatConfig | None = None,
-    previous_model: str | None = None,
+    persist: bool = True,
 ) -> str:
-    """Process a single user input through the full pipeline.
+    """Run one turn through the orchestrator and show it in the terminal.
 
-    Pipeline: classify → route → assemble context → call API → parse response → apply workspace edits
-
-    Args:
-        user_input: The user's message.
-        session_id: Session identifier.
-        api_client: API client for model calls.
-        classifier: Intent classifier.
-        router: Model router.
-        context_assembler: Context assembler.
-        conversation_store: Conversation store.
-        health_checker: Health checker.
-        fallback: Fallback strategy.
-        stream: Whether to stream the response.
-        override_model: If set, skip routing and use this model directly.
-        registry: Model registry (needed when override_model is set).
-        active_workspace: Active workspace path for AI file operations.
-        memory_context: Persistent memory summary to inject.
-        tool_registry: Tool registry for AI tool-calling support.
-        skills_prompt: Prebuilt skills-awareness text for system prompt.
-        terminal_config: Terminal formatting configuration.
+    All agent behaviour lives in the orchestrator, so the CLI, the web chat, and
+    team runs behave the same. This function only draws what happens, and writes
+    files from fenced blocks in the reply when a workspace is open.
 
     Returns:
-        str: The model's response text.
+        The final response text.
     """
-    with Timer("total_pipeline"):
-        # 1. Classify intent + difficulty.
-        # A bare "lanjutkan" carries no intent of its own: the heuristic
-        # classifier can only answer "activity/easy, conf≈0.30", which then
-        # routes the turn to an unrelated model and throws away the context of
-        # the truncated work. Continuation turns therefore inherit the model
-        # that produced the previous output.
-        resume_model_id = (
-            previous_model or conversation_store.get_last_used_model(session_id)
-        )
-        is_continue_turn = is_continuation_input(user_input)
+    cfg = terminal_config or TerminalFormatConfig()
+    stack = session_stack.enter(session_id, active_workspace)
 
-        classification, difficulty = classifier.classify_with_difficulty(user_input)
-        diff_enum = Difficulty(difficulty)
+    def new_renderer() -> TerminalStreamRenderer:
+        return TerminalStreamRenderer(console=console, config=cfg, tracker=SESSION_CODE_TRACKER)
 
-        if is_continue_turn:
-            console.print("  [dim]🔁 continuation turn — reusing previous model[/dim]")
-        else:
-            task_label = classification.task_type.value
-            conf_label = f"{classification.confidence:.2f}"
-            console.print(
-                f"  [dim]📋 {task_label}/{difficulty} "
-                f"(conf={conf_label})[/dim]"
-            )
+    renderer = new_renderer()
+    activity = cli_ui.Activity(console)
+    showed_text = False
+    started = time.monotonic()
 
-        # 1b. Reset fallback chain — setiap request baru mulai bersih
-        fallback.reset_session(session_id)
+    def on_content(chunk: str) -> None:
+        nonlocal showed_text
+        activity.stop()
+        showed_text = True
+        renderer.on_content_chunk(chunk)
 
-        # 2. Get handler
-        handler = HANDLERS.get(classification.task_type, HANDLERS[TaskType.ACTIVITY])
+    def on_thinking(chunk: str) -> None:
+        # The spinner shows progress, so hidden thinking prints nothing of its own.
+        if cfg.thinking_display in ("collapsed", "hide"):
+            renderer.thinking_buffer.append(chunk)
+            activity.update(f"Berpikir ({sum(len(c) for c in renderer.thinking_buffer)} karakter)")
+            return
+        activity.stop()
+        renderer.on_thinking_chunk(chunk)
 
-        # 3. Route to model (or use override)
-        model = None
-        if override_model and registry:
-            model = registry.get(override_model)
-            if not model:
-                console.print(f"[red]❌ Override model '{override_model}' not found[/red]")
-                model = router.route(classification.task_type, diff_enum)
-        elif is_continue_turn and resume_model_id and registry:
-            model = registry.get(resume_model_id)
-            if not model:
-                logger.warning(
-                    "[process_input] continuation model '%s' not in registry; "
-                    "falling back to normal routing",
-                    resume_model_id,
-                )
-                model = router.route(classification.task_type, diff_enum)
-        else:
-            model = router.route(classification.task_type, diff_enum)
+    def on_reset() -> None:
+        # A terminal cannot unprint, so mark where the corrected answer starts.
+        nonlocal renderer, showed_text
+        activity.stop()
+        renderer.finish("")
+        renderer = new_renderer()
+        if showed_text:
+            console.print("\n  [yellow]↻ Jawaban diperbarui setelah pemeriksaan:[/yellow]\n")
+        showed_text = False
+        activity.start("Memperbaiki")
 
-        if not model:
-            console.print("[red]❌ No model available[/red]")
-            return "Error: No model available for this request."
+    def on_event(event: dict[str, Any]) -> None:
+        nonlocal renderer
+        kind = event.get("type")
+        if kind == "route":
+            console.print(cli_ui.route_line(
+                str(event.get("task_type")), str(event.get("difficulty")), str(event.get("model"))
+            ))
+            activity.start("Menunggu model")
+        elif kind == "remembered":
+            for item in event.get("items") or []:
+                console.print(f"[green]✓ diingat[/green] [dim]{escape(str(item))}[/dim]")
+        elif kind == "tool" and event.get("phase") == "start":
+            activity.stop()
+            renderer.finish("")
+            renderer = new_renderer()
+            activity.start(f"Menjalankan {event.get('name')}")
+        elif kind == "tool":
+            activity.stop()
+            console.print(cli_ui.tool_line(
+                str(event.get("name")), str(event.get("detail") or ""), bool(event.get("ok")),
+                int(event.get("ms") or 0), str(event.get("error") or ""),
+            ))
+            activity.start("Menunggu model")
+        elif kind == "status":
+            activity.update(str(event.get("text") or ""))
 
-        # Display model info with provider theme
-        theme = _get_provider_theme(model.provider)
-        console.print(
-            f"  [dim]{theme['icon']} [{theme['color']}]{model.display_name}[/] ({model.id})[/dim]"
-        )
-
-        # Build augmented input with workspace context if active
-        augmented_input = user_input
-        _ws_memory: WorkspaceMemory | None = None
-        _cont_memory: ContinuationMemory | None = None
-
-        if active_workspace and active_workspace.is_dir():
-            _ws_memory = WorkspaceMemory(active_workspace)
-            _cont_memory = ContinuationMemory(active_workspace)
-            _ws_memory.increment_turn()
-
-            # Detect "continue" — inject truncation buffer instead of full context.
-            # The detector lives in brain.classifier.continuation so routing and
-            # memory injection can never disagree about what a continuation is.
-            is_continue = is_continue_turn
-
-            if is_continue and (_ws_memory.has_truncation() or _cont_memory.has_code_buffer()):
-                # Prefer continuation_memory's smart code buffer
-                cont_ctx = ""
-                if _cont_memory.has_code_buffer():
-                    cont_ctx = _cont_memory.build_context(for_continue=True)
-                    console.print("  [dim cyan]🔄 Continue mode — loading code buffer...[/dim cyan]")
-                if not cont_ctx and _ws_memory.has_truncation():
-                    cont_ctx = _ws_memory.get_continue_context()
-                    console.print("  [dim cyan]🔄 Continue mode — loading truncation buffer...[/dim cyan]")
-                augmented_input = f"{cont_ctx}\n\n[USER REQUEST]\n{user_input}"
-            elif is_continue:
-                # User says continue, but response wasn't truncated — resume task without dumping files
-                continuity_ctx = _ws_memory.get_continuity_context()
-                activity_ctx = _cont_memory.build_context(for_continue=False)
-                parts = []
-                if activity_ctx:
-                    parts.append(activity_ctx)
-                if continuity_ctx:
-                    parts.append(continuity_ctx)
-                parts.append(f"[USER REQUEST]\n{user_input} {continuation_hint()}")
-                augmented_input = "\n\n".join(parts)
-                console.print("  [dim cyan]🔄 Continue mode — melanjutkan langkah berikutnya...[/dim cyan]")
-            else:
-                # Use SmartMemory for ranked, decay-aware context
-                from brain.memory.smart_memory import SmartMemory
-
-                _smart = SmartMemory(active_workspace, workspace_memory=_ws_memory)
-                ws_context = _smart.raw.build_smart_context(user_input=user_input)
-                # Inject last activity context (super compact, ~50 tokens)
-                activity_ctx = _cont_memory.build_context(for_continue=False)
-                # Inject continuity context agar AI tidak ngulang
-                continuity_ctx = _ws_memory.get_continuity_context()
-
-                context_parts = []
-                if ws_context:
-                    context_parts.append(ws_context)
-                if activity_ctx:
-                    context_parts.append(activity_ctx)
-                if continuity_ctx:
-                    context_parts.append(continuity_ctx)
-                context_parts.append(f"[USER REQUEST]\n{user_input}")
-
-                augmented_input = "\n\n".join(context_parts)
-
-        # Continuation turn without an active workspace: there is no buffer to
-        # inject, but the message is too thin to stand alone, so state the
-        # resume intent explicitly rather than letting the model ask "lanjut apa?".
-        if is_continue_turn and augmented_input == user_input:
-            augmented_input = f"{user_input}\n\n{continuation_hint()}"
-
-        # Inject memory context (for cross-model continuity)
-        if memory_context:
-            augmented_input = f"{memory_context}\n\n{augmented_input}"
-
-        # 4. Assemble context (inject skills awareness into system prompt)
-        ctx = context_assembler.assemble(
-            handler=handler,
-            user_input=augmented_input,
+    try:
+        response = await orchestrator.process(
+            user_input=user_input,
             session_id=session_id,
-            model_id=model.id,
-            context_window=model.context_window,
-            model_max_output=model.max_output,
+            override_model=override_model,
+            stream=stream,
+            on_content_chunk=on_content if stream else None,
+            on_thinking_chunk=on_thinking if stream else None,
+            on_reset=on_reset,
+            on_event=on_event,
+            persist=persist,
         )
-
-        # Inject skills prompt into system message so AI knows its capabilities
-        if skills_prompt and ctx.messages:
-            for msg in ctx.messages:
-                if msg.get("role") == "system":
-                    _append_to_system_message(msg, skills_prompt, separator="\n")
-                    break
-
-        # Inject L1 vault memory automatically. The agent must not have to
-        # remember to call vault_boot — memory is part of the prompt, always.
-        # Built here, not in chat_mode: process_input is where the prompt is
-        # assembled, and the builder is cached by vault mtime, so this costs
-        # one stat() per turn rather than a rebuild.
-        vault_memory = build_vault_context()
-        if vault_memory and ctx.messages:
-            for msg in ctx.messages:
-                if msg.get("role") == "system":
-                    _append_volatile_to_system_message(msg, vault_memory)
-                    break
-
-        # 5. Prepare request params
-        params = handler.prepare_request_params(model)
-        temperature = params.get("temperature", 0.5)
-        max_tokens = params.get("max_tokens", 8192)
-
-        # Build tools payload for API if model supports tool calling
-        tools_payload: list[dict[str, Any]] | None = None
-        if tool_registry and model.supports_tools:
-            tools_payload = tool_registry.get_all_schemas()
-            if tools_payload:
-                logger.debug(f"[process] Sending {len(tools_payload)} tool schemas to API")
-
-        cfg = terminal_config or TerminalFormatConfig()
-
-        # 6. Call API
-        try:
-            active_messages: list[dict[str, Any]] = list(ctx.messages)
-            content_parts: list[str] = []
-            stream_renderer: TerminalStreamRenderer | None = None
-            total_prompt_tokens: int = 0
-            total_completion_tokens: int = 0
-
-            async def _execute_single_call(
-                messages: list[dict[str, Any]],
-                show_stream: bool = True,
-                use_tools: bool = True,
-            ) -> tuple[ParsedResponse, list[str]]:
-                nonlocal stream_renderer, total_prompt_tokens, total_completion_tokens
-                c_parts: list[str] = []
-                effective_tools = tools_payload if use_tools else None
-                if stream:
-                    th_parts: list[str] = []
-                    stream_renderer = TerminalStreamRenderer(
-                        console=console,
-                        config=cfg,
-                        tracker=SESSION_CODE_TRACKER,
-                    )
-
-                    def on_chunk(chunk: str) -> None:
-                        c_parts.append(chunk)
-                        if show_stream and stream_renderer:
-                            stream_renderer.on_content_chunk(chunk)
-
-                    def on_thinking_chunk(chunk: str) -> None:
-                        th_parts.append(chunk)
-                        if show_stream and stream_renderer:
-                            stream_renderer.on_thinking_chunk(chunk)
-
-                    aggregator = StreamAggregator(
-                        on_content_chunk=on_chunk,
-                        on_thinking_chunk=on_thinking_chunk,
-                    )
-                    stream_iter = api_client.chat_completion_stream(
-                        model=model.id,
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        tools=effective_tools,
-                    )
-                    res_parsed = await aggregator.aggregate(stream_iter)
-                    if show_stream:
-                        console.print()
-                    if res_parsed.cached_tokens > 0 and show_stream:
-                        console.print(
-                            f"  [dim cyan]⚡ Prompt Cache Hit: {res_parsed.cached_tokens} tokens ({res_parsed.cache_hit_ratio:.1%})[/dim cyan]"
-                        )
-                    total_prompt_tokens += res_parsed.prompt_tokens
-                    total_completion_tokens += res_parsed.completion_tokens
-                    return res_parsed, c_parts
-                else:
-                    raw_res = await api_client.chat_completion(
-                        model=model.id,
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        tools=effective_tools,
-                    )
-                    res_parsed = ResponseHandler.handle(raw_res)
-                    if res_parsed.cached_tokens > 0 and show_stream:
-                        console.print(
-                            f"  [dim cyan]⚡ Prompt Cache Hit: {res_parsed.cached_tokens} tokens ({res_parsed.cache_hit_ratio:.1%})[/dim cyan]"
-                        )
-                    total_prompt_tokens += res_parsed.prompt_tokens
-                    total_completion_tokens += res_parsed.completion_tokens
-                    return res_parsed, [res_parsed.content or ""]
-
-            parsed, content_parts = await _execute_single_call(active_messages, show_stream=True)
-
-            # 6b. Autonomous Tool Execution Loop (Multi-Turn)
-            # If the model requested tool execution (via OpenAI schema tool_calls OR DeepSeek DSML / text blocks),
-            # execute them, show execution status, feed results back to the model, and continue until final answer.
-            max_tool_rounds = 20
-            tool_round = 0
-
-            while tool_round < max_tool_rounds:
-                raw_text = "".join(content_parts)
-                detected_calls: list[dict[str, Any]] = []
-
-                if parsed.has_tool_calls:
-                    detected_calls = parsed.tool_calls
-                elif raw_text:
-                    detected_calls = ToolCallParser.extract_text_tool_calls(raw_text)
-
-                if not detected_calls or not tool_registry:
-                    break
-
-                tool_round += 1
-                logger.info(f"[process_input] Tool round {tool_round}: detected {len(detected_calls)} tool call(s)")
-
-                if stream and stream_renderer:
-                    stream_renderer.finish(raw_text)
-
-                tool_results_for_round: list[tuple[dict[str, Any], Any]] = []
-                for call in detected_calls:
-                    t_name = call.get("name") or call.get("function", {}).get("name", "unknown")
-                    t_args = call.get("arguments") or {}
-                    if isinstance(t_args, str):
-                        try:
-                            t_args = json.loads(t_args)
-                        except Exception:
-                            t_args = {"command": t_args} if t_name == "execute_command" else {"raw": t_args}
-                    if not isinstance(t_args, dict):
-                        t_args = {}
-
-                    # Ensure execute_command defaults cwd to active_workspace if set
-                    if (
-                        t_name == "execute_command"
-                        and active_workspace
-                        and (not t_args.get("cwd") or t_args.get("cwd") == ".")
-                    ):
-                        t_args["cwd"] = str(active_workspace)
-
-                    # Ensure workspace-aware tools receive the active workspace
-                    _workspace_tools = {
-                        "web_search",
-                        "file_search",
-                        "file_write",
-                        "file_patch",
-                        "file_move",
-                        "file_delete",
-                        "dir_create",
-                        "file_stat",
-                        "count_lines",
-                        "git_status",
-                        "git_diff",
-                        "json_query",
-                        "graphify_ingest",
-                        "graphify_query",
-                        "memory_recall",
-                        "memory_remember",
-                        "memory_capture",
-                        "memory_rank_files",
-                        "vault_boot",
-                        "vault_graph_build",
-                        "vault_neighbours",
-                        "vault_explain",
-                        "vault_health",
-                        "vault_search",
-                        "vault_read",
-                        "vault_recall",
-                        "vault_write",
-                    }
-                    if (
-                        t_name in _workspace_tools
-                        and active_workspace
-                        and not t_args.get("workspace_path")
-                    ):
-                        t_args["workspace_path"] = str(active_workspace)
-
-                    # Ensure relative file paths default to active_workspace if set
-                    if active_workspace:
-                        for p_key in ("file_path", "path", "dir_path"):
-                            if p_key in t_args and isinstance(t_args[p_key], str):
-                                raw_p = t_args[p_key].strip()
-                                if not Path(raw_p).is_absolute():
-                                    cand = active_workspace / raw_p
-                                    if cand.exists() or not Path(raw_p).exists():
-                                        t_args[p_key] = str(cand)
-
-                    # Display clean tool execution badge
-                    summary_arg = ""
-                    if t_name == "execute_command":
-                        cmd = str(t_args.get("command", ""))
-                        summary_arg = f"`{cmd[:60]}...`" if len(cmd) > 60 else f"`{cmd}`"
-                    elif "path" in t_args:
-                        summary_arg = str(t_args["path"])
-                    elif "file_path" in t_args:
-                        summary_arg = str(t_args["file_path"])
-
-                    console.print(
-                        f"  [bold bright_cyan]⚡ Eksekusi Tool ({tool_round}):[/bold bright_cyan] "
-                        f"[bold white]{t_name}[/bold white] [dim]{summary_arg}[/dim]"
-                    )
-
-                    t0 = time.time()
-                    try:
-                        # Handle inline tool patterns like replace:<path> or file:<path>
-                        if t_name.startswith("replace:") and active_workspace:
-                            rel_file = t_name.split(":", 1)[1].strip()
-                            file_p = active_workspace / rel_file
-                            s_text = t_args.get("search") or t_args.get("target") or ""
-                            r_text = t_args.get("replace") or t_args.get("replacement") or t_args.get("content") or ""
-                            raw_diff = str(t_args.get("raw") or t_args.get("diff") or "")
-                            if not s_text and "<<<<<<< SEARCH" in raw_diff:
-                                parts = raw_diff.split("=======")
-                                if len(parts) == 2:
-                                    s_text = parts[0].replace("<<<<<<< SEARCH", "").strip()
-                                    r_text = parts[1].replace(">>>>>>>", "").strip()
-                            editor = FileEditor(backup_before_edit=True)
-                            if s_text:
-                                res_edit = editor.replace_content(file_p, s_text, r_text)
-                                res = {"success": res_edit.success, "message": res_edit.message, "file": rel_file}
-                            else:
-                                res_edit = editor.create_file(file_p, r_text or raw_diff, overwrite=True)
-                                res = {"success": res_edit.success, "message": res_edit.message, "file": rel_file}
-                        elif t_name.startswith("file:") and active_workspace:
-                            rel_file = t_name.split(":", 1)[1].strip()
-                            file_p = active_workspace / rel_file
-                            content = str(t_args.get("content") or t_args.get("raw") or "")
-                            editor = FileEditor(backup_before_edit=True)
-                            res_edit = editor.create_file(file_p, content, overwrite=True)
-                            res = {"success": res_edit.success, "message": res_edit.message, "file": rel_file}
-                        else:
-                            res = await tool_registry.execute(t_name, t_args)
-
-                        elapsed_ms = int((time.time() - t0) * 1000)
-                        if isinstance(res, dict) and not res.get("success", True):
-                            err_msg = res.get("error", "Tool reported failure")
-                            console.print(f"  [dim yellow]⚠️  Tool {t_name}: {err_msg} ({elapsed_ms}ms)[/dim yellow]")
-                        else:
-                            console.print(f"  [dim green]✔ Tool {t_name} selesai ({elapsed_ms}ms)[/dim green]")
-                        tool_results_for_round.append((call, res))
-                    except Exception as err:
-                        elapsed_ms = int((time.time() - t0) * 1000)
-                        console.print(f"  [dim red]✘ Tool {t_name} gagal ({elapsed_ms}ms): {err}[/dim red]")
-                        tool_results_for_round.append((call, f"Error: Tool '{t_name}' failed: {err}"))
-
-                # Append assistant call and tool results to active_messages
-                if parsed.has_tool_calls:
-                    formatted_tool_calls = []
-                    for tc in parsed.tool_calls:
-                        t_id = tc.get("id") or f"call_{tool_round}"
-                        t_fn = tc.get("function")
-                        if isinstance(t_fn, dict):
-                            fn_name = t_fn.get("name") or tc.get("name", "")
-                            fn_args = t_fn.get("arguments", "{}")
-                        else:
-                            fn_name = tc.get("name", "")
-                            fn_args = tc.get("arguments", {})
-                        if not isinstance(fn_args, str):
-                            fn_args = json.dumps(fn_args, ensure_ascii=False)
-                        formatted_tool_calls.append({
-                            "id": t_id,
-                            "type": "function",
-                            "function": {
-                                "name": fn_name,
-                                "arguments": fn_args,
-                            },
-                        })
-
-                    active_messages.append({
-                        "role": "assistant",
-                        "content": parsed.content or None,
-                        "tool_calls": formatted_tool_calls,
-                    })
-                    for call, res in tool_results_for_round:
-                        c_id = call.get("id") or f"call_{tool_round}"
-                        res_str = json.dumps(res, ensure_ascii=False) if isinstance(res, (dict, list)) else str(res)
-                        active_messages.append({
-                            "role": "tool",
-                            "tool_call_id": c_id,
-                            "content": res_str,
-                        })
-                else:
-                    active_messages.append({
-                        "role": "assistant",
-                        "content": raw_text,
-                    })
-                    res_blocks = []
-                    for call, res in tool_results_for_round:
-                        c_name = call.get("name", "tool")
-                        res_str = json.dumps(res, ensure_ascii=False) if isinstance(res, (dict, list)) else str(res)
-                        res_blocks.append(f"[TOOL RESULT for {c_name}]:\n{res_str}")
-                    active_messages.append({
-                        "role": "user",
-                        "content": "\n\n".join(res_blocks) + "\n\nLanjutkan analisis dan respons Anda berdasarkan hasil eksekusi tool di atas.",
-                    })
-
-                # Re-invoke model with updated messages
-                parsed, content_parts = await _execute_single_call(active_messages, show_stream=True)
-
-            # If tool execution reached max_tool_rounds and content is still empty (model was mid-execution),
-            # give it one clean final round to summarize what it has done.
-            if tool_round >= max_tool_rounds and not "".join(content_parts).strip():
-                logger.info(f"[process_input] Reached max_tool_rounds ({max_tool_rounds}), asking model for final summary")
-                console.print(
-                    "\n  [dim yellow]⚡ Batas putaran tool tercapai — meminta model memberikan ringkasan akhir...[/dim yellow]"
-                )
-                active_messages.append({
-                    "role": "user",
-                    "content": (
-                        "Batas putaran eksekusi tool telah tercapai. Tolong berikan ringkasan dan "
-                        "kesimpulan dari pekerjaan yang telah Anda selesaikan kepada user."
-                    ),
-                })
-                parsed, round_parts = await _execute_single_call(
-                    active_messages, show_stream=True, use_tools=False
-                )
-                if round_parts:
-                    content_parts = list(round_parts)
-
-            # Auto-continue engine for thinking or truncation
-            max_continue_rounds = 5
-            continue_round = 0
-            continue_messages = list(active_messages)
-            _seen_content_hashes: set[int] = set()  # detect AI repeating itself
-
-            # Case 1: Content kosong, thinking penuh → DeepSeek pattern.
-            # JANGAN paksa jawaban akhir saat model masih bekerja / baru mulai:
-            # - finish_reason="length" → thinking TERPUTUS di tengah (bukan selesai)
-            #   → kirim thinking kembali + minta lanjut dari titik terputus.
-            # - finish_reason="stop" → model mengakhiri turn setelah thinking
-            #   → minta ia melanjutkan pekerjaan dan menulis hasilnya.
-            if not "".join(content_parts).strip() and parsed.thinking.strip():
-                # Thinking dikirim kembali sebagai konteks assistant supaya
-                # model MELANJUTKAN dari titik berhenti, bukan berpikir ulang
-                # dari awal (hemat token, tidak prematur).
-                continue_messages.append({
-                    "role": "assistant",
-                    "content": f"<thinking>\n{parsed.thinking.strip()}\n</thinking>",
-                })
-                if parsed.finish_reason == "length":
-                    console.print(
-                        "\n  [dim yellow]⚡ Thinking terpotong di tengah — "
-                        "melanjutkan dari titik terputus...[/dim yellow]"
-                    )
-                    continue_messages.append({
-                        "role": "user",
-                        "content": (
-                            "Output kamu terpotong di tengah proses di atas. "
-                            "Lanjutkan tepat dari titik terputus — selesaikan "
-                            "analisisnya lalu tulis respons lengkapnya. "
-                            "Jangan ulangi dari awal."
-                        ),
-                    })
-                else:
-                    console.print(
-                        "\n  [dim yellow]⚡ Thinking selesai tapi belum ada output — "
-                        "meminta model melanjutkan pekerjaan...[/dim yellow]"
-                    )
-                    continue_messages.append({
-                        "role": "user",
-                        "content": (
-                            "Lanjutkan pekerjaan kamu: selesaikan analisis yang "
-                            "belum selesai, lalu tulis hasilnya sebagai respons "
-                            "lengkap untuk user. Jangan mengarang isi berkas "
-                            "yang belum kamu baca."
-                        ),
-                    })
-                parsed, round_parts = await _execute_single_call(
-                    continue_messages, show_stream=True, use_tools=False
-                )
-                continue_round += 1
-                if round_parts:
-                    content_parts = list(round_parts)
-
-            # Case 2: Normal auto-continue jika finish_reason == "length"
-            last_partial = "".join(content_parts)
-
-            while parsed.finish_reason == "length" and continue_round < max_continue_rounds:
-                if not last_partial.strip():
-                    # Content kosong di tengah auto-continue. Jika thinking ada,
-                    # model TERPUTUS di tengah berpikir (bukan selesai) → kirim
-                    # thinking kembali + minta lanjut dari titik terputus.
-                    # Jangan paksa jawaban prematur, jangan berhenti diam-diam
-                    # (fix "stop sendiri" + "paksa selesai padahal baru mulai").
-                    if parsed.thinking.strip() and continue_round < max_continue_rounds - 1:
-                        console.print(
-                            "\n  [dim yellow]⚡ Thinking terpotong — "
-                            "melanjutkan dari titik terputus...[/dim yellow]"
-                        )
-                        continue_messages.append({
-                            "role": "assistant",
-                            "content": f"<thinking>\n{parsed.thinking.strip()}\n</thinking>",
-                        })
-                        continue_messages.append({
-                            "role": "user",
-                            "content": (
-                                "Output kamu terpotong di tengah proses di atas. "
-                                "Lanjutkan tepat dari titik terputus — selesaikan "
-                                "analisisnya lalu tulis respons lengkapnya. "
-                                "Jangan ulangi dari awal."
-                            ),
-                        })
-                        parsed, round_parts_c = await _execute_single_call(
-                            continue_messages, show_stream=True, use_tools=False
-                        )
-                        continue_round += 1
-                        last_partial = "".join(round_parts_c)
-                        if last_partial.strip():
-                            content_parts.extend(round_parts_c)
-                            continue
-                    console.print(
-                        "\n  [dim yellow]⚠️  Content kosong — tidak bisa melanjutkan.[/dim yellow]"
-                    )
-                    break
-
-                continue_round += 1
-                console.print(
-                    f"\n  [dim yellow]⚡ Response terpotong — melanjutkan otomatis "
-                    f"({continue_round}/{max_continue_rounds})...[/dim yellow]"
-                )
-
-                # Kirim potongan terakhir (max 2000 chars) agar AI tahu
-                # konteks tanpa kirim seluruh output sebelumnya (hemat token)
-                tail_for_context = last_partial[-2000:] if len(last_partial) > 2000 else last_partial
-                continue_messages.append({"role": "assistant", "content": tail_for_context})
-                continue_messages.append({
-                    "role": "user",
-                    "content": (
-                        "Lanjutkan tepat dari bagian terakhir yang terputus. "
-                        "Jangan ulangi dari awal, langsung sambungkan. "
-                        "DILARANG menulis ulang kode/teks yang sudah ada di atas."
-                    ),
-                })
-
-                parsed, round_parts_c = await _execute_single_call(continue_messages, show_stream=True)
-                last_partial = "".join(round_parts_c)
-
-                # Deteksi AI ngulang hal yang sama → stop boros token
-                if last_partial.strip():
-                    content_hash = hash(last_partial.strip()[:500])
-                    if content_hash in _seen_content_hashes:
-                        console.print(
-                            "\n  [dim red]⚠️  AI mengulang konten yang sama — "
-                            "menghentikan auto-continue untuk hemat token.[/dim red]"
-                        )
-                        break
-                    _seen_content_hashes.add(content_hash)
-
-                if round_parts_c:
-                    content_parts.append("\n")
-                    content_parts.extend(round_parts_c)
-
-            if parsed.finish_reason == "length" and continue_round >= max_continue_rounds:
-                console.print(
-                    f"\n  [dim red]⚠️  Respons masih terpotong setelah {max_continue_rounds}x lanjut. "
-                    f"Coba ketik 'continue' untuk melanjutkan.[/dim red]"
-                )
-                if _ws_memory:
-                    full_output = "".join(content_parts)
-                    _ws_memory.save_truncation(
-                        partial_content=full_output,
-                        model_id=model.id,
-                    )
-                    # Simpan progress agar model berikutnya tahu di mana berhenti
-                    _ws_memory.record_progress(
-                        phase="auto-continue",
-                        status="in_progress",
-                        detail=f"Terpotong setelah {continue_round}x continue, "
-                               f"model={model.id}, output={len(full_output)} chars",
-                    )
-                    # Save smart code buffer via continuation memory
-                    if _cont_memory:
-                        _cont_memory.analyze_and_save(
-                            response_text=full_output,
-                            model_id=model.id,
-                            is_truncated=True,
-                        )
-                    console.print(
-                        f"  [dim cyan]💾 Truncation buffer saved ({len(full_output)} chars). "
-                        f"Ketik 'continue' untuk melanjutkan.[/dim cyan]"
-                    )
-
-            # 7. Post-process
-            parsed = handler.post_process(parsed)
-
-            raw_final = "".join(content_parts) if content_parts else (parsed.content or "")
-            # Safety fallback: if content is still empty but thinking has substance,
-            # use thinking text as fallback so the terminal never returns a blank empty response!
-            if not raw_final.strip() and parsed.thinking and parsed.thinking.strip():
-                logger.info("[process_input] Content was empty; using parsed.thinking as fallback response")
-                raw_final = parsed.thinking.strip()
-
-            final_text = ToolCallParser.clean_text_tool_calls(raw_final)
-
-            # If final_text is STILL empty after all fallbacks within the try block:
-            if not final_text.strip():
-                if tool_round > 0:
-                    final_text = f"*(Selesai mengeksekusi {tool_round} putaran tool pada workspace)*"
-                else:
-                    raise RuntimeError(
-                        f"Model '{model.id}' returned empty content — advancing fallback chain"
-                    )
-
-            if stream and stream_renderer:
-                stream_renderer.finish(final_text)
-                # If content was never streamed to console (e.g. model outputted only thinking/fallback),
-                # render the final fallback text now so user sees it!
-                if not stream_renderer.response_header_shown and final_text:
-                    render_terminal_markdown(
-                        final_text,
-                        console=console,
-                        config=cfg,
-                        tracker=SESSION_CODE_TRACKER,
-                    )
-            elif not stream:
-                render_terminal_markdown(
-                    final_text,
-                    console=console,
-                    config=cfg,
-                    tracker=SESSION_CODE_TRACKER,
-                )
-
-            # 8. Store in memory (store clean user_input)
-            # Save last response for cross-model continuity
-            if _ws_memory:
-                _ws_memory.save_last_response(final_text, model_id=model.id)
-
-            # Auto-analyze response & save continuation memory
-            if _cont_memory:
-                _cont_memory.analyze_and_save(
-                    response_text=final_text,
-                    model_id=model.id,
-                    is_truncated=(parsed.finish_reason == "length"),
-                )
-
-            conversation_store.add_message(
-                session_id, "user", user_input
-            )
-            conversation_store.add_message(
-                session_id, "assistant", final_text,
-                model_used=model.id,
-                token_count=parsed.completion_tokens,
-            )
-            await _distill_cli_session(conversation_store, session_id, active_workspace)
-
-            # 9. Record health
-            health_checker.record_success(model.id, 0)
-
-            # 10. Display stats with themed output
-            console.print(
-                f"\n  [dim]📊 tokens: in={parsed.prompt_tokens} "
-                f"out={parsed.completion_tokens} | "
-                f"model={model.id}[/dim]"
-            )
-
-            # 11. Automatically apply file changes to workspace if active
-            if active_workspace and active_workspace.is_dir():
-                actions = _apply_workspace_changes(active_workspace, final_text)
-                if actions:
-                    console.print(f"  [dim]✨ Workspace synchronized: {len(actions)} file action(s) applied[/dim]")
-
-                # Record to workspace memory
-                if _ws_memory:
-                    _ws_memory.record_model(model.id)
-                    for act in actions:
-                        # Extract filename from action string
-                        parts = act.split(": ", 1)
-                        if len(parts) > 1:
-                            _ws_memory.record_file_edit(
-                                parts[1].strip(),
-                                action="created" if "💾" in act else "edited",
-                                summary=act,
-                            )
-                    # Clear truncation buffer on success (output not truncated)
-                    if parsed.finish_reason != "length":
-                        _ws_memory.clear_truncation()
-                        if _cont_memory:
-                            _cont_memory.clear_code_buffer()
-                        # Auto-capture decisions/facts from this turn
-                        try:
-                            from brain.memory.smart_memory import SmartMemory
-
-                            _smart_auto = SmartMemory(
-                                active_workspace, workspace_memory=_ws_memory
-                            )
-                            _smart_auto.capture_from_turn(
-                                user_input=user_input,
-                                assistant_output=final_text or "",
-                                model_id=getattr(model, "id", "") or "",
-                            )
-                        except Exception as exc:  # noqa: BLE001
-                            # Was `pass`, which hid a NameError for every turn:
-                            # `response_text` and `model_config` are not in scope
-                            # inside process_input. Log so it can never go silent
-                            # again.
-                            logger.debug("[smart_memory] auto-capture skipped: %s", exc)
-
-                        _ws_memory.record_progress(
-                            phase="response",
-                            status="done",
-                            detail=f"Selesai, model={model.id}, "
-                                   f"output={len(final_text)} chars",
-                        )
-
-            return final_text
-
-        except Exception as e:
-            health_checker.record_failure(model.id)
-            console.print(f"\n[red]❌ Error: {escape(str(e))}[/red]")
-
-            if _ws_memory:
-                _ws_memory.record_error(f"{model.id}: {str(e)[:150]}")
-
-            # Walk the fallback chain and previous working model
-            current_failed = model.id
-            fallback_attempt = 0
-            candidate_models: list[ModelInfo] = []
-
-            # 1. Collect chain from FallbackStrategy
-            while True:
-                next_fb = fallback.get_next(
-                    classification.task_type, current_failed, session_id
-                )
-                if not next_fb:
-                    break
-                if next_fb not in candidate_models:
-                    candidate_models.append(next_fb)
-                current_failed = next_fb.id
-
-            # 2. Add previous working model if known and not already in candidates
-            tried_ids = fallback._tried.get(session_id, set())
-            prev_model_id = (
-                previous_model
-                or conversation_store.get_last_used_model(session_id)
-                or (_ws_memory.get_last_model() if _ws_memory else None)
-            )
-            if prev_model_id and prev_model_id not in tried_ids and prev_model_id != model.id:
-                prev_info = registry.get(prev_model_id) if registry else None
-                if prev_info and prev_info not in candidate_models:
-                    candidate_models.append(prev_info)
-
-            # 3. Add default model as final safety net if not already tried
-            default_id = getattr(router, "_default_model", "ag/gemini-3.8-flash-high")
-            if default_id and default_id not in tried_ids and default_id != model.id:
-                def_info = registry.get(default_id) if registry else None
-                if def_info and def_info not in candidate_models:
-                    candidate_models.append(def_info)
-
-            # Now try each candidate model
-            for fb_model in candidate_models:
-                fallback_attempt += 1
-                fb_theme = _get_provider_theme(fb_model.provider)
-                console.print(
-                    f"  [yellow]🔄 Fallback #{fallback_attempt}: "
-                    f"{fb_theme['icon']} {fb_model.id}[/yellow]"
-                )
-
-                if _ws_memory:
-                    _ws_memory.record_model(fb_model.id)
-
-                fb_tools = tools_payload if (fb_model.supports_tools and tools_payload) else None
-
-                try:
-                    raw_response = await api_client.chat_completion(
-                        model=fb_model.id,
-                        messages=ctx.messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        tools=fb_tools,
-                    )
-                    fb_parsed = ResponseHandler.handle(raw_response)
-                    raw_fb_final = fb_parsed.content or ""
-                    if not raw_fb_final.strip() and fb_parsed.thinking and fb_parsed.thinking.strip():
-                        logger.info("[fallback] Content was empty; using parsed.thinking as fallback response")
-                        raw_fb_final = fb_parsed.thinking.strip()
-                    final_text = ToolCallParser.clean_text_tool_calls(raw_fb_final)
-
-                    if not final_text.strip():
-                        if fb_parsed.tool_calls:
-                            final_text = f"*(Fallback model {fb_model.id} requested {len(fb_parsed.tool_calls)} tool calls)*"
-                        else:
-                            logger.warning(f"[process_input] Fallback {fb_model.id} returned empty; trying next candidate")
-                            health_checker.record_failure(fb_model.id)
-                            continue
-
-                    # Success! Apply changes to workspace
-                    if active_workspace and active_workspace.is_dir():
-                        fb_actions = _apply_workspace_changes(active_workspace, final_text)
-                        if fb_actions and _ws_memory:
-                            for act in fb_actions:
-                                parts = act.split(": ", 1)
-                                if len(parts) > 1:
-                                    _ws_memory.record_file_edit(
-                                        parts[1].strip(),
-                                        action="created" if "💾" in act else "edited",
-                                        summary=act,
-                                    )
-
-                    render_terminal_markdown(
-                        final_text,
-                        console=console,
-                        config=cfg,
-                        tracker=SESSION_CODE_TRACKER,
-                    )
-
-                    # Save memory
-                    if _ws_memory:
-                        _ws_memory.save_last_response(final_text, model_id=fb_model.id)
-                        _ws_memory.record_progress(
-                            phase="response", status="done",
-                            detail=f"Fallback ok, model={fb_model.id}, output={len(final_text)} chars",
-                        )
-                    if _cont_memory:
-                        _cont_memory.analyze_and_save(
-                            response_text=final_text,
-                            model_id=fb_model.id,
-                            is_truncated=(fb_parsed.finish_reason == "length"),
-                        )
-                        if fb_parsed.finish_reason != "length":
-                            _cont_memory.clear_code_buffer()
-
-                    conversation_store.add_message(session_id, "user", user_input)
-                    conversation_store.add_message(
-                        session_id, "assistant", final_text,
-                        model_used=fb_model.id,
-                        token_count=fb_parsed.completion_tokens,
-                    )
-                    await _distill_cli_session(
-                        conversation_store, session_id, active_workspace
-                    )
-                    health_checker.record_success(fb_model.id, 0)
-                    console.print(
-                        f"\n  [dim]📊 fallback model={fb_model.id} | attempt #{fallback_attempt}[/dim]"
-                    )
-                    return final_text
-
-                except Exception as fb_err:
-                    logger.warning(f"[process_input] Fallback {fb_model.id} failed: {fb_err}")
-                    health_checker.record_failure(fb_model.id)
-                    if _ws_memory:
-                        _ws_memory.record_error(f"{fb_model.id}: {str(fb_err)[:150]}")
-                    console.print(
-                        f"  [red]❌ Fallback {fb_model.id} error: {escape(str(fb_err))}[/red]"
-                    )
-                    continue
-
-            # If all fallbacks failed
-            console.print("\n[bold red]⚠️ Semua opsi model cadangan gagal merespons.[/bold red]")
-            return (
-                f"Maaf, model '{model.id}' dan seluruh opsi fallback cadangan mengalami kendala: {e}. "
-                "Sesi tetap aktif — Anda dapat mencoba kembali atau memilih model lain dengan perintah /model."
-            )
+    finally:
+        activity.stop()
+
+    if response.status == ResponseStatus.ERROR:
+        renderer.finish("")
+        cli_ui.error_panel(console, response.content)
+        return response.content
+
+    renderer.finish(response.content)
+    if not showed_text:
+        render_terminal_markdown(response.content, console=console, config=cfg, tracker=SESSION_CODE_TRACKER)
+
+    console.print()
+    console.print(cli_ui.result_line(response, time.monotonic() - started))
+
+    if stack.workspace.is_dir():
+        actions = _apply_workspace_changes(stack.workspace, response.content)
+        if actions:
+            console.print(f"[dim]{len(actions)} file dari jawaban diterapkan ke proyek[/dim]")
+            project = ProjectMemory.for_path(stack.workspace)
+            if project:
+                project.record_file_actions(actions)
+
+    return response.content
 
 
 async def chat_mode() -> None:
@@ -2120,61 +1273,18 @@ async def chat_mode() -> None:
     settings = get_settings()
     secrets = get_secrets()
 
-    # Initialize components
-    ModelRegistry.reset_singleton()
-    registry = ModelRegistry()
-    registry.load_from_config(settings.models_config_path)
-
+    # One orchestrator: the same agent the web chat and team runs use.
     api_client = APIClient(
         settings.api_base_url, secrets.api_key, int(settings.timeout_seconds)
     )
+    orchestrator = Orchestrator.from_settings(settings, api_client=api_client)
+    registry = orchestrator.registry
+    conversation_store = orchestrator.conversation_store
 
-    # Fetch full models from 9Router and register Gemini, Kagiro, and Claude models
-    # Auto-fetch /models from every endpoint (main router + Bansos) and
-    # register everything, so new models appear without editing config.
+    # Auto-fetch /models from every provider and register everything, so new
+    # models appear without editing config.
     synced = await api_client.sync_all_models(registry)
     logger.info(f"[main] Auto-synced models: {synced}")
-    classifier = IntentClassifier()
-    router = RoutingType(config_path=settings.models_config_path, registry=registry)
-    conversation_store = ConversationStore()
-    think_prompt_mgr = ThinkPromptManager()
-    context_assembler = ContextAssembler(conversation_store, think_prompt_mgr)
-    health_checker = HealthChecker()
-    fallback = FallbackStrategy(config_path=settings.models_config_path, registry=registry)
-
-    # Register AI tools (read_file, execute_command, list_directory, discard_changes)
-    tool_registry = register_all_tools()
-    logger.info(f"[main] Registered {tool_registry.tool_count} tools: {tool_registry.get_all_names()}")
-
-    # Build skills-awareness prompt (injected into system prompt every turn)
-    skills_prompt = build_skills_prompt(tool_registry)
-    logger.info(f"[main] Skills prompt built: {len(skills_prompt)} chars")
-
-    # Initialize persistent memory
-    persistent_memory = PersistentMemory(storage_dir=settings.brain_dir / "memory" / "store")
-    logger.info("[main] Persistent memory initialized")
-
-    # Load cross-session memory: try to carry over context from last session
-    _startup_memory = ""
-    try:
-        prev_sessions = persistent_memory.list_sessions()
-        if prev_sessions:
-            latest_session = prev_sessions[-1]
-            _startup_memory = persistent_memory.get_memory_summary(latest_session)
-            if _startup_memory:
-                logger.info(f"[main] Loaded cross-session memory from '{latest_session}': {len(_startup_memory)} chars")
-    except Exception as e:
-        logger.warning(f"[main] Could not load cross-session memory: {e}")
-
-    # Initialize 9Router graphify client (optional, fallback)
-    _graphify_client = GraphifyClient(
-        router_url=settings.api_base_url,
-        api_key=secrets.api_key,
-        default_model=settings.default_model,
-        timeout=int(settings.timeout_seconds),
-    )
-    _ = _graphify_client
-    logger.info("[main] GraphifyClient initialized")
 
     session_id = generate_session_id()
     project_root = settings.project_root
@@ -2188,65 +1298,25 @@ async def chat_mode() -> None:
     workspace_dir.mkdir(parents=True, exist_ok=True)
     active_workspace: Path | None = None
 
-    # Track user-selected model override and previously working model
+    # Track user-selected model override
     override_model: str | None = None
-    last_successful_model: str | None = None
 
-    # Count models by provider for banner
-    providers: dict[str, int] = {}
-    for m in registry.get_all():
-        p = m.provider or "unknown"
-        providers[p] = providers.get(p, 0) + 1
-    provider_summary = ", ".join(f"{p}: {c}" for p, c in sorted(providers.items()))
-
-    # Welcome banner
-    banner_lines = [
-        "[bold bright_cyan]🤖 Agent Router — Multi-Model AI IDE & Workspace[/bold bright_cyan]",
-        "",
-        f"[dim]Session:[/dim]    {session_id}",
-        f"[dim]Models:[/dim]     {registry.count} total ({provider_summary})",
-        f"[dim]Workspace:[/dim]  {workspace_dir}",
-        "",
-        "[bold bright_green]Perintah Workspace & IDE:[/bold bright_green]",
-        "  [bright_green]/tree <tanggal-proyek>[/bright_green] [dim]—[/dim] Buka / buat proyek (contoh: [cyan]/tree 20261009-appcash[/cyan])",
-        "  [bright_green]/tree[/bright_green]                 [dim]—[/dim] Lihat file proyek aktif / daftar proyek",
-        "  [bright_green]/bansos[/bright_green]               [dim]—[/dim] Mode bansos gratis (DeepSeek V4.1 Flash via Kagiro)",
-        "  [bright_green]/model[/bright_green]                [dim]—[/dim] Ganti model AI interaktif (27+ model)",
-        "  [bright_green]/view <file>[/bright_green]          [dim]—[/dim] Preview file dengan syntax highlighting",
-        "  [bright_green]/code[/bright_green]                 [dim]—[/dim] Toggle minimize / expand blok kode AI (/code list, /code 1)",
-        "  [bright_green]/format[/bright_green]               [dim]—[/dim] Kustomisasi format terminal (Markdown, tema, minimizer)",
-        "  [bright_green]/search <pola>[/bright_green]        [dim]—[/dim] Cari file di proyek",
-        "  [bright_green]/paste[/bright_green]                [dim]—[/dim] Mode multi-line input / paste manual",
-        "  [bright_green]/help[/bright_green]                 [dim]—[/dim] Daftar semua perintah",
-        "",
-        "[dim]AI memiliki otoritas penuh untuk membuat, membaca, dan mengedit file di workspace proyek aktif.[/dim]",
-        "[dim]Ketik pesan untuk chat, 'clear' untuk reset histori, 'exit' untuk keluar.[/dim]",
-    ]
-
-    console.print(Panel(
-        "\n".join(banner_lines),
-        border_style="bright_cyan",
-        padding=(1, 3),
-    ))
+    cli_ui.enable_line_editing()
+    cli_ui.banner(
+        console,
+        models=registry.count,
+        providers=sorted({m.provider or "unknown" for m in registry.get_all()}),
+        session_id=session_id,
+    )
 
     try:
         while True:
             console.print()
 
-            # Build prompt with model & workspace indicators
-            ws_tag = f" | 📁 {active_workspace.name}" if active_workspace else ""
-            if override_model:
-                model_info = registry.get(override_model)
-                theme = _get_provider_theme(model_info.provider if model_info else "")
-                prompt = (
-                    f"[bold green]You[/bold green] "
-                    f"[dim]({theme['icon']} {override_model}{ws_tag})[/dim] [bold green]>[/bold green] "
-                )
-            else:
-                prompt = f"[bold green]You[/bold green] [dim](auto{ws_tag})[/dim] [bold green]>[/bold green] "
-
+            session_stack.enter(session_id, active_workspace)
+            console.print(cli_ui.context_line(override_model, active_workspace))
             try:
-                user_input = _read_user_input(prompt)
+                user_input = _read_user_input(cli_ui.PROMPT)
             except (EOFError, KeyboardInterrupt):
                 break
 
@@ -2293,59 +1363,23 @@ async def chat_mode() -> None:
                 )
                 if handled:
                     if new_model is not None:
-                        # Record model switch in memory
-                        if override_model and new_model != override_model:
-                            last_successful_model = override_model
-                            persistent_memory.record_model_switch(
-                                session_id,
-                                from_model=override_model or "auto",
-                                to_model=new_model,
-                                reason="User switched model via /model",
-                            )
-                            # Show memory summary for new model
-                            mem_summary = persistent_memory.get_memory_summary(session_id)
-                            if mem_summary:
-                                console.print(f"\n  [dim cyan]🧠 Memory loaded: {len(mem_summary)} chars context from previous model[/dim cyan]")
                         override_model = new_model
                     if new_ws != active_workspace:
                         active_workspace = new_ws
                     continue
 
-            # Inject memory summary: current session first, then cross-session
-            memory_context = ""
-            mem_summary = persistent_memory.get_memory_summary(session_id)
-            if mem_summary:
-                memory_context = mem_summary
-            elif _startup_memory:
-                # No current session memory yet — use last session's memory
-                memory_context = _startup_memory
-
             # Process the message
             console.print()
-            console.print("[bold bright_cyan]Agent >[/bold bright_cyan]", end=" ")
             try:
-                response_text = await process_input(
+                await process_input(
                     user_input=user_input,
                     session_id=session_id,
-                    api_client=api_client,
-                    classifier=classifier,
-                    router=router,
-                    context_assembler=context_assembler,
-                    conversation_store=conversation_store,
-                    health_checker=health_checker,
-                    fallback=fallback,
+                    orchestrator=orchestrator,
                     stream=settings.stream_enabled,
                     override_model=override_model,
-                    registry=registry,
                     active_workspace=active_workspace,
-                    memory_context=memory_context,
-                    tool_registry=tool_registry,
-                    skills_prompt=skills_prompt,
                     terminal_config=terminal_config,
-                    previous_model=last_successful_model,
                 )
-                if response_text and not response_text.startswith("Maaf, model"):
-                    last_successful_model = override_model or conversation_store.get_last_used_model(session_id)
             except (KeyboardInterrupt, asyncio.CancelledError):
                 # Ctrl+C must not print a traceback or kill the session. Note
                 # that CancelledError and KeyboardInterrupt are BaseException
@@ -2353,33 +1387,22 @@ async def chat_mode() -> None:
                 logger.info("[chat_mode] turn interrupted by user")
                 console.print()
                 console.print("[dim]⏹ Dihentikan (Ctrl+C). Sesi tetap aktif.[/dim]")
-                response_text = ""
             except Exception as proc_err:
                 logger.exception(f"[chat_mode] Unhandled error during process_input: {proc_err}")
-                console.print(f"\n[red]❌ Terjadi kendala: {escape(str(proc_err))}[/red]")
-                console.print("[dim]Sesi tetap aktif. Silakan lanjutkan pesan Anda atau ganti model dengan /model.[/dim]")
-                response_text = ""
+                cli_ui.error_panel(console, str(proc_err))
 
-            # Record memory: file edits from AI response
-            if active_workspace and response_text:
-                _record_file_changes_to_memory(
-                    persistent_memory, session_id, active_workspace, response_text
-                )
             # ──── AI SELESAI ────────────────────────────────────────────────
             # Flush stdin buffer: buang semua keystroke yang tidak sengaja
             # diketik user selama AI sedang streaming (jeda panjang).
             # Tanpa ini, Enter/karakter yang terketik saat streaming akan
             # langsung dikonsumsi console.input() berikutnya → re-trigger.
             _flush_stdin_buffer()
-            console.print(
-                "[dim]─────────────────────── ✅ Selesai — ketik balasan Anda ───────────────────────[/dim]"
-            )
     finally:
         # The client may already be mid-teardown when the user interrupts the
         # loop; a second interrupt here would replace a clean exit with a
         # traceback.
         try:
-            await api_client.close()
+            await orchestrator.close()
         except (KeyboardInterrupt, asyncio.CancelledError):
             logger.info("[chat_mode] client close interrupted")
         except Exception as exc:  # noqa: BLE001 - shutdown must not raise
@@ -2576,48 +1599,32 @@ async def ask_cmd(question: str, model: str | None = None) -> None:
     settings = get_settings()
     secrets = get_secrets()
 
-    ModelRegistry.reset_singleton()
-    registry = ModelRegistry()
-    registry.load_from_config(settings.models_config_path)
-
     api_client = APIClient(
         settings.api_base_url, secrets.api_key, int(settings.timeout_seconds)
     )
-    await api_client.sync_all_models(registry)
-    classifier = IntentClassifier()
-    router = RoutingType(config_path=settings.models_config_path, registry=registry)
-    conversation_store = ConversationStore()
-    think_prompt_mgr = ThinkPromptManager()
-    context_assembler = ContextAssembler(conversation_store, think_prompt_mgr)
-    health_checker = HealthChecker()
-    fallback = FallbackStrategy(config_path=settings.models_config_path, registry=registry)
+    orchestrator = Orchestrator.from_settings(settings, api_client=api_client)
+    await api_client.sync_all_models(orchestrator.registry)
 
-    terminal_cfg_path = settings.config_dir / "terminal_format.json"
-    terminal_config = TerminalFormatConfig.load(terminal_cfg_path)
+    terminal_config = TerminalFormatConfig.load(settings.config_dir / "terminal_format.json")
+    workspace = os.getenv("SQUIDWINGS_WORKSPACE", "").strip()
 
     try:
-        result = await process_input(
+        # One-shot: nothing to carry over, so it stays out of chat history.
+        await process_input(
             user_input=question,
-            session_id="oneshot",
-            api_client=api_client,
-            classifier=classifier,
-            router=router,
-            context_assembler=context_assembler,
-            conversation_store=conversation_store,
-            health_checker=health_checker,
-            fallback=fallback,
+            session_id=generate_session_id(),
+            orchestrator=orchestrator,
             stream=False,
             override_model=model,
-            registry=registry,
+            active_workspace=Path(workspace) if workspace else None,
             terminal_config=terminal_config,
+            persist=False,
         )
-        if result and not terminal_config.markdown_enabled:
-            console.print(result)
     finally:
-        await api_client.close()
+        await orchestrator.close()
 
 
-def _run_async(coro_fn, *fn_args, **fn_kwargs) -> None:
+def _run_async(coro_fn: Callable[..., Any], *fn_args: Any, **fn_kwargs: Any) -> None:
     """Run a coroutine function and exit quietly when the user hits Ctrl+C.
 
     Without this, ``asyncio.run`` lets ``KeyboardInterrupt`` bubble out of
@@ -2670,6 +1677,9 @@ Examples:
     # health command
     subparsers.add_parser("health", help="Check API health")
 
+    # Doctor
+    subparsers.add_parser("doctor", help="Test that agent commands are really isolated")
+
     # web command
     web_parser = subparsers.add_parser("web", help="Start the Web GUI server")
     web_parser.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
@@ -2693,15 +1703,21 @@ Examples:
         _run_async(fetch_models_cmd)
     elif args.command == "health":
         _run_async(health_cmd)
+    elif args.command == "doctor":
+        sys.exit(0 if _display_doctor() else 1)
     elif args.command == "web":
         from rich.panel import Panel
 
         from utils.tunnel import CloudflareTunnel
-        from web.server import run_server
+        from web.server import open_to_public, run_server
 
         tunnel = None
         public_url = None
-        enable_tunnel = getattr(args, "tunnel", True)
+        enable_tunnel = getattr(args, "tunnel", False)
+
+        is_public = enable_tunnel or not is_loopback_host(args.host)
+        if is_public:
+            open_to_public()
 
         if enable_tunnel:
             console.print("[bold yellow]🌐 Starting Cloudflare Tunnel...[/bold yellow]")
@@ -2719,6 +1735,12 @@ Examples:
             panel_lines.append("[dim]🔗 Bisa diakses dari luar jaringan / HP tanpa port forwarding.[/dim]")
         elif enable_tunnel:
             panel_lines.append("[yellow]⚠ Cloudflare Tunnel aktif, periksa tunnel.log untuk URL publik.[/yellow]")
+
+        if is_public:
+            panel_lines.append(
+                "[bold yellow]Tanpa login: siapa pun yang punya URL ini bisa memakai agent dan "
+                "membaca semua chat.[/bold yellow]"
+            )
 
         console.print(Panel("\n".join(panel_lines), title="[bold cyan]Agent Router Web Server[/bold cyan]", border_style="cyan"))
 

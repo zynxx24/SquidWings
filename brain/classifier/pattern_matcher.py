@@ -16,12 +16,17 @@ PATTERNS: list[tuple[str, TaskType, float]] = [
     (r"(?:debug|fix|perbaiki)\s+(?:bug|error|kode|code)", TaskType.CODE, 0.9),
     (r"(?:refactor|optimize|optimasi)\s+(?:kode|code)", TaskType.CODE, 0.85),
     (r"```\w+\n", TaskType.CODE, 0.8),  # Contains code block
+    (r"(?:^|[\s`'\"(/])[\w./-]+\.(?:py|js|ts|tsx|jsx|go|rs|java|cpp|html|css|sh|sql|json|ya?ml|toml|md)\b", TaskType.CODE, 0.75),
+    (r"\b(?:buat|buatkan|tulis|ubah|edit|hapus|baca)\s+(?:file|berkas)\b", TaskType.CODE, 0.8),
+    (r"\b(?:jalankan|run)\s+(?:test|tests|tes|pytest|script|kode)\b", TaskType.CODE, 0.85),
+    (r"\bgit\s+\w+|\bpull request\b", TaskType.CODE, 0.85),
 
     # Math patterns
     (r"(?:hitung|calculate|solve)\s+.+(?:=|persamaan|equation)", TaskType.MATH, 0.9),
-    (r"\d+\s*[\+\-\*\/\^]\s*\d+", TaskType.MATH, 0.7),  # Arithmetic expression
-    (r"(?:integral|turunan|derivative|limit|∫|∑|∏)", TaskType.MATH, 0.9),
-    (r"(?:sin|cos|tan|log|ln)\s*\(", TaskType.MATH, 0.85),
+    # "-" and "/" need spaces, or dates like 2026-10-30 count as arithmetic.
+    (r"\d\s*[\+\*\^]\s*\d|\d\s+[\-\/]\s+\d", TaskType.MATH, 0.7),
+    (r"\b(?:integral|turunan|derivative)\b|∫|∑|∏|\blim(?:it)?\s*[\(_]|\blimit\s+\w+\s*(?:->|→|mendekati)", TaskType.MATH, 0.9),
+    (r"\b(?:sin|cos|tan|log|ln)\s*\(", TaskType.MATH, 0.85),
 
     # School task patterns
     (r"(?:jawab|kerjakan|selesaikan)\s+(?:soal|pertanyaan|tugas)", TaskType.SCHOOL_TASK, 0.9),

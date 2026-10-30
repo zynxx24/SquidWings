@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from utils.helpers import is_valid_session_id
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -28,6 +29,7 @@ class Message:
         token_count: Estimated token count.
         tool_calls: Tool calls in this message (if any).
         tool_call_id: Tool call ID (for tool result messages).
+        tool_trace: What tools did during this turn, for the model's next turn.
     """
     role: str
     content: str
@@ -36,10 +38,16 @@ class Message:
     token_count: int = 0
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_call_id: str = ""
+    tool_trace: str = ""
 
     def to_api_format(self) -> dict[str, Any]:
         """Convert to API message format."""
-        msg: dict[str, Any] = {"role": self.role, "content": self.content}
+        content = self.content
+        if self.tool_trace:
+            # Only the final text is stored, so without this the next turn has
+            # no idea which files were read or changed and re-reads everything.
+            content = f"{content}\n\n[Internal note, not part of the reply. Tools run this turn: {self.tool_trace}]"
+        msg: dict[str, Any] = {"role": self.role, "content": content}
         if self.tool_calls:
             msg["tool_calls"] = self.tool_calls
         if self.tool_call_id:
@@ -56,6 +64,7 @@ class Message:
             "token_count": self.token_count,
             "tool_calls": self.tool_calls,
             "tool_call_id": self.tool_call_id,
+            "tool_trace": self.tool_trace,
         }
 
     @classmethod
@@ -69,6 +78,7 @@ class Message:
             token_count=data.get("token_count", 0),
             tool_calls=data.get("tool_calls", []),
             tool_call_id=data.get("tool_call_id", ""),
+            tool_trace=data.get("tool_trace", ""),
         )
 
 
@@ -120,9 +130,19 @@ class ConversationStore:
             except Exception as e:
                 logger.warning(f"[memory] Failed to load session from {file_path}: {e}")
 
+    def _session_file(self, session_id: str) -> Path | None:
+        """Disk path for a session, or None when the id is unsafe as a file name."""
+        if not self.storage_dir:
+            return None
+        if not is_valid_session_id(session_id):
+            logger.warning(f"[memory] Refusing unsafe session id: {session_id!r}")
+            return None
+        return self.storage_dir / f"{session_id}.json"
+
     def _save_session(self, session_id: str) -> None:
         """Save a single session to disk."""
-        if not self.storage_dir:
+        file_path = self._session_file(session_id)
+        if file_path is None:
             return
         try:
             messages = self._sessions.get(session_id, [])
@@ -139,7 +159,6 @@ class ConversationStore:
                 "model_used": model_used,
             }
 
-            file_path = self.storage_dir / f"{session_id}.json"
             data = {
                 "session_id": session_id,
                 "title": title,
@@ -148,7 +167,10 @@ class ConversationStore:
                 "model_used": model_used,
                 "messages": [m.to_dict() for m in messages],
             }
-            file_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            # A crash mid-write must not cost the whole conversation.
+            temporary = file_path.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            temporary.replace(file_path)
         except Exception as e:
             logger.warning(f"[memory] Failed to save session {session_id}: {e}")
 
@@ -171,6 +193,7 @@ class ConversationStore:
         token_count: int = 0,
         tool_calls: list[dict[str, Any]] | None = None,
         tool_call_id: str = "",
+        tool_trace: str = "",
     ) -> Message:
         """Add a message to a session and persist it.
 
@@ -182,6 +205,7 @@ class ConversationStore:
             token_count: Token count estimate.
             tool_calls: Optional tool calls.
             tool_call_id: Optional tool call ID.
+            tool_trace: Optional summary of the tools run this turn.
 
         Returns:
             The created Message.
@@ -203,6 +227,7 @@ class ConversationStore:
             token_count=token_count,
             tool_calls=tool_calls or [],
             tool_call_id=tool_call_id,
+            tool_trace=tool_trace,
             timestamp=now,
         )
 
@@ -246,9 +271,9 @@ class ConversationStore:
         Returns:
             List of Message objects.
         """
-        if session_id not in self._sessions and self.storage_dir:
-            file_path = self.storage_dir / f"{session_id}.json"
-            if file_path.exists():
+        if session_id not in self._sessions:
+            file_path = self._session_file(session_id)
+            if file_path is not None and file_path.exists():
                 try:
                     data = json.loads(file_path.read_text(encoding="utf-8"))
                     self._sessions[session_id] = [Message.from_dict(m) for m in data.get("messages", [])]
@@ -292,16 +317,15 @@ class ConversationStore:
         """Delete a session completely from memory and disk."""
         self._sessions.pop(session_id, None)
         self._session_metadata.pop(session_id, None)
-        if self.storage_dir:
-            file_path = self.storage_dir / f"{session_id}.json"
-            if file_path.exists():
-                try:
-                    file_path.unlink()
-                    logger.debug(f"[memory] Deleted session file {file_path}")
-                    return True
-                except Exception as e:
-                    logger.warning(f"[memory] Failed to delete session file {file_path}: {e}")
-                    return False
+        file_path = self._session_file(session_id)
+        if file_path is not None and file_path.exists():
+            try:
+                file_path.unlink()
+                logger.debug(f"[memory] Deleted session file {file_path}")
+                return True
+            except Exception as e:
+                logger.warning(f"[memory] Failed to delete session file {file_path}: {e}")
+                return False
         return True
 
     def set_title(self, session_id: str, title: str) -> None:

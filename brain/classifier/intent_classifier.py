@@ -7,6 +7,8 @@ to classify user input into a TaskType.
 
 from __future__ import annotations
 
+import re
+
 from brain.classifier.confidence_scorer import ClassificationResult, ConfidenceScorer
 from brain.classifier.keyword_rules import get_keyword_matches
 from brain.classifier.llm_classifier import LLMIntentClassifier
@@ -15,6 +17,13 @@ from config.constants import CLASSIFICATION_CONFIDENCE_THRESHOLD, TaskType
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+_CHITCHAT_MAX_WORDS = 3
+_MULTI_STEP_RE = re.compile(r"\b(?:dan juga|serta|kemudian|lalu|also|then|and also)\b", re.IGNORECASE)
+_COMPLEX_RE = re.compile(
+    r"\b(?:complex|kompleks|advanced|lanjutan|optimi[sz]e|optimasi|architecture|arsitektur|deep dive|mendalam)\b",
+    re.IGNORECASE,
+)
 
 
 class IntentClassifier:
@@ -84,6 +93,8 @@ class IntentClassifier:
             self._llm_classifier is None
             or not user_input.strip()
             or result.confidence >= self.confidence_threshold
+            # "ok", "makasih": nothing here is worth a model call and its latency.
+            or len(user_input.split()) <= _CHITCHAT_MAX_WORDS
         ):
             return result
         try:
@@ -145,24 +156,16 @@ class IntentClassifier:
         """Estimate routing difficulty independently of intent detection."""
         word_count = len(user_input.split())
 
-        # Complexity indicators
-        has_multiple_requirements = any(
-            marker in user_input.lower()
-            for marker in ["dan juga", "serta", "kemudian", "lalu", "also", "then", "and also"]
-        )
+        # Whole words only: "terlalu" contains "lalu", "authentication" contains
+        # "then", and "deepseek" contains "deep". Each of those used to send a
+        # simple request to the most expensive model.
+        has_multiple_requirements = _MULTI_STEP_RE.search(user_input) is not None
         has_code_block = "```" in user_input
-        has_complex_keywords = any(
-            kw in user_input.lower()
-            for kw in [
-                "complex", "kompleks", "advanced", "lanjutan",
-                "optimize", "optimasi", "architecture", "arsitektur",
-                "deep", "mendalam",
-            ]
-        )
+        has_complex_keywords = _COMPLEX_RE.search(user_input) is not None
 
-        if has_complex_keywords or (word_count > 100) or has_multiple_requirements:
+        if has_complex_keywords or word_count > 100 or (has_multiple_requirements and word_count > 30):
             difficulty = "hard"
-        elif word_count > 30 or has_code_block:
+        elif has_multiple_requirements or word_count > 30 or has_code_block:
             difficulty = "medium"
         else:
             difficulty = "easy"

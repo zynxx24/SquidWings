@@ -1,25 +1,21 @@
-"""Web-edge security for the public GUI.
+"""Web-edge protection for the GUI. There is no login.
 
-This module is deliberately independent of FastAPI.  It provides an ASGI
-middleware that protects the HTTP and WebSocket surface before a request can
+This ASGI middleware protects the HTTP and WebSocket surface before a request can
 reach the application:
 
-* optional bearer/query-token authentication (required for public tunnels),
-* a per-browser HttpOnly identity cookie,
-* same-origin/explicit-origin checks for state-changing requests,
+* a Host check, so a malicious site cannot reach a local server by DNS rebinding,
+* same-origin checks, so a site you visit cannot drive the agent from your browser,
 * bounded concurrent web users with a useful retry response, and
 * a conservative per-client request rate limit.
 
-The access token is only accepted through ``Authorization: Bearer`` or the
-one-time ``access_token`` query parameter.  A valid query token is exchanged
-for an HttpOnly cookie so the frontend does not need to keep the secret in
-JavaScript or append it to every WebSocket URL.
+Public mode (``--tunnel`` or a non-local ``--host``) drops the Host check, because
+the public hostname is not known in advance. The origin checks stay on. Anyone who
+has the URL can then use the agent, which is why the server warns when it starts.
 """
 
 from __future__ import annotations
 
 import asyncio
-import hmac
 import json
 import secrets
 import time
@@ -38,7 +34,19 @@ Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
 USER_COOKIE = "squidwings_user"
-AUTH_COOKIE = "squidwings_auth"
+LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+_public_mode = False
+
+
+def set_public_mode(enabled: bool) -> None:
+    """Accept requests for any hostname. Used for tunnels and non-local binds."""
+    global _public_mode
+    _public_mode = enabled
+
+
+def is_loopback_host(host: str) -> bool:
+    return host.strip("[]").lower() in LOOPBACK_HOSTS
 
 
 class CapacityFullError(RuntimeError):
@@ -134,16 +142,14 @@ class WebSecurityMiddleware:
         self,
         app: ASGIApp,
         *,
-        auth_token: str = "",
-        require_auth: bool = False,
         max_users: int = 10,
         idle_timeout: int = 900,
         allowed_origins: tuple[str, ...] = (),
+        allowed_hosts: tuple[str, ...] = (),
         requests_per_minute: int = 120,
     ) -> None:
         self.app = app
-        self.auth_token = auth_token
-        self.require_auth = require_auth
+        self.allowed_hosts = frozenset(x.lower() for x in allowed_hosts if x)
         self.allowed_origins = frozenset(x.rstrip("/") for x in allowed_origins if x)
         self.capacity = UserCapacity(max_users, idle_timeout)
         self.rate_guard = RateGuard(
@@ -161,20 +167,16 @@ class WebSecurityMiddleware:
 
         headers = self._headers(scope)
         user_id, new_user_cookie = self._identity(scope, headers)
-        token = self._configured_token()
-        auth_required = self.require_auth or bool(token) or bool(self._app_state().get("public_access"))
-        auth_valid = not auth_required or self._valid_token(scope, headers, token)
-
         state = scope.setdefault("state", {})
         if isinstance(state, dict):
             state["web_user_id"] = user_id
-            state["web_authenticated"] = auth_valid
 
-        if not auth_valid:
+        # A foreign Host means DNS rebinding, or a tunnel the server was not told about.
+        if not _public_mode and not self._host_allowed(headers):
             if kind == "websocket":
-                await send({"type": "websocket.close", "code": 4401, "reason": "Authentication required"})
+                await send({"type": "websocket.close", "code": 4403, "reason": "Host not allowed"})
             else:
-                await self._http_error(send, 401, "Authentication required. Open the tunnel with a valid access token.")
+                await self._http_error(send, 403, "This host is not allowed. Add it to WEB_ALLOWED_HOSTS.")
             return
 
         if not self._origin_allowed(scope, headers):
@@ -196,7 +198,9 @@ class WebSecurityMiddleware:
         try:
             if kind == "websocket" and scope.get("path") == "/ws/chat":
                 await self.capacity.acquire_websocket(user_id)
-            else:
+            elif not new_user_cookie:
+                # Only returning browsers hold a slot. A client that sends no
+                # cookie would otherwise fill the table with one identity per call.
                 await self.capacity.touch_http(user_id)
         except CapacityFull as exc:
             if kind == "websocket":
@@ -222,8 +226,6 @@ class WebSecurityMiddleware:
                 )
                 if new_user_cookie:
                     raw_headers.append((b"set-cookie", self._cookie(USER_COOKIE, user_id, scope)))
-                if self._valid_token(scope, headers, token) and self._token_from_query(scope):
-                    raw_headers.append((b"set-cookie", self._cookie(AUTH_COOKIE, token, scope)))
                 if message_type == "http.response.start":
                     raw_headers.append((b"cache-control", b"no-store"))
                 await send({**message, "headers": raw_headers})
@@ -236,12 +238,9 @@ class WebSecurityMiddleware:
             if kind == "websocket" and scope.get("path") == "/ws/chat":
                 await self.capacity.release_websocket(user_id)
 
-    def _app_state(self) -> Mapping[str, object]:
-        state = getattr(self.app, "state", None)
-        return getattr(state, "_state", {}) if state is not None else {}
-
-    def _configured_token(self) -> str:
-        return str(self._app_state().get("web_auth_token") or self.auth_token or "")
+    def _host_allowed(self, headers: Mapping[str, str]) -> bool:
+        host = urlsplit(f"//{headers.get('host', '')}").hostname or ""
+        return is_loopback_host(host) or host.lower() in self.allowed_hosts
 
     @staticmethod
     def _headers(scope: Scope) -> dict[str, str]:
@@ -273,30 +272,6 @@ class WebSecurityMiddleware:
             return {}
         return {key: morsel.value for key, morsel in jar.items()}
 
-    def _valid_token(self, scope: Scope, headers: Mapping[str, str], token: str) -> bool:
-        if not token:
-            return not (self.require_auth or bool(self._app_state().get("public_access")))
-        supplied = headers.get("authorization", "")
-        if supplied.lower().startswith("bearer "):
-            candidate = supplied[7:].strip()
-        else:
-            candidate = self._cookies(headers.get("cookie", "")).get(AUTH_COOKIE, "")
-            if not candidate:
-                candidate = self._token_from_query(scope)
-        return bool(candidate) and hmac.compare_digest(candidate, token)
-
-    @staticmethod
-    def _token_from_query(scope: Scope) -> str:
-        query = scope.get("query_string", b"")
-        if isinstance(query, bytes):
-            query = query.decode("latin-1")
-        for item in str(query).split("&"):
-            key, _, value = item.partition("=")
-            if key == "access_token":
-                from urllib.parse import unquote_plus
-                return unquote_plus(value)
-        return ""
-
     def _origin_allowed(self, scope: Scope, headers: Mapping[str, str]) -> bool:
         method = str(scope.get("method", "GET")).upper()
         origin = headers.get("origin", "").rstrip("/")
@@ -313,7 +288,7 @@ class WebSecurityMiddleware:
     def _cookie(name: str, value: str, scope: Scope) -> bytes:
         secure = str(scope.get("scheme", "http")) == "https"
         suffix = "; Secure" if secure else ""
-        return f"{name}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=86400{suffix}".encode("latin-1")
+        return f"{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000{suffix}".encode("latin-1")
 
     @staticmethod
     async def _http_error(send: Send, status: int, detail: str, retry_after: float | None = None) -> None:

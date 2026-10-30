@@ -25,10 +25,14 @@ from config.settings import get_settings
 from tool.execute.execute_local_memory.vault import boot as B
 from tool.execute.execute_local_memory.vault import constants as C
 from utils.logger import get_logger
+from utils.workspace_context import get_active_workspace
 
 logger = get_logger(__name__)
 
 _CACHE: dict[str, tuple[int, str]] = {}
+
+# Each chat's own vault, inside its folder. Hidden so it is not treated as code.
+SESSION_VAULT_DIR = ".vault"
 
 HEADER = "\n\n[MEMORY — auto-loaded, do not ask the user for this]\n"
 FOOTER = (
@@ -38,7 +42,18 @@ FOOTER = (
 
 
 def vault_path(project_root: str | Path | None = None) -> Path:
-    """Resolve the vault root exactly like ``vault_tool._vault`` does."""
+    """The vault for this moment: the current session's, or else the global one.
+
+    Resolved exactly like ``vault_tool._vault``.
+    """
+    active = get_active_workspace()
+    if project_root is None and active:
+        return Path(active) / SESSION_VAULT_DIR
+    return global_vault_path(project_root)
+
+
+def global_vault_path(project_root: str | Path | None = None) -> Path:
+    """The vault shared by every session: your profile, playbooks, and own notes."""
     try:
         settings = get_settings()
     except Exception:
@@ -121,11 +136,19 @@ def _stamp(vault: Path) -> int:
     return newest
 
 
+def build_global_context(*, token_budget: int = B.DEFAULT_TOKEN_BUDGET) -> str:
+    """L1 of the shared vault, shown alongside a session's own. Never raises."""
+    if not get_active_workspace():
+        return ""
+    return build_context(global_vault_path(), token_budget=token_budget, _vault=global_vault_path())
+
+
 def build_context(
     project_root: str | Path | None = None,
     *,
     token_budget: int = B.DEFAULT_TOKEN_BUDGET,
     refresh: bool = False,
+    _vault: Path | None = None,
 ) -> str:
     """Return the L1 block for the system prompt. Never raises."""
     # Contract: every failure path returns "". If settings cannot be read we
@@ -140,7 +163,7 @@ def build_context(
             logger.warning("[vault_context] settings unavailable, no memory: %s", exc)
             return ""
 
-    vault = vault_path(project_root)
+    vault = _vault or vault_path(project_root)
     key = str(vault)
     stamp = _stamp(vault)
 
@@ -181,4 +204,4 @@ def stats() -> dict[str, Any]:
     }
 
 
-__all__ = ["build_context", "vault_path", "clear_cache", "stats"]
+__all__ = ["build_context", "build_global_context", "global_vault_path", "vault_path", "clear_cache", "stats"]

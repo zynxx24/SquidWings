@@ -1,230 +1,134 @@
 <!doctype html>
-<html lang="en">
+<html lang="id">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#ffffff">
-<title>SquidWings Agent</title>
-<script src="/static/js/tailwind.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#121413" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f7f6f3" media="(prefers-color-scheme: light)">
+<title>SquidWings</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d7a6f'/%3E%3Cpath d='M16 6c-4 0-7 3-7 7 0 3 2 5 3 6l-3 7m7-20c4 0 7 3 7 7 0 3-2 5-3 6l3 7m-7-13v13' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/css/highlight.css">
 <link rel="stylesheet" href="/static/css/app.css">
 </head>
-<body class="bg-stone-50 text-stone-900 font-sans text-sm antialiased overflow-hidden select-text">
+<body>
+<div id="shell" class="shell">
 
-<div id="app" class="h-full flex flex-col max-w-full overflow-hidden">
-
-  <!-- Header: Mobile-first compact & Desktop expanded -->
-  <header class="h-12 sm:h-13 shrink-0 border-b border-stone-200 bg-white/95 backdrop-blur-md flex items-center justify-between gap-1.5 sm:gap-3 px-2 sm:px-4 z-20 max-w-full overflow-hidden">
-    <!-- Left: Sidebar toggle + Brand + Tabs -->
-    <div class="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
-      <button id="toggle-sidebar" title="Toggle chats" class="p-1.5 rounded-lg border border-stone-200 hover:bg-stone-100 text-stone-600 transition-colors shrink-0 cursor-pointer" aria-label="Toggle chats">
-        <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-          <line x1="9" y1="3" x2="9" y2="21"></line>
-        </svg>
-      </button>
-
-      <!-- Brand -->
-      <div class="flex items-center gap-1.5 shrink-0">
-        <span class="w-6 h-6 rounded-md bg-stone-900 text-white flex items-center justify-center text-xs font-black shadow-xs select-none">S</span>
-        <span class="font-bold tracking-tight text-stone-900 text-sm hidden sm:inline">SquidWings</span>
-      </div>
-
-      <!-- Navigation Tabs -->
-      <nav class="flex items-center gap-0.5 bg-stone-100 p-0.5 rounded-lg border border-stone-200/60 ml-0.5">
-        <button data-tab="chat" class="tab px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap active transition-all">Chat</button>
-        <button data-tab="canvas" data-feature="teams" class="tab px-2.5 py-1 rounded-md text-xs font-medium whitespace-nowrap transition-all hidden sm:inline-block">Teams</button>
-      </nav>
+  <aside id="rail" class="rail" aria-label="Daftar chat">
+    <div class="rail-head">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">S</span><span>SquidWings</span></div>
+      <button id="close-rail" class="icon-btn only-narrow" aria-label="Tutup daftar chat" data-icon="x"></button>
     </div>
-
-    <!-- Right: Model Selector & Refresh Button -->
-    <div class="flex items-center gap-1 sm:gap-2 shrink-0 max-w-[55%] sm:max-w-none">
-      <div class="relative flex items-center min-w-0">
-        <select id="model-select" class="w-28 xs:w-36 sm:w-56 lg:w-72 truncate border border-stone-300 rounded-lg bg-stone-50 hover:bg-stone-100/80 px-2 py-1 text-xs text-stone-800 font-medium focus:outline-none focus:ring-2 focus:ring-stone-400 focus:bg-white transition-all shadow-2xs"></select>
-      </div>
-      <button id="refresh-models" title="Fetch models again" class="hidden sm:inline-flex items-center gap-1 border border-stone-300 rounded-lg px-2 py-1 text-xs font-medium text-stone-700 hover:bg-stone-100 shrink-0 transition-colors shadow-2xs">
-        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
-        </svg>
-        <span class="hidden md:inline">Refresh</span>
-      </button>
+    <button id="new-chat" class="btn btn-primary btn-block"><span data-icon="plus"></span>Chat baru</button>
+    <label class="search">
+      <span data-icon="search"></span>
+      <input id="session-search" type="search" placeholder="Cari chat" aria-label="Cari chat">
+    </label>
+    <nav id="session-list" class="session-list" aria-label="Riwayat chat"></nav>
+    <div class="rail-foot">
+      <button id="nav-team" class="rail-link hidden"><span data-icon="team"></span>Tim agent</button>
+      <button id="toggle-theme" class="rail-link"><span data-icon="theme"></span><span id="theme-label">Tema</span></button>
     </div>
-  </header>
+  </aside>
 
-  <!-- Main View: Chat -->
-  <main id="view-chat" class="view flex-1 min-h-0 flex bg-stone-50 max-w-full overflow-hidden">
-    <!-- Session Sidebar -->
-    <aside id="session-panel" class="session-panel flex w-64 shrink-0 flex-col border-r border-stone-200 bg-white">
-      <div class="p-3 flex items-center justify-between gap-2 border-b border-stone-200 bg-stone-50/60">
-        <span class="font-semibold text-xs uppercase tracking-wider text-stone-500">Chats</span>
-        <div class="flex items-center gap-1">
-          <button id="new-chat" class="flex items-center gap-1 bg-stone-900 text-white rounded-md px-2.5 py-1 text-xs font-medium hover:bg-stone-700 transition-colors shadow-2xs cursor-pointer">
-            <span>+</span>
-            <span>New</span>
-          </button>
-          <button id="close-sessions" class="lg:hidden border border-stone-300 rounded-md px-2 py-1 text-xs hover:bg-stone-100 cursor-pointer">Close</button>
-        </div>
+  <main class="stage">
+    <header class="topbar">
+      <button id="open-rail" class="icon-btn only-narrow" aria-label="Buka daftar chat" data-icon="menu"></button>
+      <h1 id="chat-title" class="chat-title">Chat baru</h1>
+      <div class="topbar-actions">
+        <button id="nav-chat" class="btn btn-ghost hidden"><span data-icon="chat"></span>Kembali ke chat</button>
+        <button id="open-inspector" class="btn btn-ghost" aria-controls="inspector"><span data-icon="layers"></span><span class="hide-small">Sesi ini</span></button>
       </div>
-      <div id="session-list" class="flex-1 min-h-0 overflow-y-auto p-2 space-y-1"></div>
-    </aside>
+    </header>
 
-    <!-- Chat Column -->
-    <section class="flex-1 min-w-0 min-h-0 flex flex-col bg-stone-50">
-      <!-- Sub-header -->
-      <div class="shrink-0 h-9 sm:h-10 border-b border-stone-200 bg-white/70 backdrop-blur-xs flex items-center justify-between gap-2 px-3 sm:px-6">
-        <div class="flex items-center gap-2 min-w-0">
-          <button id="open-sessions" class="lg:hidden border border-stone-300 rounded px-1.5 py-0.5 text-xs text-stone-600 hover:bg-stone-100 shrink-0 cursor-pointer">Chats</button>
-          <span id="chat-title" class="text-xs font-medium text-stone-600 truncate">New chat</span>
-        </div>
-        <div class="flex items-center gap-1.5 shrink-0">
-          <span class="inline-flex items-center gap-1 text-[10px] sm:text-[11px] font-medium text-emerald-600 bg-emerald-50 border border-emerald-200/60 px-1.5 py-0.5 rounded-full">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span>Online</span>
-          </span>
-        </div>
-      </div>
-
-      <!-- Messages Container -->
-      <div id="messages" class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-        <!-- Empty State Hero -->
-        <div id="empty" class="h-full flex flex-col items-center justify-center px-3 sm:px-6 py-4 sm:py-8 text-center select-none overflow-y-auto">
-          <div class="w-10 h-10 sm:w-12 sm:h-12 rounded-xl sm:rounded-2xl bg-stone-900 text-white flex items-center justify-center text-lg sm:text-xl font-black mb-2 sm:mb-3 shadow-md shrink-0">S</div>
-          <h2 class="text-base sm:text-lg font-bold text-stone-800 mb-1 tracking-tight">SquidWings Workspace</h2>
-          <p class="text-[11px] sm:text-xs text-stone-500 max-w-sm mb-4 leading-relaxed line-clamp-2 px-2">
-            Multi-model routing cerdas dengan DeepSeek reasoning inspection, context memory, dan tool integration.
-          </p>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg w-full text-left px-1">
-            <button class="prompt-suggestion p-2.5 sm:p-3 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 hover:border-stone-300 transition-all text-xs text-stone-700 shadow-2xs group cursor-pointer" data-prompt="Jelaskan cara kerja sistem routing model dan fallback di SquidWings">
-              <div class="font-semibold text-stone-800 text-[11px] sm:text-xs mb-0.5 group-hover:text-stone-950 flex items-center justify-between">
-                <span>Arsitektur & Routing</span>
-                <span class="text-stone-300 group-hover:text-stone-500">→</span>
-              </div>
-              <div class="text-[10px] sm:text-[11px] text-stone-400 line-clamp-1">Jelaskan alur routing dan fallback model</div>
+    <section id="view-chat" class="view">
+      <div id="scroller" class="scroller">
+        <div id="empty" class="empty">
+          <h2>Mau kerjakan apa?</h2>
+          <p>Setiap chat punya folder, vault, graph kode, dan memorinya sendiri. Apa yang dipelajari di sini tidak tercampur ke chat lain.</p>
+          <div class="suggestions">
+            <button class="suggestion" data-prompt="Buat REST API sederhana untuk daftar tugas dengan FastAPI, lengkap dengan tes, lalu jalankan tesnya.">
+              <strong>Bangun sesuatu</strong><span>REST API lengkap dengan tes</span>
             </button>
-            <button class="prompt-suggestion p-2.5 sm:p-3 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 hover:border-stone-300 transition-all text-xs text-stone-700 shadow-2xs group cursor-pointer" data-prompt="Analisis performa latency dan waktu respon model reasoning">
-              <div class="font-semibold text-stone-800 text-[11px] sm:text-xs mb-0.5 group-hover:text-stone-950 flex items-center justify-between">
-                <span>Analisis Latency</span>
-                <span class="text-stone-300 group-hover:text-stone-500">→</span>
-              </div>
-              <div class="text-[10px] sm:text-[11px] text-stone-400 line-clamp-1">Bagaimana reasoning tokens mempengaruhi respon</div>
+            <button class="suggestion" data-prompt="Buat landing page responsif untuk kedai kopi, satu file HTML, tanpa library.">
+              <strong>Buat halaman web</strong><span>Landing page yang responsif</span>
             </button>
-            <button class="prompt-suggestion p-2.5 sm:p-3 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 hover:border-stone-300 transition-all text-xs text-stone-700 shadow-2xs group cursor-pointer hidden sm:block" data-prompt="Buat script Python asinkron untuk scraping data dan ekspor ke JSON">
-              <div class="font-semibold text-stone-800 text-[11px] sm:text-xs mb-0.5 group-hover:text-stone-950 flex items-center justify-between">
-                <span>Code Generation</span>
-                <span class="text-stone-300 group-hover:text-stone-500">→</span>
-              </div>
-              <div class="text-[10px] sm:text-[11px] text-stone-400 line-clamp-1">Tulis script Python lengkap dengan error handling</div>
+            <button class="suggestion" data-prompt="Tes saya gagal. Saya akan tempel errornya, bantu temukan penyebab dan perbaiki.">
+              <strong>Perbaiki bug</strong><span>Dari pesan error sampai tes lulus</span>
             </button>
-            <button class="prompt-suggestion p-2.5 sm:p-3 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 hover:border-stone-300 transition-all text-xs text-stone-700 shadow-2xs group cursor-pointer hidden sm:block" data-prompt="Bantu saya merancang automation schedule dan rules baru">
-              <div class="font-semibold text-stone-800 text-[11px] sm:text-xs mb-0.5 group-hover:text-stone-950 flex items-center justify-between">
-                <span>Automation & Rules</span>
-                <span class="text-stone-300 group-hover:text-stone-500">→</span>
-              </div>
-              <div class="text-[10px] sm:text-[11px] text-stone-400 line-clamp-1">Desain background scheduler dan hooks</div>
+            <button class="suggestion" data-prompt="Riset berita terbaru tentang Python, rangkum poin pentingnya beserta sumber.">
+              <strong>Riset</strong><span>Cari di web, rangkum dengan sumber</span>
             </button>
           </div>
         </div>
-
-        <!-- Thread Messages -->
-        <div id="thread" class="w-full max-w-3xl lg:max-w-4xl xl:max-w-5xl mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-3.5 sm:space-y-5"></div>
+        <div id="thread" class="thread"></div>
       </div>
 
-      <!-- Chat Input Area -->
-      <div class="chat-input-bar shrink-0 border-t border-stone-200/80 bg-white/95 backdrop-blur-md">
-        <div class="w-full max-w-3xl lg:max-w-4xl xl:max-w-5xl mx-auto px-2.5 sm:px-6 pt-2 pb-1 sm:py-3">
-          <!-- Attachment Chips -->
-          <div id="chips" class="flex flex-wrap gap-1.5 sm:gap-2 mb-1.5 empty:hidden"></div>
-
-          <!-- Elevated Input Box -->
-          <div class="rounded-xl sm:rounded-2xl border border-stone-300 bg-white shadow-2xs focus-within:border-stone-500 focus-within:ring-2 focus-within:ring-stone-400/20 transition-all p-1.5 sm:p-2.5">
-            <textarea id="input" rows="1" placeholder="Type a message or question..." class="w-full resize-none border-0 bg-transparent px-2 py-1 text-base sm:text-sm text-stone-900 placeholder:text-stone-400 focus:outline-none max-h-36 sm:max-h-48 leading-relaxed"></textarea>
-
-            <div class="flex items-center justify-between pt-1.5 sm:pt-2 border-t border-stone-100 mt-1">
-              <div class="flex items-center gap-1.5 sm:gap-2">
-                <!-- Attach file button -->
-                <label class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-stone-200 hover:bg-stone-100 cursor-pointer text-xs font-medium text-stone-600 transition-colors" title="Attach document or image">
-                  <svg class="w-3.5 h-3.5 text-stone-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                  </svg>
-                  <span class="hidden sm:inline">Attach</span>
-                  <input id="file-input" type="file" multiple accept=".pdf,.docx,.pptx,.xlsx,.csv,.json,.txt,.md,.png,.jpg,.jpeg,.webp,.gif" class="hidden">
-                </label>
-                <span class="text-[11px] text-stone-400 hidden md:inline">Enter to send · Shift+Enter for new line</span>
-              </div>
-
-              <!-- Send Button -->
-              <button id="send" class="inline-flex items-center justify-center gap-1.5 bg-stone-900 text-white rounded-lg sm:rounded-xl px-4 py-2 sm:py-1.5 text-xs font-semibold hover:bg-stone-800 active:scale-95 disabled:opacity-40 transition-all shadow-xs shrink-0 cursor-pointer min-h-[38px] min-w-[72px]">
-                <span>Send</span>
-                <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="22" y1="2" x2="11" y2="13"></line>
-                  <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-                </svg>
-              </button>
-            </div>
+      <div class="composer-wrap">
+        <form id="composer" class="composer">
+          <div id="chips" class="chips"></div>
+          <textarea id="input" rows="1" placeholder="Tulis tugas atau pertanyaan" aria-label="Pesan"></textarea>
+          <div class="composer-row">
+            <label class="icon-btn" title="Lampirkan file" aria-label="Lampirkan file">
+              <span data-icon="clip"></span>
+              <input id="file-input" type="file" multiple class="visually-hidden">
+            </label>
+            <select id="model-select" class="model-select" aria-label="Model"></select>
+            <span class="composer-hint hide-small">Enter kirim · Shift+Enter baris baru</span>
+            <button id="send" type="submit" class="send" aria-label="Kirim" data-icon="send"></button>
           </div>
+        </form>
+      </div>
+    </section>
 
-          <!-- Upload Hint -->
-          <div id="upload-hint" class="mt-1 px-1 text-[10px] sm:text-[11px] text-stone-400 truncate empty:hidden"></div>
+    <section id="view-team" class="view hidden">
+      <div class="team-bar">
+        <select id="team-select" aria-label="Pilih tim"></select>
+        <select id="template-select" aria-label="Mulai dari template"><option value="">Template</option></select>
+        <input id="team-name" placeholder="Nama tim" aria-label="Nama tim">
+        <button id="add-node" class="btn btn-ghost"><span data-icon="plus"></span>Agent</button>
+        <button id="save-team" class="btn btn-ghost">Simpan</button>
+        <button id="delete-team" class="btn btn-ghost btn-danger">Hapus</button>
+      </div>
+      <div class="team-body">
+        <div id="board" class="board">
+          <svg id="edges" class="edges" width="2000" height="1400" aria-hidden="true">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M0 0 10 5 0 10z" class="edge-head"></path>
+              </marker>
+            </defs>
+            <g id="edge-lines"></g>
+          </svg>
+          <div id="nodes" class="nodes"></div>
         </div>
+        <aside id="member-panel" class="member-panel" aria-label="Pengaturan agent"></aside>
+      </div>
+      <div class="team-run">
+        <form id="run-form" class="run-form">
+          <input id="task" placeholder="Tugas untuk tim" aria-label="Tugas untuk tim">
+          <button id="run" class="btn btn-primary" type="submit">Jalankan</button>
+          <button id="cancel" class="btn btn-ghost hidden" type="button">Batalkan</button>
+        </form>
+        <div id="run-info" class="run-info"></div>
+        <div id="result" class="prose result hidden"></div>
       </div>
     </section>
   </main>
 
-  <!-- Team Canvas View -->
-  <main id="view-canvas" class="view hidden flex-1 min-h-0 flex bg-stone-50 max-w-full overflow-hidden">
-    <aside id="team-panel" class="team-panel flex w-60 shrink-0 flex-col border-r border-stone-200 bg-white">
-      <div class="p-3 flex items-center justify-between gap-2 border-b border-stone-200">
-        <span class="font-medium text-xs uppercase tracking-wider text-stone-500">Teams</span>
-        <div class="flex gap-1">
-          <button id="new-team" class="border border-stone-300 rounded-md px-2 py-1 text-xs hover:bg-stone-100 cursor-pointer">New</button>
-          <button id="close-teams" class="lg:hidden border border-stone-300 rounded-md px-2 py-1 text-xs hover:bg-stone-100 cursor-pointer">Close</button>
-        </div>
-      </div>
-      <div id="team-list" class="flex-1 min-h-0 overflow-y-auto p-2 space-y-1"></div>
-    </aside>
-
-    <section class="flex-1 min-w-0 flex flex-col">
-      <div class="shrink-0 h-12 border-b border-stone-200 bg-white flex items-center gap-2 px-2 sm:px-3 overflow-x-auto">
-        <button id="open-teams" class="lg:hidden border border-stone-300 rounded-md px-2 py-1.5 hover:bg-stone-100 shrink-0 text-xs cursor-pointer">Teams</button>
-        <input id="team-name" placeholder="Team name" class="border border-stone-300 rounded-md px-2 py-1.5 w-32 sm:w-52 focus:outline-none focus:border-stone-500 shrink-0 text-xs">
-        <button id="add-node" class="border border-stone-300 rounded-md px-2.5 py-1.5 text-xs hover:bg-stone-100 shrink-0 cursor-pointer">Add agent</button>
-        <button id="save-team" class="border border-stone-300 rounded-md px-2.5 py-1.5 text-xs hover:bg-stone-100 shrink-0 cursor-pointer">Save</button>
-        <button id="delete-team" class="border border-stone-300 rounded-md px-2.5 py-1.5 text-xs text-red-700 hover:bg-red-50 shrink-0 cursor-pointer">Delete</button>
-        <span id="canvas-msg" class="text-xs text-stone-500 whitespace-nowrap"></span>
-      </div>
-
-      <div class="flex-1 min-h-0 flex">
-        <div id="board" class="relative flex-1 min-w-0 overflow-auto overscroll-contain bg-stone-50 canvas-grid">
-          <svg id="edges" class="absolute inset-0 pointer-events-none" width="2400" height="1600"></svg>
-          <div id="nodes" class="absolute inset-0" style="width:2400px;height:1600px"></div>
-        </div>
-
-        <aside id="inspector-panel" class="inspector-panel w-72 shrink-0 border-l border-stone-200 bg-white overflow-y-auto">
-          <div class="lg:hidden flex items-center justify-between border-b border-stone-200 p-2">
-            <span class="font-medium text-xs">Agent</span>
-            <button id="close-inspector" class="border border-stone-300 rounded-md px-2 py-1 text-xs hover:bg-stone-100 cursor-pointer">Done</button>
-          </div>
-          <div id="inspector" class="p-4 space-y-3 text-stone-400 text-xs">Select an agent on the canvas.</div>
-        </aside>
-      </div>
-
-      <div class="chat-input-bar shrink-0 border-t border-stone-200 bg-white">
-        <div class="flex gap-2 p-2 sm:p-3">
-          <input id="task" placeholder="Task for the team" class="flex-1 min-w-0 border border-stone-300 rounded-md px-3 py-2 text-xs focus:outline-none focus:border-stone-500">
-          <button id="run" class="inline-flex items-center justify-center bg-stone-900 text-white rounded-md px-4 py-2 sm:py-1.5 text-xs font-semibold hover:bg-stone-700 active:scale-95 disabled:opacity-40 transition-all shadow-xs shrink-0 cursor-pointer min-h-[38px]">Run</button>
-          <button id="cancel" class="hidden border border-stone-300 rounded-md px-3 sm:px-4 py-2 text-xs hover:bg-stone-100 shrink-0 cursor-pointer">Cancel</button>
-        </div>
-        <div id="run-info" class="px-3 pb-2 text-xs text-stone-500"></div>
-        <div id="result" class="hidden prose-out max-h-64 overflow-y-auto border-t border-stone-200 px-3 sm:px-4 py-3"></div>
-      </div>
-    </section>
-  </main>
+  <aside id="inspector" class="inspector" aria-label="Sesi ini">
+    <div class="inspector-head">
+      <h2>Sesi ini</h2>
+      <button id="close-inspector" class="icon-btn" aria-label="Tutup panel sesi" data-icon="x"></button>
+    </div>
+    <div id="stack" class="stack"></div>
+  </aside>
 </div>
 
 <div id="scrim" class="scrim hidden"></div>
-<div id="toast" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 max-w-[90vw] bg-stone-900 text-white rounded-xl px-4 py-2 text-xs font-medium shadow-lg z-50 transition-all"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
 <script src="/static/js/marked.min.js"></script>
+<script src="/static/js/purify.min.js"></script>
 <script src="/static/js/highlight.min.js"></script>
 <script src="/static/js/app.js"></script>
 </body>

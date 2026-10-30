@@ -1,0 +1,41 @@
+# Extra model providers, on top of the main router (API_BASE_URL / API_KEY).
+#
+# Models from a provider are registered as "<prefix><model>". A request for that
+# id goes to that provider with its own URL, key, and limits, so one team can mix
+# agents from different providers. A provider with no key is skipped.
+#
+# Fields:
+#   id                 Name used in logs and as the model's provider.
+#   prefix             Model id prefix that routes to this provider.
+#   strip_prefix       Send the id without the prefix (usual for direct APIs).
+#   base_url_env       Env var holding the URL, with base_url as the default.
+#   api_key_env        Env var holding the key.
+#   transient_retries  Retries on network and 5xx errors before falling back.
+#                      Override with <ID>_MAX_RETRIES in the environment.
+#   max_concurrency    Requests allowed at once. Set this on free tiers: a team
+#                      of six agents otherwise hits rate limits immediately.
+#   models             Bare ids that also route here without the prefix.
+
+providers:
+  - id: bansos
+    prefix: "bansos/"
+    strip_prefix: true
+    base_url_env: BANSOS_API_BASE_URL
+    base_url: https://api.kagiro.net/v1
+    api_key_env: BANSOS_API_KEY
+    transient_retries: 6
+    models: ["deepseek-v4.1-flash-1017"]
+
+  # - id: openrouter
+  #   prefix: "or/"
+  #   strip_prefix: true
+  #   base_url: https://openrouter.ai/api/v1
+  #   api_key_env: OPENROUTER_API_KEY
+  #   max_concurrency: 8
+  #
+  # - id: groq
+  #   prefix: "groq/"
+  #   strip_prefix: true
+  #   base_url: https://api.groq.com/openai/v1
+  #   api_key_env: GROQ_API_KEY
+  #   max_concurrency: 4

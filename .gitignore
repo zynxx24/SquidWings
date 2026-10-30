@@ -9,8 +9,6 @@ dist/
 build/
 audit/
 reports/
-tests/
-scripts/
 *.json
 add_model.md
 

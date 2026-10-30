@@ -44,10 +44,24 @@ class Settings(BaseSettings):
     web_teams_enabled: bool | None = None
 
     # --- Web public access ---
-    web_public_access: bool = False
-    web_auth_token: str = ""
     web_host: str = "127.0.0.1"
     web_port: int = 8080
+    # Comma-separated. Empty means same-origin only / loopback only.
+    web_allowed_origins: str = ""
+    web_allowed_hosts: str = ""
+    web_max_users: int = 10
+    web_rate_limit_rpm: int = 600
+
+    # --- Command sandbox (see security/sandbox.py) ---
+    # auto uses bubblewrap, then Docker, and refuses commands if neither works.
+    sandbox_mode: str = "auto"
+    sandbox_enabled: bool = True
+    sandbox_network: bool = False
+    sandbox_memory_mb: int = 0
+    sandbox_cpu_seconds: int = 300
+    sandbox_file_size_mb: int = 1024
+    sandbox_image: str = "python:3.12-slim"
+    sandbox_ro_paths: str = ""
 
     # --- Web Search ---
     web_search_enabled: bool = True

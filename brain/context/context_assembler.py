@@ -19,6 +19,7 @@ effective input-token cost on repeated turns.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,6 +36,15 @@ from brain.prompt_must_think.base_think_prompt import ThinkPromptManager
 from brain.system_prompt.base_system_prompt import SystemPromptManager
 from config.constants import TOKEN_BUFFER, TaskType
 from model.type.base_handler import BaseTypeHandler
+
+_HISTORY_MAX_TOKENS = 24_000
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
 
 
 @dataclass
@@ -111,7 +121,9 @@ class ContextAssembler:
             think_prompt = handler.get_think_prompt()
 
         active_think_prompt = think_prompt if handler.enable_thinking else None
-        history = self._store.get_history_as_api_messages(session_id, limit=history_limit)
+        all_history = self._store.get_history_as_api_messages(session_id)
+        history = all_history[-history_limit:] if history_limit else all_history
+        older = all_history[: len(all_history) - len(history)]
         output_override = max_output_tokens if max_output_tokens is not None else max_tokens
 
         # ── Simple path: no context_window info ──────────────────────
@@ -148,31 +160,28 @@ class ContextAssembler:
         )
 
         # Step 3: select history that fits inside the history budget
+        # The budget scales with the window, so on a 1M model it would allow
+        # ~500k tokens of history on every turn. Cap what recency has to offer.
+        history_budget = min(plan.history_budget, _env_int("HISTORY_MAX_TOKENS", _HISTORY_MAX_TOKENS))
         selected_history = self._ranker.select_top(
             history,
-            plan.history_budget,
+            history_budget,
             query=user_input,
             model=model_id,
         )
 
         # Step 3b: keep a short extractive digest of history that did not fit,
         # so older turns are not forgotten silently.
+        # This includes everything older than the recent window, which used to
+        # disappear without a trace after 20 messages.
         selected_ids = {id(m) for m in selected_history}
-        dropped = [m for m in history if id(m) not in selected_ids]
+        dropped = [*older, *(m for m in history if id(m) not in selected_ids)]
         if dropped:
-            import os
-
-            def _num(name: str, default: int) -> int:
-                try:
-                    return int(os.environ.get(name, "").strip() or default)
-                except ValueError:
-                    return default
-
-            max_chars = _num("HISTORY_SUMMARY_CHARS", 600)
-            share = max(1, _num("HISTORY_SUMMARY_SHARE", 4))
+            max_chars = _env_int("HISTORY_SUMMARY_CHARS", 600)
+            share = max(1, _env_int("HISTORY_SUMMARY_SHARE", 4))
             digest = self._summarizer.compress_history(dropped, max_summary_length=max_chars)
             digest_msg = {"role": "user", "content": digest["content"]}
-            if max_chars > 0 and self._counter.count_messages([digest_msg], model_id) <= plan.history_budget // share:
+            if max_chars > 0 and self._counter.count_messages([digest_msg], model_id) <= history_budget // share:
                 selected_history = [digest_msg, *selected_history]
 
         # Step 4: build full message list and fit to window (safety trim)

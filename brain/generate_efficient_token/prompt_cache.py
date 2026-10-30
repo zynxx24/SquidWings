@@ -58,7 +58,8 @@ _MAX_BREAKPOINTS = 4
 def _supports_cache(model_id: str) -> bool:
     """Return True if the model may benefit from prompt caching."""
     ml = (model_id or "").lower()
-    return any(ml.startswith(p) for p in _CACHE_SUPPORTED_PREFIXES)
+    # Providers differ in prefix, but a Claude model behind any of them caches.
+    return "claude" in ml or any(ml.startswith(p) for p in _CACHE_SUPPORTED_PREFIXES)
 
 
 def _inject_cache_control(block: dict[str, Any]) -> dict[str, Any]:

@@ -445,7 +445,7 @@ class TerminalStreamRenderer:
         elif self.config.thinking_display == "collapsed":
             char_count = sum(len(c) for c in self.thinking_buffer)
             # Update counter in-place
-            sys.stdout.write(f"\r\033[K  [dim italic]💭 Thinking... ({char_count} karakter)[/dim italic]")
+            sys.stdout.write(f"\r\033[K  \033[2m💭 Thinking... ({char_count} karakter)\033[0m")
             sys.stdout.flush()
 
         elif self.config.thinking_display == "panel":
@@ -458,7 +458,7 @@ class TerminalStreamRenderer:
         if self.thinking_buffer and not self.response_header_shown:
             if self.config.thinking_display == "collapsed":
                 words = sum(len(c.split()) for c in self.thinking_buffer)
-                sys.stdout.write(f"\r\033[K  [dim]💭 Selesai berpikir ({words} kata)[/dim]\n\n")
+                sys.stdout.write(f"\r\033[K  \033[2m💭 Selesai berpikir ({words} kata)\033[0m\n\n")
                 sys.stdout.flush()
             elif self.config.thinking_display == "panel":
                 full_think = "".join(self.thinking_buffer).strip()
@@ -638,7 +638,7 @@ class TerminalStreamRenderer:
         if self.thinking_buffer and not self.response_header_shown:
             words = sum(len(c.split()) for c in self.thinking_buffer)
             if self.config.thinking_display == "collapsed":
-                sys.stdout.write(f"\r\033[K  [dim]💭 Selesai berpikir ({words} kata)[/dim]\n\n")
+                sys.stdout.write(f"\r\033[K  \033[2m💭 Selesai berpikir ({words} kata)\033[0m\n\n")
                 sys.stdout.flush()
             self.response_header_shown = True
 

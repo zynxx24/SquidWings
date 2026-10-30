@@ -9,6 +9,7 @@ text transforms. Every executor accepts keyword arguments only, matching
 from __future__ import annotations
 
 import asyncio
+import difflib
 import hashlib
 import json
 import re
@@ -47,6 +48,20 @@ def _error(message: str, **extra: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {"ok": False, "error": message}
     payload.update(extra)
     return payload
+
+
+def _protected(workspace: Path, *targets: Path) -> dict[str, Any] | None:
+    """Refuse writes to .git and memory state.
+
+    File tools run on the host, not in the sandbox. A hook or git config written
+    here would run with your full permissions the next time you use git, and
+    edited memory would plant instructions in future prompts.
+    """
+    for target in targets:
+        parts = target.relative_to(workspace).parts if target.is_relative_to(workspace) else target.parts
+        if ".git" in parts or ".agent_memory" in parts or ".vault" in parts:
+            return _error(f"Writing inside {target.name if len(parts) == 1 else parts[0]} is not allowed.")
+    return None
 
 
 def _ok(**payload: Any) -> dict[str, Any]:
@@ -179,6 +194,10 @@ def _file_write_sync(
     except PathGuardError as exc:
         return _error(str(exc))
 
+    refused = _protected(workspace, target)
+    if refused:
+        return refused
+
     backup_path: str | None = None
     if target.exists() and create_backup:
         bp = backup_file(workspace, target)
@@ -213,6 +232,48 @@ async def file_write(
 # --------------------------------------------------------------------------- #
 # file_patch
 # --------------------------------------------------------------------------- #
+def _match_ignoring_whitespace(original: str, search: str, replace: str) -> tuple[str, str] | None:
+    """Find a block that differs only in whitespace, and re-indent the replacement."""
+    wanted = [line.strip() for line in search.strip("\n").splitlines()]
+    if not any(wanted):
+        return None
+    lines = original.splitlines(keepends=True)
+    stripped = [line.strip() for line in lines]
+    starts = [
+        i for i in range(len(lines) - len(wanted) + 1)
+        if stripped[i : i + len(wanted)] == wanted
+    ]
+    if len(starts) != 1:
+        return None
+    start = starts[0]
+    actual = "".join(lines[start : start + len(wanted)])
+    first_search = next(line for line in search.strip("\n").splitlines() if line.strip())
+    first_actual = next(line for line in lines[start : start + len(wanted)] if line.strip())
+    search_indent = first_search[: len(first_search) - len(first_search.lstrip())]
+    actual_indent = first_actual[: len(first_actual) - len(first_actual.lstrip())]
+    adjusted = []
+    for line in replace.strip("\n").splitlines():
+        body = line[len(search_indent):] if line.startswith(search_indent) else line.lstrip()
+        adjusted.append(f"{actual_indent}{body}" if line.strip() else "")
+    text = "\n".join(adjusted)
+    if actual.endswith("\n"):
+        text += "\n"
+    return actual, text
+
+
+def _closest_lines(original: str, search: str, limit: int = 3) -> list[str]:
+    """Where the first line of a failed search nearly matches, as line: text."""
+    first = next((line.strip() for line in search.splitlines() if line.strip()), "")
+    if not first:
+        return []
+    lines = original.splitlines()
+    stripped = [line.strip() for line in lines]
+    return [
+        f"{stripped.index(match) + 1}: {match[:120]}"
+        for match in difflib.get_close_matches(first, stripped, n=limit, cutoff=0.6)
+    ]
+
+
 def _file_patch_sync(
     workspace: Path, path: str, search: str, replace: str, count: int
 ) -> dict[str, Any]:
@@ -220,6 +281,10 @@ def _file_patch_sync(
         target = resolve_inside(workspace, path, must_exist=True)
     except PathGuardError as exc:
         return _error(str(exc))
+
+    refused = _protected(workspace, target)
+    if refused:
+        return refused
 
     if not search:
         return _error("search block must not be empty")
@@ -230,8 +295,20 @@ def _file_patch_sync(
         return _error(f"read failed: {exc}")
 
     occurrences = original.count(search)
+    fuzzy = False
     if occurrences == 0:
-        return _error("search block not found", path=str(target.relative_to(workspace)))
+        # Models often get indentation or trailing spaces slightly wrong. Accept
+        # that only when it identifies one unmistakable place in the file.
+        relocated = _match_ignoring_whitespace(original, search, replace)
+        if relocated is None:
+            return _error(
+                "search block not found. It must match the file exactly; read the file again and copy it.",
+                path=str(target.relative_to(workspace)),
+                closest_lines=_closest_lines(original, search),
+            )
+        search, replace = relocated
+        occurrences = 1
+        fuzzy = True
 
     bp = backup_file(workspace, target)
     backup_path = str(bp.relative_to(workspace)) if bp else None
@@ -253,6 +330,7 @@ def _file_patch_sync(
         occurrences=occurrences,
         replaced=replaced,
         backup=backup_path,
+        whitespace_adjusted=fuzzy,
     )
 
 
@@ -279,6 +357,10 @@ def _file_move_sync(workspace: Path, src: str, dst: str) -> dict[str, Any]:
         target = resolve_inside(workspace, dst, must_exist=False)
     except PathGuardError as exc:
         return _error(str(exc))
+
+    refused = _protected(workspace, source, target)
+    if refused:
+        return refused
 
     if target.exists():
         return _error("destination already exists", destination=str(target.relative_to(workspace)))
@@ -318,6 +400,10 @@ def _file_delete_sync(workspace: Path, path: str) -> dict[str, Any]:
     except PathGuardError as exc:
         return _error(str(exc))
 
+    refused = _protected(workspace, target)
+    if refused:
+        return refused
+
     if target.is_dir():
         return _error("refusing to delete a directory; use execute_command for that")
 
@@ -348,6 +434,10 @@ def _dir_create_sync(workspace: Path, path: str) -> dict[str, Any]:
         target = resolve_inside(workspace, path, must_exist=False)
     except PathGuardError as exc:
         return _error(str(exc))
+
+    refused = _protected(workspace, target)
+    if refused:
+        return refused
     try:
         target.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -457,7 +547,9 @@ async def count_lines(path: str, workspace_path: str | None = None) -> dict[str,
 def _run_git(workspace: Path, args: list[str], timeout: float = 15.0) -> dict[str, Any]:
     try:
         proc = subprocess.run(
-            ["git", *args],
+            # Repository config can name programs to run, and a repository's
+            # config is not trusted: the sandbox can write to it in a new repo.
+            ["git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", *args],
             cwd=str(workspace),
             capture_output=True,
             text=True,
@@ -510,7 +602,7 @@ async def git_diff(
     except PathGuardError as exc:
         return _error(str(exc))
 
-    args = ["diff", "--no-color"]
+    args = ["diff", "--no-color", "--no-ext-diff", "--no-textconv"]
     if staged:
         args.append("--cached")
     if path:

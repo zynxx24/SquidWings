@@ -8,10 +8,14 @@ output capture, and safety checks.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
+import signal
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from security import sandbox
 from utils.exceptions import ToolError
 from utils.logger import get_logger
 
@@ -30,6 +34,7 @@ class CommandResult:
         duration: Execution time in seconds.
         timed_out: Whether the command timed out.
         cwd: Working directory used.
+        sandbox: How the command was isolated. Empty if it was refused.
     """
     command: str
     stdout: str = ""
@@ -38,6 +43,7 @@ class CommandResult:
     duration: float = 0.0
     timed_out: bool = False
     cwd: str = "."
+    sandbox: dict[str, Any] = field(default_factory=dict)
 
     @property
     def success(self) -> bool:
@@ -64,6 +70,7 @@ class CommandResult:
             "success": self.success,
             "duration": round(self.duration, 3),
             "timed_out": self.timed_out,
+            "sandbox": self.sandbox,
         }
 
 
@@ -128,12 +135,22 @@ class CommandExecutor:
         timed_out = False
 
         try:
-            process = await asyncio.create_subprocess_shell(
-                command,
+            prepared = sandbox.prepare(command, effective_cwd)
+        except sandbox.SandboxError as exc:
+            logger.warning(f"[cmd_exec] Refused: {exc}")
+            return CommandResult(command=command, stderr=str(exc), return_code=-1, cwd=effective_cwd)
+
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *prepared.argv,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=effective_cwd,
-                env=env,
+                cwd=prepared.host_cwd,
+                env={**prepared.env, **(env or {})},
+                preexec_fn=prepared.preexec,
+                # Its own process group, so a timeout reaches its children too.
+                start_new_session=True,
             )
 
             try:
@@ -143,7 +160,9 @@ class CommandExecutor:
                 )
             except TimeoutError:
                 timed_out = True
-                process.kill()
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                await asyncio.to_thread(sandbox.kill_container, prepared)
                 await process.wait()
                 stdout_bytes = b""
                 stderr_bytes = f"Command timed out after {effective_timeout}s".encode()
@@ -161,6 +180,7 @@ class CommandExecutor:
                 duration=duration,
                 timed_out=timed_out,
                 cwd=effective_cwd,
+                sandbox=prepared.describe(),
             )
 
             level = "info" if result.success else "warning"

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from config.constants import TaskType
 from utils.logger import get_logger
+from utils.workspace_context import get_active_ponytail
 
 logger = get_logger(__name__)
 
@@ -43,7 +44,7 @@ def _ponytail_tasks() -> set[TaskType]:
 
 
 def _ponytail_file() -> str:
-    mode = os.environ.get("PONYTAIL_MODE", "full").strip().lower()
+    mode = get_active_ponytail() or os.environ.get("PONYTAIL_MODE", "full").strip().lower()
     return _PONYTAIL_FILES.get(mode, "")
 
 
@@ -81,15 +82,17 @@ class SystemPromptManager:
             logger.debug(f"[system_prompt] No prompt file mapped for {task_type.value}")
             return ""
 
-        if filename in self._cache:
-            return self._cache[filename]
+        pony = _ponytail_file()
+        # Sessions choose their own mode, so the mode is part of the cache key.
+        key = f"{filename}:{pony}"
+        if key in self._cache:
+            return self._cache[key]
 
         base_prompt = self._load_file("_base.txt")
         task_prompt = self._load_file(filename)
-        pony = _ponytail_file()
         extra = self._load_file(pony) if pony and task_type in _ponytail_tasks() else ""
         prompt = "\n\n".join(part for part in (base_prompt, task_prompt, extra) if part)
-        self._cache[filename] = prompt
+        self._cache[key] = prompt
         return prompt
 
     def _load_file(self, filename: str) -> str:

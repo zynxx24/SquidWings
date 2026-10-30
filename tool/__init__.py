@@ -6,6 +6,4 @@ Manages tool registration, validation, and execution for:
 - File editing/creation
 - File change discard/revert
 - File upload
-- Task planning (database, flow, logic)
-- Sandboxed execution
 """

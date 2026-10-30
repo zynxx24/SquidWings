@@ -59,7 +59,7 @@ run_check "Mypy" \
         --pretty
 
 run_check "Compileall" \
-    "$PYTHON" -m compileall -q .
+    "$PYTHON" -m compileall -q -x '(^|/)(workspace|vault|tool\.orphan|\.venv)/' .
 
 run_check "Pytest" \
     "$PYTHON" -m pytest tests/ -q

@@ -12,7 +12,7 @@ def test_planned_runtime_modules_exist() -> None:
         "config/settings.py", "model/connection/api_client.py",
         "model/registry/model_registry.py", "brain/classifier/intent_classifier.py",
         "tool/register_tools.py", "agent/orchestrator.py", "agent/agent_loop.py",
-        "utils/circuit_breaker.py", "utils/metrics.py", "main.py", "web/server.py",
+        "main.py", "web/server.py",
     ]
     assert not [name for name in required if not (ROOT / name).is_file()]
 

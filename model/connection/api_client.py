@@ -12,8 +12,10 @@ Implements the BaseClient interface with full support for:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
+import re
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -21,11 +23,13 @@ import httpx
 from dotenv import load_dotenv
 
 from model.connection.base_client import BaseClient
+from model.connection.providers import Provider, load_providers
 from model.settings.rate_limiter import RateLimiter, get_default_rate_limiter
 from utils.exceptions import (
     ConnectionError,  # noqa: A004
     ModelError,
     RateLimitError,
+    ReasoningBudgetError,
     TimeoutError,  # noqa: A004
 )
 from utils.logger import get_logger
@@ -42,7 +46,7 @@ class APIClient(BaseClient):
     - Automatic error mapping (HTTP status → custom exceptions)
     - SSE streaming support
     - Request/response logging
-    - Bansos mode direct routing and non-stop fallback
+    - Routes each model to its provider (see config/providers.yaml)
     """
 
     def __init__(
@@ -56,9 +60,11 @@ class APIClient(BaseClient):
     ) -> None:
         super().__init__(base_url, api_key, timeout)
         self._client: httpx.AsyncClient | None = None
-        self._bansos_client: httpx.AsyncClient | None = None
-        self._bansos_url: str = ""
-        self._bansos_key: str = ""
+        load_dotenv(override=False)
+        self._main_provider = Provider(id="router", base_url=base_url, api_key=api_key)
+        self._providers = load_providers()
+        self._provider_clients: dict[str, tuple[httpx.AsyncClient, str, str]] = {}
+        self._semaphores: dict[str, asyncio.Semaphore] = {}
         self.rate_limiter = rate_limiter or get_default_rate_limiter()
         if max_retries is not None:
             self.max_retries = max_retries
@@ -75,26 +81,31 @@ class APIClient(BaseClient):
             except ValueError:
                 self.retry_backoff_factor = 1.5
 
-    def _is_bansos(self, model: str) -> bool:
-        return model.startswith("bansos/") or model == "deepseek-v4.1-flash-1017"
+    def _route(self, model: str) -> tuple[Provider, str]:
+        """Find the provider serving a model, and the id it expects."""
+        for provider in self._providers:
+            if provider.owns(model):
+                return provider, provider.api_model(model)
+        return self._main_provider, model
 
-    def _get_bansos_client(self) -> tuple[httpx.AsyncClient, str]:
-        """Get or initialize client for bansos mode directly from .env."""
-        load_dotenv(override=False)
-        base_url = os.getenv("BANSOS_API_BASE_URL", "https://api.kagiro.net/v1").rstrip("/")
-        api_key = os.getenv("BANSOS_API_KEY", "")
-        if (
-            self._bansos_client is None
-            or self._bansos_client.is_closed
-            or self._bansos_key != api_key
-            or self._bansos_url != base_url
-        ):
-            self._bansos_url = base_url
-            self._bansos_key = api_key
-            self._bansos_client = httpx.AsyncClient(
-                base_url=base_url,
+    @property
+    def provider_ids(self) -> list[str]:
+        """Providers that can serve requests right now."""
+        return [self._main_provider.id, *(p.id for p in self._providers if p.key)]
+
+    def provider_of(self, model: str) -> str:
+        return self._route(model)[0].id
+
+    def _client_for(self, provider: Provider) -> httpx.AsyncClient:
+        if provider is self._main_provider:
+            return self.client
+        url, key = provider.url, provider.key
+        client, cached_url, cached_key = self._provider_clients.get(provider.id, (None, "", ""))
+        if client is None or client.is_closed or cached_url != url or cached_key != key:
+            client = httpx.AsyncClient(
+                base_url=url,
                 headers={
-                    "Authorization": f"Bearer {api_key}",
+                    "Authorization": f"Bearer {key}",
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                 },
@@ -106,7 +117,18 @@ class APIClient(BaseClient):
                 ),
                 follow_redirects=True,
             )
-        return self._bansos_client, base_url
+            self._provider_clients[provider.id] = (client, url, key)
+        return client
+
+    def _slot(self, provider: Provider) -> Any:
+        """Concurrency limit for a provider, so a team cannot flood a free tier."""
+        if provider.max_concurrency <= 0:
+            return contextlib.nullcontext()
+        semaphore = self._semaphores.get(provider.id)
+        if semaphore is None:
+            semaphore = asyncio.Semaphore(provider.max_concurrency)
+            self._semaphores[provider.id] = semaphore
+        return semaphore
 
     @property
     def client(self) -> httpx.AsyncClient:
@@ -124,6 +146,14 @@ class APIClient(BaseClient):
                 follow_redirects=True,
             )
         return self._client
+
+    @staticmethod
+    def _should_retry_transient(provider: Provider, error: Exception, attempt: int) -> bool:
+        """Retry what may heal by itself. A bad request or bad key never will."""
+        status = getattr(error, "status_code", 0) or 0
+        if 400 <= status < 500 and status not in {408, 425, 429}:
+            return False
+        return attempt < provider.max_retries
 
     def _handle_error(self, response: httpx.Response, model: str = "") -> None:
         """Map HTTP error responses to custom exceptions.
@@ -167,6 +197,23 @@ class APIClient(BaseClient):
             except Exception:
                 error_msg = response.text
 
+            # Routers report a temporary model lockout as "(reset after 29s)".
+            reset = re.search(r"reset after (\d+)\s*s", error_msg)
+            retry_after = float(reset.group(1)) if reset else None
+            if "budget on reasoning" in error_msg:
+                raise ReasoningBudgetError(
+                    message=f"Model '{model}' returned error: {error_msg}",
+                    retry_after=retry_after,
+                    model_id=model,
+                    status_code=response.status_code,
+                )
+            if reset and response.status_code >= 500:
+                raise RateLimitError(
+                    message=f"Model '{model}' is locked: {error_msg}",
+                    model_id=model,
+                    retry_after=retry_after,
+                )
+
             raise ModelError(
                 message=f"Model '{model}' returned error: {error_msg}",
                 model_id=model,
@@ -197,8 +244,7 @@ class APIClient(BaseClient):
         Returns:
             Full parsed response dict from the API.
         """
-        is_bansos = self._is_bansos(model)
-        api_model = model.replace("bansos/", "") if is_bansos else model
+        provider, api_model = self._route(model)
 
         payload: dict[str, Any] = {
             "model": api_model,
@@ -216,20 +262,16 @@ class APIClient(BaseClient):
         attempt = 0
         while True:
             attempt += 1
-            if is_bansos:
-                client, active_url = self._get_bansos_client()
-            else:
-                client = self.client
-                active_url = self.base_url
+            client = self._client_for(provider)
 
             logger.debug(
-                f"[api] POST /chat/completions | model={api_model} | url={active_url} | "
+                f"[api] POST /chat/completions | model={api_model} | provider={provider.id} | "
                 f"msgs={len(messages)} | temp={temperature} | max_tok={max_tokens} | attempt={attempt}"
             )
 
             try:
                 await self.rate_limiter.wait_and_acquire(api_model, max_wait=30.0)
-                async with Timer(f"chat_completion({model})") as t:
+                async with self._slot(provider), Timer(f"chat_completion({model})") as t:
                     response = await client.post(
                         "/chat/completions",
                         json=payload,
@@ -271,11 +313,13 @@ class APIClient(BaseClient):
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                if is_bansos:
+                if provider.max_retries:
+                    if not self._should_retry_transient(provider, e, attempt):
+                        raise
                     backoff = min(attempt * 1.5, 6.0)
                     logger.warning(
-                        f"[bansos] API call error ({api_model} @ {active_url}): {e}. "
-                        f"Non-stop fallback: retrying in {backoff:.1f}s (attempt {attempt})..."
+                        f"[{provider.id}] API call error ({api_model}): {e}. "
+                        f"Retrying in {backoff:.1f}s (attempt {attempt}/{provider.max_retries})..."
                     )
                     await asyncio.sleep(backoff)
                     continue
@@ -328,8 +372,7 @@ class APIClient(BaseClient):
 
         Yields parsed JSON chunks from the SSE stream.
         """
-        is_bansos = self._is_bansos(model)
-        api_model = model.replace("bansos/", "") if is_bansos else model
+        provider, api_model = self._route(model)
 
         payload: dict[str, Any] = {
             "model": api_model,
@@ -345,19 +388,16 @@ class APIClient(BaseClient):
         payload.update(kwargs)
 
         attempt = 0
+        yielded = False
         while True:
             attempt += 1
-            if is_bansos:
-                client, active_url = self._get_bansos_client()
-            else:
-                client = self.client
-                active_url = self.base_url
+            client = self._client_for(provider)
 
             logger.debug(f"[api] POST /chat/completions (stream) | model={api_model} | attempt={attempt}")
 
             try:
                 await self.rate_limiter.wait_and_acquire(api_model, max_wait=30.0)
-                async with client.stream(
+                async with self._slot(provider), client.stream(
                     "POST",
                     "/chat/completions",
                     json=payload,
@@ -377,7 +417,9 @@ class APIClient(BaseClient):
                             if line.startswith("data: "):
                                 data_str = line[6:]
                                 try:
-                                    yield json.loads(data_str)
+                                    chunk = json.loads(data_str)
+                                    yielded = True
+                                    yield chunk
                                 except json.JSONDecodeError:
                                     logger.warning(f"[api] Failed to parse SSE chunk: {data_str[:100]}")
                     except GeneratorExit:
@@ -388,14 +430,19 @@ class APIClient(BaseClient):
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                if is_bansos:
+                # Chunks already reached the caller, so a retry would duplicate them.
+                if provider.max_retries and not yielded:
+                    if not self._should_retry_transient(provider, e, attempt):
+                        raise
                     backoff = min(attempt * 1.5, 6.0)
                     logger.warning(
-                        f"[bansos] Stream error ({api_model} @ {active_url}): {e}. "
-                        f"Non-stop fallback: retrying in {backoff:.1f}s (attempt {attempt})..."
+                        f"[{provider.id}] Stream error ({api_model}): {e}. "
+                        f"Retrying in {backoff:.1f}s (attempt {attempt}/{provider.max_retries})..."
                     )
                     await asyncio.sleep(backoff)
                     continue
+                if provider.max_retries:
+                    raise
                 else:
                     if isinstance(e, RateLimitError):
                         retry_after = e.retry_after
@@ -453,22 +500,16 @@ class APIClient(BaseClient):
         logger.info(f"[api] Fetched {len(models)} models from API")
         return models
 
-    async def list_bansos_models(self) -> list[dict[str, Any]]:
-        """Fetch models from the Bansos endpoint (/models) and tag them.
-
-        IDs are prefixed with ``bansos/`` and ``owned_by`` is set to
-        ``bansos`` so routing (``_is_bansos``) works automatically.
-        Returns an empty list when no Bansos API key is configured.
-        """
-        client, _ = self._get_bansos_client()
-        if not self._bansos_key:
+    async def list_provider_models(self, provider: Provider) -> list[dict[str, Any]]:
+        """Fetch a provider's /models and tag the ids so requests route back to it."""
+        if not provider.key:
             return []
         try:
-            response = await client.get("/models")
+            response = await self._client_for(provider).get("/models")
         except httpx.HTTPError as e:
             raise ConnectionError(
-                message=f"Cannot connect to Bansos API at {self._bansos_url}",
-                url=self._bansos_url,
+                message=f"Cannot connect to {provider.id} at {provider.url}",
+                url=provider.url,
                 original_error=e,
             ) from e
         self._handle_error(response)
@@ -478,37 +519,36 @@ class APIClient(BaseClient):
         for item in raw_data if isinstance(raw_data, list) else []:
             if not isinstance(item, dict) or not item.get("id"):
                 continue
-            mid = str(item["id"])
-            tagged = dict(item)
-            tagged["id"] = mid if mid.startswith("bansos/") else f"bansos/{mid}"
-            tagged["owned_by"] = "bansos"
-            models.append(tagged)
-        logger.info(f"[api] Fetched {len(models)} Bansos models")
+            models.append({**item, "id": provider.tag_model(str(item["id"])), "owned_by": provider.id})
+        logger.info(f"[api] Fetched {len(models)} models from {provider.id}")
         return models
 
     async def sync_all_models(self, registry: Any) -> dict[str, int]:
-        """Auto-fetch /models from the main router and Bansos, register all.
+        """Fetch /models from every provider and register them.
 
-        Each source is independent: a failure in one never blocks the other.
+        Each source is independent: one failing never blocks the others. Models a
+        provider no longer lists are removed, unless it returned an empty list,
+        which is an upstream hiccup rather than "every model was removed".
 
         Returns:
-            Mapping of source name to number of models registered.
+            Mapping of provider id to number of models registered.
         """
         counts: dict[str, int] = {}
-        sources = (("router", self.list_models), ("bansos", self.list_bansos_models))
-        for name, fetch in sources:
+        fetchers: list[tuple[Provider, Any]] = [(self._main_provider, self.list_models)]
+        fetchers += [(p, lambda p=p: self.list_provider_models(p)) for p in self._providers]
+        for provider, fetch in fetchers:
             try:
                 items = [m for m in await fetch() if m.get("id")]
-                if name == "router" and hasattr(registry, "model_ids") and hasattr(registry, "unregister"):
+                if items and hasattr(registry, "model_ids") and hasattr(registry, "unregister"):
                     current_ids = {m["id"] for m in items}
                     for mid in list(registry.model_ids):
-                        if not mid.startswith("bansos/") and mid not in current_ids:
+                        if mid not in current_ids and self._route(mid)[0].id == provider.id:
                             registry.unregister(mid)
                 registry.register_from_api_models(items)
-                counts[name] = len(items)
+                counts[provider.id] = len(items)
             except Exception as e:  # noqa: BLE001
-                logger.warning(f"[api] Auto-sync '{name}' failed: {e}")
-                counts[name] = 0
+                logger.warning(f"[api] Auto-sync '{provider.id}' failed: {e}")
+                counts[provider.id] = 0
         return counts
 
     async def list_gemini_models(self, provider: str | None = None) -> list[dict[str, Any]]:
@@ -591,6 +631,6 @@ class APIClient(BaseClient):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             logger.debug("[api] Client closed")
-        if self._bansos_client and not self._bansos_client.is_closed:
-            await self._bansos_client.aclose()
-            logger.debug("[api] Bansos client closed")
+        for client, _, _ in self._provider_clients.values():
+            if not client.is_closed:
+                await client.aclose()

@@ -81,6 +81,7 @@ class HealthChecker:
         self.recovery_threshold = recovery_threshold
         self.degraded_latency_ms = degraded_latency_ms
         self._health: dict[str, ModelHealth] = {}
+        self._unavailable_until: dict[str, float] = {}
 
     def _ensure_model(self, model_id: str) -> ModelHealth:
         """Get or create health record for a model."""
@@ -132,6 +133,25 @@ class HealthChecker:
                 f"({health.consecutive_failures} consecutive failures)"
             )
 
+    def mark_unavailable(self, model_id: str, seconds: float = 600.0) -> None:
+        """Skip a model for a while without forgetting it exists.
+
+        For failures that retrying will not fix soon: a provider refusing the
+        model, or a Retry-After longer than anyone will wait.
+        """
+        self._unavailable_until[model_id] = time.monotonic() + seconds
+        logger.warning(f"[health] Model '{model_id}' unavailable for {seconds:.0f}s")
+
+    def is_available(self, model_id: str) -> bool:
+        """False while a model is inside a ``mark_unavailable`` window."""
+        until = self._unavailable_until.get(model_id)
+        if until is None:
+            return True
+        if time.monotonic() >= until:
+            del self._unavailable_until[model_id]
+            return True
+        return False
+
     def is_healthy(self, model_id: str) -> bool:
         """Check if a model is healthy enough to receive requests.
 
@@ -144,6 +164,9 @@ class HealthChecker:
         Returns:
             bool: True if the model should be used.
         """
+        if not self.is_available(model_id):
+            return False
+
         health = self._ensure_model(model_id)
 
         if health.status == HealthStatus.UNKNOWN:

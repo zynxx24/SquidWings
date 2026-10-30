@@ -52,11 +52,47 @@ _TOOL_ALIASES: dict[str, str] = {
     "rename": "file_move",
     "mv": "file_move",
     "rm": "file_delete",
+    # One memory: notes live in the vault, which is an Obsidian vault on disk.
+    "obsidian_search": "vault_search",
+    "obsidian_read": "vault_read",
+    "obsidian_write": "vault_write",
+    "obsidian_list": "vault_search",
+    "outline": "code_outline",
+    "goto_definition": "find_symbol",
+    "run_tests": "run_checks",
+    "test": "run_checks",
+    "skill": "load_skill",
     "delete_file": "file_delete",
     "stat": "file_stat",
     "mkdir": "dir_create",
     "websearch": "web_search",
 }
+
+
+# Tools resolved against the session workspace, and the argument that carries it.
+WORKSPACE_TOOLS: dict[str, str] = {
+    **dict.fromkeys(
+        (
+            "web_search", "file_search", "file_write", "file_patch", "file_move", "file_delete",
+            "dir_create", "file_stat", "count_lines", "git_status", "git_diff", "json_query",
+            "memory_recall", "memory_remember", "memory_forget", "memory_rank_files",
+            "vault_graph_build", "vault_neighbours", "vault_explain",
+            "vault_health", "vault_search", "vault_read", "vault_recall", "vault_write",
+            "project_overview", "code_outline", "find_symbol", "run_checks", "code_graph", "aislop_scan",
+        ),
+        "workspace_path",
+    ),
+    "graphify_ingest": "workspace",
+    "graphify_query": "workspace",
+}
+
+# Safe to run at the same time when a model asks for several in one turn.
+READ_ONLY_TOOLS: frozenset[str] = frozenset({
+    "read_file", "list_directory", "file_search", "file_stat", "count_lines", "git_status",
+    "git_diff", "json_query", "web_search", "time_now", "vault_search", "vault_read",
+    "vault_recall", "vault_neighbours", "vault_explain", "memory_recall", "memory_rank_files",
+    "graphify_query", "project_overview", "code_outline", "find_symbol", "load_skill",
+})
 
 
 class _ToolEntry:
@@ -251,7 +287,7 @@ class ToolRegistry:
                 )
                 if entry.is_async:
                     return await entry.executor(**arguments)
-                return entry.executor(**arguments)
+                return await asyncio.to_thread(entry.executor, **arguments)
 
             # Evaluate the call without running it: the registry owns
             # execution (and may need to await an async executor), so
@@ -263,7 +299,8 @@ class ToolRegistry:
             if entry.is_async:
                 result = await entry.executor(**arguments)
             else:
-                result = entry.executor(**arguments)
+                # A sync tool on the event loop would stall every other agent.
+                result = await asyncio.to_thread(entry.executor, **arguments)
             return guard.scrub(result)
 
         except ToolError:

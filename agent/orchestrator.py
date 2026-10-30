@@ -18,6 +18,9 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
+import os
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -32,6 +35,7 @@ from brain.max_token.max_token_config import MaxTokenConfig
 from brain.memory.agent_working_memory import AgentWorkingMemory
 from brain.memory.context_window_manager import ContextWindowManager
 from brain.memory.conversation_store import ConversationStore
+from brain.memory.project_memory import ProjectMemory
 from brain.prompt_must_think.base_think_prompt import ThinkPromptManager
 from config.constants import TOKEN_BUFFER, ResponseStatus, TaskType
 from config.secrets import get_secrets
@@ -50,16 +54,37 @@ from model.type.math import MathHandler
 from model.type.multimodal import MultimodalHandler
 from model.type.reason import ReasonHandler
 from model.type.school_task import SchoolTaskHandler
+from tool.execute.execute_code_intel import quality_tools
+from tool.execute.execute_local_memory import user_profile
 from tool.execute.execute_local_memory.session_distill import distill_session
 from tool.register_tools import register_all_tools
 from tool.registry.tool_registry import ToolRegistry
+from utils.exceptions import RateLimitError
 from utils.logger import get_logger
+from utils.workspace_context import get_active_workspace
 
 from .agent_loop import AgentLoop, LoopResult
+from .harness import Harness, scaffold_for
+from .harness.advisor import pick_advisor
+from .harness.briefing import build_briefing, skill_guidance
+from .harness.guards import tool_trace
+from .harness.playbooks import record_run
+from .harness.tiers import protocol_text
+from .harness.tool_select import select_tools, text_tool_protocol
+from .harness.verifier import changed_files
 from .pipeline_executor import PipelineExecutor, PipelineResult
 from .session_manager import SessionManager
 
 logger = get_logger(__name__)
+
+# The chain ends in "any registered model", which can be hundreds with many
+# providers. A request should fail in reasonable time rather than try them all.
+MAX_FALLBACK_ATTEMPTS = 6
+_BILLING_COOLDOWN_SECONDS = 600.0
+_RESEARCH_RE = re.compile(
+    r"\b(?:terbaru|latest|berita|research|riset|cari di internet|search the web|web search)\b",
+    re.IGNORECASE,
+)
 
 
 class EmptyResponseError(RuntimeError):
@@ -71,7 +96,7 @@ class EmptyResponseError(RuntimeError):
 
 
 # Handler registry (shared across all Orchestrator instances)
-_HANDLERS: dict[TaskType, BaseTypeHandler] = {
+TASK_HANDLERS: dict[TaskType, BaseTypeHandler] = {
     TaskType.CODE: CodeHandler(),
     TaskType.MATH: MathHandler(),
     TaskType.ACTIVITY: ActivityHandler(),
@@ -102,6 +127,7 @@ class AgentResponse:
         fallback_used: Whether a fallback model was used.
         error_message: Error message if status is error.
         content_parts: Raw content parts (for streaming reconstruction).
+        harness: Summary of what the execution harness did, for the UI.
     """
     content: str = ""
     thinking: str = ""
@@ -118,6 +144,7 @@ class AgentResponse:
     fallback_used: bool = False
     error_message: str = ""
     content_parts: list[str] = field(default_factory=list)
+    harness: dict[str, Any] = field(default_factory=dict)
 
     @property
     def total_tokens(self) -> int:
@@ -193,6 +220,13 @@ class Orchestrator:
         # Turn counters for memory distillation (writes at most once per N turns).
         self._distill_every = 3
         self._turn_counts: dict[str, int] = {}
+        self._background: set[asyncio.Task[Any]] = set()
+
+    def _refresh_graph_later(self, workspace: str) -> None:
+        """Update this session's code graph without making the user wait for it."""
+        task = asyncio.create_task(asyncio.to_thread(quality_tools.refresh_graph, workspace))
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     async def _distill_memory(self, session_id: str) -> None:
         """Keep the vault session note in sync with the chat log.
@@ -297,6 +331,10 @@ class Orchestrator:
         images: list[str] | None = None,
         classification: Any = None,
         difficulty: str | None = None,
+        on_reset: Callable[[], None] | None = None,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+        task_hint: str | None = None,
+        persist: bool = True,
     ) -> AgentResponse:
         """Process a user input through the full pipeline.
 
@@ -322,6 +360,13 @@ class Orchestrator:
             images: List of attached image data URLs.
             classification: Precomputed classification result (optional).
             difficulty: Precomputed difficulty string (optional).
+            on_reset: Called when text already streamed must be discarded.
+            on_event: Progress callback (tool calls, verification, escalation).
+            task_hint: The underlying task, when user_input is a role prompt for
+                one team agent. Drives intent, tool choice, and memory, which a
+                prompt like "You are a Researcher..." would otherwise mislead.
+            persist: Keep this turn in chat history and session notes. Off for
+                team agents, whose context is passed explicitly.
 
         Returns:
             AgentResponse with the full result.
@@ -338,8 +383,24 @@ class Orchestrator:
         self._session_manager.get_or_create_session(session_id)
         self._session_manager.increment_turn(session_id)
 
+        intent_text = task_hint or user_input
         model = None
+        harness: Harness | None = None
+        project: ProjectMemory | None = None
+        workspace = get_active_workspace() or os.getenv("SQUIDWINGS_WORKSPACE", "").strip()
+        streamed = False
         is_continue_turn = is_continuation_input(user_input)
+
+        # Wrapped so a fallback only resets the UI when there is something to clear.
+        if on_content_chunk is not None:
+            forward_content = on_content_chunk
+
+            def track_content(chunk: str) -> None:
+                nonlocal streamed
+                streamed = True
+                forward_content(chunk)
+
+            on_content_chunk = track_content
 
         try:
             # 1. Classify intent + difficulty.
@@ -348,17 +409,17 @@ class Orchestrator:
             if classification is not None and difficulty is not None:
                 pass
             elif override_model:
-                classification = self._classifier.classify(user_input)
-                difficulty = IntentClassifier.estimate_difficulty(user_input)
+                classification = self._classifier.classify(intent_text)
+                difficulty = IntentClassifier.estimate_difficulty(intent_text)
             else:
                 async_classify = getattr(
                     self._classifier, "classify_async_with_difficulty", None
                 )
                 if callable(async_classify):
-                    classification, difficulty = await async_classify(user_input)
+                    classification, difficulty = await async_classify(intent_text)
                 else:
-                    classification = self._classifier.classify(user_input)
-                    difficulty = IntentClassifier.estimate_difficulty(user_input)
+                    classification = self._classifier.classify(intent_text)
+                    difficulty = IntentClassifier.estimate_difficulty(intent_text)
             diff_enum = Difficulty(difficulty)
 
             logger.info(
@@ -367,8 +428,8 @@ class Orchestrator:
             )
 
             # 2. Get handler
-            handler = _HANDLERS.get(
-                classification.task_type, _HANDLERS[TaskType.ACTIVITY]
+            handler = TASK_HANDLERS.get(
+                classification.task_type, TASK_HANDLERS[TaskType.ACTIVITY]
             )
 
             # 3. Route to model. A bare "lanjutkan" carries no intent of its
@@ -408,17 +469,40 @@ class Orchestrator:
                     latency_ms=(time.time() - start_time) * 1000,
                 )
 
-            # 4. Build augmented input with workspace context
+            if on_event:
+                on_event({
+                    "type": "route",
+                    "task_type": classification.task_type.value,
+                    "difficulty": difficulty,
+                    "confidence": classification.confidence,
+                    "model": model.id,
+                    "text": f"Using {model.id}",
+                })
+
+            if persist and task_hint is None and _fallback_depth == 0:
+                saved = await asyncio.to_thread(user_profile.capture_from_message, user_input)
+                if saved and on_event:
+                    on_event({"type": "remembered", "items": saved, "text": "Remembered"})
+
+            # 4. Build augmented input with project memory and workspace context.
+            # Team agents get their context explicitly and share no chat session.
+            project = ProjectMemory.for_path(workspace) if persist else None
             augmented_input = user_input
+            if project:
+                augmented_input = await asyncio.to_thread(
+                    project.build_input, user_input, is_continue_turn
+                )
+            elif is_continue_turn:
+                # A continuation nudge is too thin to stand alone: state the resume
+                # intent explicitly so the model does not ask "lanjut apa?".
+                augmented_input = f"{user_input}\n\n{continuation_hint()}"
             if workspace_context:
-                augmented_input = f"{workspace_context}\n\n[USER REQUEST]\n{user_input}"
-            # A continuation nudge is too thin to stand alone: state the resume
-            # intent explicitly so the model does not ask "lanjut apa?".
-            if is_continue_turn:
-                augmented_input = f"{augmented_input}\n\n{continuation_hint()}"
+                augmented_input = f"{workspace_context}\n\n[USER REQUEST]\n{augmented_input}"
 
             # 5. Assemble context
-            ctx = self._context_assembler.assemble(
+            # Token counting is CPU work; off the loop so parallel agents keep moving.
+            ctx = await asyncio.to_thread(
+                self._context_assembler.assemble,
                 handler=handler,
                 user_input=augmented_input,
                 session_id=session_id,
@@ -452,7 +536,12 @@ class Orchestrator:
                 max_tokens = handler_max
 
             # 7. Run agent loop (via Pipeline or direct AgentLoop)
-            use_pipeline = self._should_use_pipeline(user_input, classification.task_type)
+            use_pipeline = task_hint is None and self._should_use_pipeline(
+                user_input, classification.task_type, difficulty
+            )
+            harness = await self._build_harness(
+                model, classification.task_type, intent_text, ctx.messages, on_reset, on_event
+            )
 
             if use_pipeline:
                 logger.info("[orchestrator] Using PipelineExecutor (PLAN→SEARCH→COMPILE→EXECUTE)")
@@ -467,6 +556,7 @@ class Orchestrator:
                     stream=use_stream,
                     on_content_chunk=on_content_chunk,
                     on_thinking_chunk=on_thinking_chunk,
+                    harness=harness,
                 )
                 # Wrap PipelineResult into LoopResult-compatible shape
                 loop_result = self._pipe_to_loop_result(pipe_result)
@@ -474,6 +564,7 @@ class Orchestrator:
                 agent_loop = AgentLoop(
                     api_client=self._api_client,
                     tool_registry=self._tool_registry,
+                    harness=harness,
                 )
                 loop_result = await agent_loop.run(
                     model_id=model.id,
@@ -487,6 +578,14 @@ class Orchestrator:
 
             # 8. Auto-continue on truncation
             final_content = loop_result.content
+            if not final_content.strip() and loop_result.tool_calls_history:
+                # The work happened. Falling back would run those tools again.
+                final_content = (
+                    f"*(Selesai menjalankan {len(loop_result.tool_calls_history)} tool; "
+                    "model tidak menulis ringkasan.)*"
+                )
+                if on_content_chunk:
+                    on_content_chunk(final_content)
             if loop_result.finish_reason == "length" and final_content.strip():
                 continued = await self._auto_continue(
                     model_id=model.id,
@@ -504,9 +603,17 @@ class Orchestrator:
             # 9. Post-process via handler
             final_parsed = loop_result.parsed_response
             if final_parsed:
+                # Carries the continuation rounds, which post_process would
+                # otherwise replace with only the first, cut-off part.
+                final_parsed.content = final_content
                 final_parsed = handler.post_process(final_parsed)
                 if final_parsed.content:
                     final_content = final_parsed.content
+
+            if loop_result.notes:
+                final_content = f"{final_content}{loop_result.notes}"
+                if on_content_chunk:
+                    on_content_chunk(loop_result.notes)
 
             # 9b. A blank answer is a failure, not a success. Bansos mode must
             # keep advancing through the chain instead of returning nothing.
@@ -516,15 +623,35 @@ class Orchestrator:
                 )
 
             # 10. Store in memory
-            self._conversation_store.add_message(
-                session_id, "user", user_input
-            )
-            self._conversation_store.add_message(
-                session_id, "assistant", final_content,
-                model_used=model.id,
-                token_count=loop_result.total_completion_tokens,
-            )
-            await self._distill_memory(session_id)
+            if persist:
+                self._conversation_store.add_message(
+                    session_id, "user", user_input
+                )
+                self._conversation_store.add_message(
+                    session_id, "assistant", final_content,
+                    model_used=loop_result.model or model.id,
+                    token_count=loop_result.total_completion_tokens,
+                    tool_trace=tool_trace(loop_result.tool_calls_history),
+                )
+                await self._distill_memory(session_id)
+            if project:
+                await asyncio.to_thread(
+                    project.finish_turn,
+                    final_content,
+                    loop_result.model or model.id,
+                    changed_files(loop_result.tool_calls_history, workspace),
+                    loop_result.finish_reason == "length",
+                )
+            touched = changed_files(loop_result.tool_calls_history, workspace)
+            if workspace and touched:
+                self._refresh_graph_later(workspace)
+            if harness and not harness.stats.unresolved:
+                harness.stats.playbook_saved = await record_run(
+                    intent_text,
+                    classification.task_type.value,
+                    loop_result.model or model.id,
+                    loop_result.tool_calls_history,
+                )
 
             # 11. Record health + session usage
             latency_ms = (time.time() - start_time) * 1000
@@ -543,7 +670,7 @@ class Orchestrator:
                 content=final_content,
                 thinking=loop_result.thinking,
                 status=ResponseStatus.SUCCESS,
-                model_used=model.id,
+                model_used=loop_result.model or model.id,
                 task_type=classification.task_type.value,
                 difficulty=difficulty,
                 confidence=classification.confidence,
@@ -553,6 +680,7 @@ class Orchestrator:
                 iterations=loop_result.iterations,
                 tool_calls=loop_result.tool_calls_history,
                 content_parts=loop_result.content_parts,
+                harness=harness.stats.to_dict() if harness else {},
             )
 
         except Exception as e:
@@ -565,44 +693,50 @@ class Orchestrator:
                 or "model is not available" in lowered
             )
             logger.error(f"[orchestrator] Pipeline error: {e}")
+            if project and model is not None:
+                project.record_error(model.id, msg)
             if model is not None:
                 # Feed failures back so routing can skip unhealthy models.
                 self._health_checker.record_failure(model.id)
                 if is_model_specific:
-                    logger.warning(
-                        f"[orchestrator] Model '{model.id}' is unavailable on provider; unregistering"
+                    self._health_checker.mark_unavailable(model.id)
+                elif isinstance(e, RateLimitError) and (e.retry_after or 0) > 30.0:
+                    # The API client refuses to wait this long. Remember it, or
+                    # the next request hits the same 429 before falling back.
+                    self._health_checker.mark_unavailable(
+                        model.id, min(float(e.retry_after or 0), 3600.0)
                     )
-                    self._registry.unregister(model.id)
 
-            # Billing/quota failures (HTTP 402, API key exhausted, rate
-            # limits) affect every model on the same provider. Trying the
-            # whole fallback chain would only burn time and tokens, so
-            # surface the error immediately instead.
-            is_billing_error = (not is_model_specific) and any(
-                token in lowered
-                for token in (
-                    "402",
-                    "billing_error",
-                    "token budget exhausted",
-                    "top up at",
+            # Billing failures (HTTP 402, spent budget) affect every model on
+            # the provider, so the fallback chain would only burn time. Rate
+            # limits and invalid-model errors are per model and do fall back.
+            status_code = getattr(e, "status_code", 0)
+            is_billing_error = (not is_model_specific) and (
+                status_code == 402
+                or re.search(r"\b402\b", lowered) is not None
+                or any(
+                    token in lowered
+                    for token in ("billing_error", "token budget exhausted", "top up at")
                 )
             )
-            if is_billing_error and _fallback_depth == 0:
+            billing_response = AgentResponse(
+                content=(
+                    "Model request failed: the API key's token budget is "
+                    "exhausted (HTTP 402). Top up your balance at the "
+                    "provider's billing page or switch to another model "
+                    "in the model selector, then retry."
+                ),
+                status=ResponseStatus.ERROR,
+                error_message=msg,
+                latency_ms=latency_ms,
+            )
+            has_other_provider = is_billing_error and self._cool_down_provider(model)
+            if is_billing_error and _fallback_depth == 0 and not has_other_provider:
                 logger.warning(
                     "[orchestrator] Billing/quota failure detected; "
                     "skipping fallback chain"
                 )
-                return AgentResponse(
-                    content=(
-                        "Model request failed: the API key's token budget is "
-                        "exhausted (HTTP 402). Top up your balance at the "
-                        "provider's billing page or switch to another model "
-                        "in the model selector, then retry."
-                    ),
-                    status=ResponseStatus.ERROR,
-                    error_message=msg,
-                    latency_ms=latency_ms,
-                )
+                return billing_response
 
             # Nested attempts must not recurse: the outer fallback loop owns
             # the chain and advances to the next model itself.
@@ -613,6 +747,10 @@ class Orchestrator:
                     error_message=str(e),
                     latency_ms=latency_ms,
                 )
+
+            # Text from the failed model must not run into the replacement answer.
+            if streamed and on_reset:
+                on_reset()
 
             fallback_response = await self._try_fallback(
                 user_input=user_input,
@@ -627,10 +765,17 @@ class Orchestrator:
                 on_thinking_chunk=on_thinking_chunk,
                 workspace_context=workspace_context,
                 stream=stream,
+                images=images,
+                on_reset=on_reset,
+                on_event=on_event,
+                task_hint=task_hint,
+                persist=persist,
             )
             if fallback_response:
                 fallback_response.latency_ms = latency_ms
                 return fallback_response
+            if is_billing_error:
+                return billing_response
 
             return AgentResponse(
                 content=f"Error: {e}",
@@ -638,6 +783,12 @@ class Orchestrator:
                 error_message=str(e),
                 latency_ms=latency_ms,
             )
+        finally:
+            if _fallback_depth == 0:
+                self._fallback.reset_session(session_id)
+                if not persist:
+                    # One session per agent per run: these would accumulate forever.
+                    self._session_manager.delete_session(session_id)
 
     def _select_model(
         self,
@@ -657,11 +808,11 @@ class Orchestrator:
         """
         if override_model:
             model = self._registry.get(override_model)
-            if model:
+            if model and self._health_checker.is_available(model.id):
                 logger.info(f"[orchestrator] Using override model: {model.id}")
                 return model
             logger.warning(
-                f"[orchestrator] Override model '{override_model}' not found, "
+                f"[orchestrator] Override model '{override_model}' not available, "
                 f"falling back to routing"
             )
 
@@ -693,20 +844,14 @@ class Orchestrator:
     @staticmethod
     def _inject_vault_memory(messages: list[dict[str, Any]]) -> None:
         """Append L1 vault memory to the system message without breaking the cache."""
-        from tool.execute.execute_local_memory.vault_context import build_context
+        from tool.execute.execute_local_memory.vault_context import (
+            build_context,
+            build_global_context,
+        )
 
-        text = build_context()
-        if not text:
-            return
-        for msg in messages:
-            if msg.get("role") != "system":
-                continue
-            content = msg.get("content")
-            if isinstance(content, list):
-                content.append({"type": "text", "text": text})
-            else:
-                msg["content"] = (content or "") + text
-            return
+        text = build_context() + build_global_context() + user_profile.prompt_block()
+        if text:
+            Orchestrator._append_system(messages, text)
 
     @staticmethod
     def _attach_images(messages: list[dict[str, Any]], images: list[str]) -> None:
@@ -727,37 +872,107 @@ class Orchestrator:
             msg["content"] = parts
             return
 
-    def _should_use_pipeline(self, user_input: str, task_type: Any) -> bool:
-        """Decide whether to route through the PLAN→SEARCH→COMPILE→EXECUTE pipeline.
+    async def _build_harness(
+        self,
+        model: ModelInfo,
+        task_type: TaskType,
+        user_input: str,
+        messages: list[dict[str, Any]],
+        on_reset: Callable[[], None] | None,
+        on_event: Callable[[dict[str, Any]], None] | None,
+    ) -> Harness:
+        """Prepare supervision for one run and add its guidance to the prompt."""
+        scaffold = scaffold_for(model.id)
+        disabled = frozenset(
+            name.strip()
+            for name in os.getenv("AGENT_DISABLED_TOOLS", "").split(",")
+            if name.strip()
+        )
+        schemas = self._tool_registry.get_all_schemas()
+        tools: list[dict[str, Any]] = []
+        if os.getenv("AGENT_TOOLS_ENABLED", "true").lower() != "false":
+            tools = select_tools(schemas, task_type, user_input, scaffold, disabled)
+        # Models without native tool calling use the same tools through their text.
+        native = bool(model.supports_tools)
+        text_protocol = text_tool_protocol(tools) if tools and not native else ""
 
-        Heuristic: use pipeline when the request looks like it needs web research
-        (contains question words, "cari", "terbaru", "latest", etc.) or the task
-        type is one that benefits from structured planning.
+        workspace = get_active_workspace() or os.getenv("SQUIDWINGS_WORKSPACE", "").strip()
+        harness = Harness(
+            scaffold=scaffold,
+            tools=tools if native else [],
+            text_tools=bool(text_protocol),
+            parameters={
+                s["function"]["name"]: s["function"].get("parameters") or {} for s in schemas
+            },
+            disabled_tools=disabled,
+            user_input=user_input,
+            workspace=workspace,
+            max_output=model.max_output or 0,
+            advisor_model=(
+                pick_advisor(self._router, self._health_checker, model.id, task_type) if tools else None
+            ),
+            on_event=on_event,
+            on_reset=on_reset,
+        )
+
+        if tools:
+            protocol = protocol_text(scaffold)
+            if protocol:
+                self._append_system(messages, f"\n\n{protocol}")
+            if text_protocol:
+                self._append_system(messages, text_protocol)
+            guides, harness.stats.skills_used = skill_guidance(
+                user_input, task_type, scaffold.skill_chars
+            )
+            if guides:
+                self._append_system(messages, guides)
+            briefing, used = await build_briefing(
+                user_input, task_type, workspace, scaffold.briefing_chars
+            )
+            harness.stats.playbooks_used = used
+            if briefing:
+                self._append_system(messages, briefing)
+        return harness
+
+    @staticmethod
+    def _append_system(messages: list[dict[str, Any]], text: str) -> None:
+        """Append to the system message, after the cached prefix."""
+        for msg in messages:
+            if msg.get("role") != "system":
+                continue
+            content = msg.get("content")
+            if isinstance(content, list):
+                content.append({"type": "text", "text": text})
+            else:
+                msg["content"] = (content or "") + text
+            return
+
+    def _should_use_pipeline(self, user_input: str, task_type: Any, difficulty: str = "medium") -> bool:
+        """Decide whether a request is worth the PLAN→SEARCH→COMPILE→EXECUTE pipeline.
+
+        The pipeline spends two extra model calls before any work starts. It pays
+        off for research and for non-trivial reasoning. Everything else goes to
+        the tool loop, where the model can still call web_search if it needs to;
+        "bagaimana kabarmu" does not need a research plan.
         """
-        # Always pipeline for research/reason tasks
-        if task_type == TaskType.REASON:
+        if task_type == TaskType.REASON and difficulty != "easy":
             return True
+        return _RESEARCH_RE.search(user_input) is not None
 
-        lower = user_input.lower()
+    def _cool_down_provider(self, model: ModelInfo | None) -> bool:
+        """After a billing failure, skip that provider's models for a while.
 
-        # Strong research signals apply to every task type.
-        research_triggers = [
-            "terbaru", "latest", "berita", "research", "riset",
-            "cari di internet", "search the web", "web search",
-        ]
-        if any(t in lower for t in research_triggers):
-            return True
-
-        # Code/file tasks need the direct tool loop; generic words such as
-        # "update", "cari" or "jelaskan" must not divert them to the pipeline.
-        if task_type == TaskType.CODE:
+        Returns:
+            True if another provider can take the request.
+        """
+        provider_ids = getattr(self._api_client, "provider_ids", None)
+        if model is None or not isinstance(provider_ids, list) or len(provider_ids) < 2:
             return False
-
-        general_triggers = [
-            "cari", "search", "apa itu", "jelaskan", "bagaimana",
-            "how to", "what is", "perbandingan", "compare",
-        ]
-        return any(t in lower for t in general_triggers)
+        provider = self._api_client.provider_of(model.id)
+        for item in self._registry.get_all():
+            if self._api_client.provider_of(item.id) == provider:
+                self._health_checker.mark_unavailable(item.id, _BILLING_COOLDOWN_SECONDS)
+        return True
 
     def _pipe_to_loop_result(self, pipe: PipelineResult) -> LoopResult:
         """Convert a PipelineResult into a LoopResult so the rest of process() stays unchanged."""
@@ -766,7 +981,7 @@ class Orchestrator:
         lr.thinking = pipe.thinking
         lr.finish_reason = "stop"
         lr.iterations = max(1, pipe.iterations)
-        lr.tool_calls_history = list(pipe.tools_executed)
+        lr.tool_calls_history = list(pipe.tool_calls_history)
         lr.content_parts = [pipe.content] if pipe.content else []
         # Token counts
         lr.total_prompt_tokens = pipe.total_prompt_tokens
@@ -804,6 +1019,7 @@ class Orchestrator:
         """
         content_parts = [partial_content]
         continue_messages = list(base_messages)
+        seen = {hash(partial_content.strip()[:500])}
 
         for round_num in range(max_rounds):
             if loop_result.finish_reason != "length":
@@ -813,7 +1029,9 @@ class Orchestrator:
                 f"[orchestrator] Auto-continue round {round_num + 1}/{max_rounds}"
             )
 
-            continue_messages.append({"role": "assistant", "content": partial_content})
+            # The tail is enough to continue from. Resending everything so far
+            # would make each round cost more than the last.
+            continue_messages.append({"role": "assistant", "content": partial_content[-2000:]})
             continue_messages.append({
                 "role": "user",
                 "content": (
@@ -852,12 +1070,16 @@ class Orchestrator:
             loop_result.finish_reason = cont_result.finish_reason
 
             partial_content = cont_result.content
-            if partial_content:
-                content_parts.append(partial_content)
-            else:
+            if not partial_content:
                 break
+            signature = hash(partial_content.strip()[:500])
+            if signature in seen:
+                logger.warning("[orchestrator] Continuation repeated itself; stopping")
+                break
+            seen.add(signature)
+            content_parts.append(partial_content)
 
-        return "\n".join(content_parts)
+        return "".join(content_parts)
 
     async def _try_fallback(
         self,
@@ -870,6 +1092,11 @@ class Orchestrator:
         workspace_context: str | None = None,
         stream: bool | None = None,
         _depth: int = 0,
+        images: list[str] | None = None,
+        on_reset: Callable[[], None] | None = None,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+        task_hint: str | None = None,
+        persist: bool = True,
     ) -> AgentResponse | None:
         """Walk the entire fallback chain until a usable answer is produced.
 
@@ -898,6 +1125,18 @@ class Orchestrator:
                 )
                 return None
 
+            # A provider known to be out of budget, or a refused model, costs
+            # nothing to skip and does not count as an attempt.
+            if not self._health_checker.is_available(fb_model.id):
+                current_failed = fb_model.id
+                continue
+
+            if len(attempted) >= MAX_FALLBACK_ATTEMPTS:
+                logger.warning(
+                    f"[orchestrator] Giving up after {len(attempted)} fallback attempts"
+                )
+                return None
+
             attempted.add(fb_model.id)
             logger.info(
                 f"[orchestrator] Fallback attempt {len(attempted)}: "
@@ -914,6 +1153,11 @@ class Orchestrator:
                     on_thinking_chunk=on_thinking_chunk,
                     workspace_context=workspace_context,
                     _fallback_depth=_depth + 1,
+                    images=images,
+                    on_reset=on_reset,
+                    on_event=on_event,
+                    task_hint=task_hint,
+                    persist=persist,
                 )
             except Exception as e:
                 logger.error(

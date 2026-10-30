@@ -110,7 +110,7 @@ class InputBudget:
         model_max_output: int = 8192,
         base_input_tokens: int = 0,
         override_output: int | None = None,
-    ) -> "BudgetPlan":
+    ) -> BudgetPlan:
         """Return a :class:`BudgetPlan` for the given context.
 
         Parameters

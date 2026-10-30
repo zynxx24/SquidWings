@@ -36,22 +36,20 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from config.constants import MAX_TOOL_CALL_ITERATIONS
 from brain.memory.agent_working_memory import (
     AgentStage,
     AgentWorkingMemory,
-    ToolCheckpoint,
     WebResult,
     WorkingMemoryState,
 )
+from config.constants import MAX_TOOL_CALL_ITERATIONS
 from model.connection.api_client import APIClient
-from model.stream.stream_handler import StreamAggregator
 from model.connection.response_handler import ResponseHandler
+from model.stream.stream_handler import StreamAggregator
 from tool.registry.tool_registry import ToolRegistry
 from utils.logger import get_logger
 
@@ -84,6 +82,7 @@ class PipelineResult:
     plan_steps: list[str] = field(default_factory=list)
     web_results: list[dict[str, str]] = field(default_factory=list)
     tools_executed: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls_history: list[dict[str, Any]] = field(default_factory=list)
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     iterations: int = 0
@@ -154,6 +153,7 @@ class PipelineExecutor:
         self._wm     = working_memory
         self._ws     = workspace_path
         self._stream = stream_aggregator or StreamAggregator()
+        self._usage: list[int] = [0, 0]
 
     # ------------------------------------------------------------------ #
     #  Public entry point                                                  #
@@ -171,6 +171,7 @@ class PipelineExecutor:
         on_content_chunk: Callable[[str], None] | None = None,
         on_thinking_chunk: Callable[[str], None] | None = None,
         stream: bool = False,
+        harness: Any = None,
     ) -> PipelineResult:
         """
         Jalankan full pipeline untuk satu turn.
@@ -178,6 +179,7 @@ class PipelineExecutor:
         """
         state  = self._wm.get_or_create(session_id, turn_id, goal=user_input)
         result = PipelineResult(resumed_from_stage=state.stage.value)
+        self._usage = [0, 0]
 
         logger.info(
             "[pipeline] Start session=%s turn=%s stage=%s model=%s",
@@ -212,6 +214,7 @@ class PipelineExecutor:
                     stream=stream,
                     on_content_chunk=on_content_chunk,
                     on_thinking_chunk=on_thinking_chunk,
+                    harness=harness,
                 )
                 result.content                  = exec_result.get("content", "")
                 result.thinking                 = exec_result.get("thinking", "")
@@ -219,7 +222,11 @@ class PipelineExecutor:
                 result.total_completion_tokens += exec_result.get("completion_tokens", 0)
                 result.iterations              += exec_result.get("iterations", 0)
                 result.tools_executed           = [t.to_dict() for t in state.tools_done]
+                result.tool_calls_history       = exec_result.get("tool_calls_history", [])
 
+            # PLAN and COMPILE cost tokens too; leaving them out understated usage.
+            result.total_prompt_tokens     += self._usage[0]
+            result.total_completion_tokens += self._usage[1]
             result.stage_reached = state.stage.value
             self._wm.finish(state)
 
@@ -274,15 +281,11 @@ class PipelineExecutor:
         """Jalankan web_search untuk setiap query yang belum dikerjakan."""
         logger.info("[pipeline] SEARCH — %d queries", len(state.search_queries))
 
-        web_tool = self._tools.get("web_search")
-        if web_tool is None:
+        if not self._tools.has_tool("web_search"):
             logger.warning("[pipeline] web_search tool not registered, skipping SEARCH")
             state.stage = AgentStage.COMPILE
             self._wm.save(state)
             return
-
-        executor = web_tool.executor
-        is_async = web_tool.is_async
 
         done_queries = {r.query for r in state.web_results}
 
@@ -292,9 +295,8 @@ class PipelineExecutor:
                 continue
 
             try:
-                raw_result = executor({"query": query, "max_results": 4})
-                if is_async:
-                    raw_result = await raw_result
+                # Through the registry, so results get the guard's policy and redaction.
+                raw_result = await self._tools.execute("web_search", {"query": query, "max_results": 4})
 
                 if isinstance(raw_result, dict) and raw_result.get("ok") is False:
                     logger.warning(
@@ -348,6 +350,7 @@ class PipelineExecutor:
         stream: bool,
         on_content_chunk: Callable[[str], None] | None,
         on_thinking_chunk: Callable[[str], None] | None,
+        harness: Any = None,
     ) -> dict[str, Any]:
         """
         Jalankan agent loop utama dengan working memory disuntikkan ke messages.
@@ -366,6 +369,7 @@ class PipelineExecutor:
             api_client=self._api,
             tool_registry=self._tools,
             max_iterations=_TOOL_MAX_CALLS,
+            harness=harness,
         )
 
         loop_result = await loop.run(
@@ -400,6 +404,7 @@ class PipelineExecutor:
             "prompt_tokens":     loop_result.total_prompt_tokens,
             "completion_tokens": loop_result.total_completion_tokens,
             "iterations":        loop_result.iterations,
+            "tool_calls_history": loop_result.tool_calls_history,
         }
 
     # ------------------------------------------------------------------ #
@@ -421,6 +426,8 @@ class PipelineExecutor:
             stream=False,
         )
         parsed = ResponseHandler.handle(resp)
+        self._usage[0] += parsed.prompt_tokens
+        self._usage[1] += parsed.completion_tokens
         return parsed.content or ""
 
 
@@ -435,9 +442,10 @@ def _extract_json(text: str) -> dict[str, Any] | None:
     if not match:
         return None
     try:
-        return json.loads(match.group())
+        parsed = json.loads(match.group())
     except json.JSONDecodeError:
         return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _parse_web_results(query: str, raw: Any) -> list[WebResult]:
@@ -461,8 +469,8 @@ def _parse_web_results(query: str, raw: Any) -> list[WebResult]:
                     results.append(WebResult(
                         query=query,
                         title=item.get("title", ""),
-                        url=item.get("url", item.get("link", "")),
-                        snippet=item.get("snippet", item.get("body", ""))[:400],
+                        url=str(item.get("url") or item.get("link") or ""),
+                        snippet=str(item.get("snippet") or item.get("body") or "")[:400],
                     ))
         elif raw.get("snippet"):
             results.append(WebResult(

@@ -89,6 +89,8 @@ async def execute_command(
             "duration": round(result.duration, 3),
             "timed_out": result.timed_out,
             "cwd": cwd,
+            # Explains failures such as "no route to host" or "read-only file system".
+            "sandbox": result.sandbox,
         }
 
     except Exception as e:

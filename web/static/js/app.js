@@ -1,241 +1,190 @@
 (() => {
   'use strict';
-  const $ = id => document.getElementById(id);
-  const esc = v => { const d = document.createElement('div'); d.textContent = String(v ?? ''); return d.innerHTML; };
-  const md = t => window.marked ? window.marked.parse(t || '') : esc(t).replace(/\n/g, '<br>');
-  const done = s => ['completed', 'failed', 'cancelled'].includes(s);
 
-  const S = {
-    models: [], byId: {}, current: null, session: null, ws: null,
-    attachments: [], busy: false, features: {},
-    teams: [], team: null, members: [], lead: null, selected: null, run: null, events: null,
+  const $ = id => document.getElementById(id);
+  const esc = value => {
+    const box = document.createElement('div');
+    box.textContent = String(value ?? '');
+    return box.innerHTML;
+  };
+  const store = {
+    get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+    set(key, value) { try { localStorage.setItem(key, value); } catch { /* private window */ } },
+    remove(key) { try { localStorage.removeItem(key); } catch { /* private window */ } },
   };
 
-  function toast(msg) {
-    const t = $('toast'); t.textContent = msg; t.classList.remove('hidden');
-    clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.add('hidden'), 3500);
+  const ICONS = {
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    x: '<path d="M6 6l12 12M18 6 6 18"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+    clip: '<path d="m21 11-9.2 9.2a6 6 0 0 1-8.5-8.5l8.6-8.5a4 4 0 0 1 5.7 5.6l-8.6 8.5a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
+    send: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+    stop: '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/>',
+    team: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3.2 3.2 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6"/>',
+    chat: '<path d="M4 5h16v11H9l-5 4z"/>',
+    theme: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/>',
+    layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
+    chevron: '<path d="m9 6 6 6-6 6"/>',
+    trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+  };
+  const icon = (name, size = 18) =>
+    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+  document.querySelectorAll('[data-icon]').forEach(el => { el.insertAdjacentHTML('afterbegin', icon(el.dataset.icon)); });
+
+  if (window.DOMPurify) {
+    window.DOMPurify.addHook('afterSanitizeAttributes', node => {
+      if (node.tagName === 'A') { node.setAttribute('target', '_blank'); node.setAttribute('rel', 'noopener noreferrer'); }
+    });
+  }
+  // Model output can carry text from web pages, so it never reaches innerHTML unsanitized.
+  const md = text => (window.marked && window.DOMPurify)
+    ? window.DOMPurify.sanitize(window.marked.parse(text || ''))
+    : esc(text).replace(/\n/g, '<br>');
+
+  const S = {
+    models: [], byId: {}, model: 'auto', session: null, ws: null, busy: false,
+    attachments: [], features: {}, sessions: [], stopTurn: null,
+    teams: [], team: null, members: [], lead: null, reviewer: null, selected: null, run: null, events: null, templates: [],
+  };
+
+  /* ── Helpers ──────────────────────────────────────── */
+  function toast(message) {
+    const el = $('toast');
+    el.textContent = message;
+    el.classList.remove('hidden');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => el.classList.add('hidden'), 3500);
   }
 
-  /* ---------- Layout (mobile drawers & desktop collapse) ---------- */
-  function closeDrawers() {
-    document.querySelectorAll('.team-panel, .inspector-panel, .session-panel').forEach(p => p.classList.remove('open'));
-    $('scrim').classList.add('hidden');
-  }
-  function setDrawer(which, open) {
-    const panel = which ? $(which + '-panel') : null;
-    if (panel) panel.classList.toggle('open', open);
-    $('scrim').classList.toggle('hidden', !document.querySelector('.team-panel.open, .inspector-panel.open, .session-panel.open'));
-  }
-
-  function toggleDesktopSidebar() {
-    if (window.innerWidth < 1024) {
-      setDrawer('session', !$('session-panel').classList.contains('open'));
-    } else {
-      const panel = $('session-panel');
-      const isCollapsed = panel.classList.toggle('desktop-collapsed');
-      localStorage.setItem('sidebar_collapsed', isCollapsed ? '1' : '0');
+  async function api(url, options = {}) {
+    const response = await fetch(url, options);
+    let data = {};
+    try { data = await response.json(); } catch { /* no body */ }
+    if (!response.ok) {
+      const detail = Array.isArray(data.detail) ? data.detail.map(e => e.msg).join(', ') : data.detail;
+      throw new Error(detail || `Permintaan gagal (${response.status})`);
     }
+    return data;
   }
-
-  $('scrim').onclick = closeDrawers;
-  if ($('toggle-sidebar')) $('toggle-sidebar').onclick = toggleDesktopSidebar;
-  $('open-teams').onclick = () => setDrawer('team', true);
-  $('close-teams').onclick = closeDrawers;
-  $('close-inspector').onclick = closeDrawers;
-  $('open-sessions').onclick = () => setDrawer('session', true);
-  $('close-sessions').onclick = closeDrawers;
-  window.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeDrawers();
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
-      e.preventDefault();
-      toggleDesktopSidebar();
-    }
+  const post = (url, body = {}) => api(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
 
-  async function j(url, opts = {}) {
-    const r = await fetch(url, opts);
-    let d = {};
-    try { d = await r.json(); } catch (_) { /* no body */ }
-    if (!r.ok) throw new Error(Array.isArray(d.detail) ? d.detail.map(e => e.msg).join(', ') : (d.detail || `Request failed (${r.status})`));
-    return d;
-  }
-  const post = (url, body) => j(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const shortModel = id => String(id || '').split('/').pop();
+  const formatTokens = n => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n || 0));
+  const formatSeconds = ms => {
+    const seconds = Math.round((ms || 0) / 1000);
+    if (seconds < 1) return '<1d';
+    return seconds >= 60 ? `${Math.floor(seconds / 60)}m ${seconds % 60}d` : `${seconds}d`;
+  };
 
-  /* ---------- Tabs ---------- */
-  function tabAvailable(name) {
-    const btn = document.querySelector(`.tab[data-tab="${name}"]`);
-    if (!btn) return false;
-    return !btn.dataset.feature || !S.features || S.features[btn.dataset.feature] !== false;
+  /* ── Drawers and theme ────────────────────────────── */
+  function closeDrawers() {
+    $('rail').classList.remove('open');
+    $('inspector').classList.remove('open');
+    $('scrim').classList.add('hidden');
+  }
+  function openDrawer(id) {
+    $(id).classList.add('open');
+    $('scrim').classList.remove('hidden');
+  }
+  $('open-rail').onclick = () => openDrawer('rail');
+  $('close-rail').onclick = closeDrawers;
+  $('open-inspector').onclick = () => { openDrawer('inspector'); loadStack(); };
+  $('close-inspector').onclick = closeDrawers;
+  $('scrim').onclick = closeDrawers;
+  window.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawers(); });
+
+  const THEMES = { system: 'Tema: ikuti sistem', light: 'Tema: terang', dark: 'Tema: gelap' };
+  function applyTheme(name) {
+    if (name === 'system') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.dataset.theme = name;
+    $('theme-label').textContent = THEMES[name];
+  }
+  let theme = THEMES[store.get('theme')] ? store.get('theme') : 'system';
+  applyTheme(theme);
+  $('toggle-theme').onclick = () => {
+    const order = Object.keys(THEMES);
+    theme = order[(order.indexOf(theme) + 1) % order.length];
+    store.set('theme', theme);
+    applyTheme(theme);
+  };
+
+  /* ── Models ───────────────────────────────────────── */
+  function fillModelOptions(select, selected, withAuto) {
+    const groups = {};
+    S.models.forEach(m => { (groups[m.provider] ||= []).push(m); });
+    const options = Object.entries(groups).map(([provider, list]) =>
+      `<optgroup label="${esc(provider)}">${list.map(m =>
+        `<option value="${esc(m.id)}" ${m.id === selected ? 'selected' : ''}>${esc(m.display_name)}</option>`).join('')}</optgroup>`).join('');
+    select.innerHTML = (withAuto ? `<option value="auto" ${selected === 'auto' ? 'selected' : ''}>Auto (pilih sesuai tugas)</option>` : '') + options;
   }
 
-  function showTab(name) {
-    closeDrawers();
-    if (!tabAvailable(name)) name = 'chat';
-    document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
-    $('view-' + name).classList.remove('hidden');
-    document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-    localStorage.setItem('tab', name);
-    if (name === 'canvas') loadTeams();
-  }
-  document.querySelectorAll('.tab').forEach(b => b.onclick = () => showTab(b.dataset.tab));
-
-  /* ---------- Features ---------- */
-  function applyFeatures(features) {
-    S.features = features || {};
-    document.querySelectorAll('.tab[data-feature]').forEach(b => {
-      const on = S.features[b.dataset.feature] !== false;
-      b.classList.toggle('hidden', !on);
-    });
-    const canvas = $('view-canvas');
-    if (canvas && S.features.teams === false) canvas.classList.add('hidden');
-  }
-
-  /* ---------- Models ---------- */
-  async function loadModels(refresh = false) {
-    const data = refresh ? (await post('/api/models/refresh', {}), await j('/api/models')) : await j('/api/models');
-    S.models = []; S.byId = {};
-    const sel = $('model-select'); sel.innerHTML = '';
-    for (const [provider, list] of Object.entries(data.models)) {
-      const g = document.createElement('optgroup'); g.label = provider;
-      for (const m of list) {
-        S.models.push(m); S.byId[m.id] = m;
-        const o = document.createElement('option'); o.value = m.id; o.textContent = `${m.display_name} (${m.context_window_display})`;
-        g.appendChild(o);
-      }
-      sel.appendChild(g);
-    }
-    const saved = localStorage.getItem('model');
-    S.current = S.byId[saved] ? saved : data.default_model;
-    sel.value = S.current;
-    if (S.session) await post('/api/model/select', { session_id: S.session, model_id: S.current }).catch(() => {});
-    updateHint();
-    if (S.team !== null) renderInspector();
-    toast(`${data.total} models loaded`);
+  async function loadModels() {
+    const data = await api('/api/models');
+    S.models = Object.values(data.models).flat();
+    S.byId = Object.fromEntries(S.models.map(m => [m.id, m]));
+    const saved = store.get('model');
+    S.model = saved === 'auto' || S.byId[saved] ? saved : data.default_model;
+    fillModelOptions($('model-select'), S.model, true);
   }
 
   $('model-select').onchange = async e => {
-    S.current = e.target.value; localStorage.setItem('model', S.current);
-    try { await post('/api/model/select', { session_id: S.session, model_id: S.current }); } catch (err) { toast(err.message); }
-    updateHint();
+    S.model = e.target.value;
+    store.set('model', S.model);
+    try { await post('/api/model/select', { session_id: S.session, model_id: S.model }); } catch (err) { toast(err.message); }
   };
-  $('refresh-models').onclick = () => loadModels(true).catch(e => toast(e.message));
 
-  function updateHint() {
-    const m = S.byId[S.current];
-    const native = m ? m.uploads.filter(u => u !== 'text') : [];
-    $('upload-hint').textContent = 'Documents become Markdown. Audio and video are transcribed. Images are sent to vision models.'
-      + (native.length ? ` Natively supports: ${native.join(', ')}.` : '');
+  /* ── Sessions ─────────────────────────────────────── */
+  function groupLabel(timestamp) {
+    const days = Math.floor((Date.now() - timestamp * 1000) / 86400000);
+    if (days < 1) return 'Hari ini';
+    if (days < 2) return 'Kemarin';
+    if (days < 7) return '7 hari terakhir';
+    return 'Lebih lama';
   }
 
-  /* ---------- Attachments ---------- */
-  function renderChips() {
-    $('chips').innerHTML = S.attachments.map((a, i) =>
-      `<span class="chip">${esc(a.name)} · ${a.chars.toLocaleString()} chars${a.truncated ? ' (cut)' : ''}<button data-rm="${i}">×</button></span>`).join('');
-    document.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => { S.attachments.splice(+b.dataset.rm, 1); renderChips(); });
-  }
-  $('file-input').onchange = async e => {
-    for (const f of e.target.files) {
-      try {
-        const r = await fetch('/api/upload?name=' + encodeURIComponent(f.name), { method: 'POST', body: f });
-        const d = await r.json();
-        if (!r.ok) throw new Error(d.detail || 'Upload failed');
-        S.attachments.push(d);
-      } catch (err) { toast(`${f.name}: ${err.message}`); }
+  function renderSessions() {
+    const query = $('session-search').value.trim().toLowerCase();
+    const list = $('session-list');
+    const shown = S.sessions.filter(s => !query || (s.title || '').toLowerCase().includes(query));
+    if (!shown.length) {
+      list.innerHTML = `<p class="session-none">${query ? 'Tidak ada yang cocok.' : 'Belum ada chat.'}</p>`;
+      return;
     }
-    e.target.value = ''; renderChips();
-  };
-
-  /* ---------- Code Blocks Enhancement ---------- */
-  function enhanceCodeBlocks(container) {
-    if (!container) return;
-    container.querySelectorAll('pre code').forEach(codeBlock => {
-      if (window.hljs) window.hljs.highlightElement(codeBlock);
-      const pre = codeBlock.parentElement;
-      if (pre && !pre.closest('.code-wrapper')) {
-        const wrapper = document.createElement('div');
-        wrapper.className = 'code-wrapper';
-        const langMatch = (codeBlock.className || '').match(/language-([a-z0-9_-]+)/i);
-        const lang = langMatch ? langMatch[1] : 'code';
-        const header = document.createElement('div');
-        header.className = 'code-header';
-        header.innerHTML = `<span>${esc(lang)}</span><button class="code-copy-btn" type="button">Copy</button>`;
-        header.querySelector('.code-copy-btn').onclick = async (e) => {
-          try {
-            await navigator.clipboard.writeText(codeBlock.innerText);
-            e.target.textContent = 'Copied!';
-            setTimeout(() => { e.target.textContent = 'Copy'; }, 2000);
-          } catch (_) {}
-        };
-        pre.parentNode.insertBefore(wrapper, pre);
-        wrapper.appendChild(header);
-        wrapper.appendChild(pre);
-      }
+    let html = '';
+    let group = '';
+    for (const s of shown) {
+      const label = groupLabel(s.updated_at);
+      if (label !== group) { html += `<div class="session-group">${label}</div>`; group = label; }
+      html += `<div class="session ${s.session_id === S.session ? 'active' : ''}" data-id="${esc(s.session_id)}">
+        <button class="session-open" title="${esc(s.title)}">${esc(s.title || 'Chat')}</button>
+        <button class="session-del" aria-label="Hapus chat ${esc(s.title)}">${icon('trash', 14)}</button>
+      </div>`;
+    }
+    list.innerHTML = html;
+    list.querySelectorAll('.session').forEach(item => {
+      const id = item.dataset.id;
+      item.querySelector('.session-open').onclick = () => openSession(id);
+      item.querySelector('.session-del').onclick = () => deleteSession(id);
     });
   }
+  $('session-search').oninput = renderSessions;
 
-  /* ---------- Chat UI ---------- */
-  function addMsg(role) {
-    $('empty').classList.add('hidden');
-    const el = document.createElement('div');
-    el.className = 'msg ' + (role === 'user' ? 'msg-user-row' : 'msg-assistant-row');
-    if (role === 'user') {
-      el.innerHTML = `
-        <div class="flex items-start justify-end gap-2 max-w-full">
-          <div class="msg-user max-w-[85%] sm:max-w-[78%] leading-relaxed text-sm"></div>
-          <div class="shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-stone-200 text-stone-700 flex items-center justify-center font-bold text-[10px] sm:text-xs select-none mt-0.5">You</div>
-        </div>`;
-    } else {
-      el.innerHTML = `
-        <div class="flex items-start gap-2 sm:gap-3 w-full max-w-full min-w-0">
-          <div class="assistant-avatar shrink-0 w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-stone-900 text-stone-100 flex items-center justify-center font-black text-[10px] sm:text-xs select-none shadow-2xs mt-0.5">S</div>
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-1.5 sm:gap-2 mb-1">
-              <span class="font-semibold text-xs text-stone-800">SquidWings</span>
-              <span class="meta-tag text-[10px] sm:text-[11px] text-stone-400 font-mono truncate"></span>
-            </div>
-            <div class="process-card mb-2.5 sm:mb-3 p-2.5 sm:p-3 rounded-xl border border-stone-200 bg-stone-50/80 transition-all max-w-full">
-              <div class="flex items-center justify-between gap-1.5">
-                <div class="flex items-center gap-1.5 min-w-0">
-                  <span class="relative flex h-2 w-2 shrink-0">
-                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                    <span class="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-                  </span>
-                  <span class="process-status text-[11px] sm:text-xs font-medium text-stone-700 truncate">Preparing context & routing...</span>
-                </div>
-                <span class="process-timer font-mono text-[10px] sm:text-xs text-stone-500 bg-white px-1.5 sm:px-2 py-0.5 rounded-full border border-stone-200 shrink-0">0.0s</span>
-              </div>
-              <div class="process-shimmer mt-2 sm:mt-2.5 flex items-center gap-1.5">
-                <div class="h-1.5 w-10 sm:w-12 rounded-full bg-stone-200 animate-pulse"></div>
-                <div class="h-1.5 w-16 sm:w-24 rounded-full bg-stone-200 animate-pulse"></div>
-                <div class="h-1.5 w-12 sm:w-16 rounded-full bg-stone-200 animate-pulse"></div>
-              </div>
-              <details class="think-details mt-2 sm:mt-2.5 border-t border-stone-200/60 pt-2 hidden" open>
-                <summary class="cursor-pointer text-[11px] font-medium text-stone-500 hover:text-stone-800 select-none flex items-center justify-between">
-                  <span class="flex items-center gap-1.5 truncate">
-                    <span class="toggle-icon inline-block text-[10px]">▶</span>
-                    <span>Reasoning Steps</span>
-                  </span>
-                  <span class="think-badge text-[10px] text-stone-400 font-mono shrink-0">streaming</span>
-                </summary>
-                <pre class="think-pre text-[11px] text-stone-600 font-mono bg-white p-2 sm:p-2.5 rounded-lg border border-stone-200 mt-2 max-h-48 sm:max-h-56 overflow-y-auto whitespace-pre-wrap leading-relaxed select-text"></pre>
-              </details>
-            </div>
-            <div class="prose-out text-stone-900 leading-relaxed text-sm"></div>
-            <div class="footer-meta flex flex-wrap items-center gap-1.5 sm:gap-2 mt-2.5 pt-2 border-t border-stone-100 text-[10px] sm:text-xs text-stone-400 hidden">
-              <span class="model-badge px-1.5 py-0.5 rounded-md bg-stone-100 text-stone-600 font-mono text-[10px] sm:text-[11px] truncate max-w-[140px] sm:max-w-none"></span>
-              <span class="token-badge font-mono text-[10px] sm:text-[11px]"></span>
-              <span class="latency-badge font-mono text-[10px] sm:text-[11px]"></span>
-              <button class="copy-resp-btn ml-auto text-[11px] text-stone-500 hover:text-stone-800 flex items-center gap-1 px-1.5 py-0.5 rounded-md hover:bg-stone-100 transition-colors cursor-pointer" type="button" title="Copy response">
-                <svg class="w-3 h-3 sm:w-3.5 sm:h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
-                <span>Copy</span>
-              </button>
-            </div>
-          </div>
-        </div>`;
-    }
-    $('thread').appendChild(el);
-    $('messages').scrollTop = $('messages').scrollHeight;
-    return el;
+  async function loadSessions() {
+    try { S.sessions = (await api('/api/sessions')).sessions || []; } catch (e) { toast(e.message); }
+    renderSessions();
+  }
+
+  async function deleteSession(id) {
+    const target = S.sessions.find(s => s.session_id === id);
+    if (!confirm(`Hapus "${target?.title || 'chat ini'}"? Riwayat, folder, vault, dan graph chat ini ikut terhapus.`)) return;
+    try {
+      await post(`/api/session/${encodeURIComponent(id)}/delete`);
+      if (id === S.session) await newChat();
+      await loadSessions();
+    } catch (e) { toast(e.message); }
   }
 
   function clearThread() {
@@ -243,511 +192,837 @@
     $('empty').classList.remove('hidden');
   }
 
-  function renderHistory(messages) {
+  async function newChat() {
+    if (S.busy) { toast('Tunggu balasan selesai, atau tekan stop.'); return; }
+    const data = await api('/api/session/new');
+    S.session = data.session_id;
+    store.set('session', S.session);
+    $('chat-title').textContent = 'Chat baru';
     clearThread();
-    for (const m of messages || []) {
-      if (m.role === 'user') {
-        addMsg('user').querySelector('.msg-user').textContent = m.content;
-      } else if (m.role === 'assistant') {
-        const el = addMsg('assistant');
-        const out = el.querySelector('.prose-out');
-        const proc = el.querySelector('.process-card');
-        if (proc) proc.classList.add('hidden');
-        out.innerHTML = md(m.content);
-        enhanceCodeBlocks(out);
-        const footer = el.querySelector('.footer-meta');
-        if (footer) {
-          footer.classList.remove('hidden');
-          const modelBadge = footer.querySelector('.model-badge');
-          if (modelBadge) modelBadge.textContent = m.model_used || S.current;
-          const tokenBadge = footer.querySelector('.token-badge');
-          if (tokenBadge && m.token_count) tokenBadge.textContent = `${m.token_count.toLocaleString()} tokens`;
-          const copyBtn = footer.querySelector('.copy-resp-btn');
-          if (copyBtn) {
-            copyBtn.onclick = async () => {
-              try {
-                await navigator.clipboard.writeText(m.content || '');
-                copyBtn.innerHTML = '<span>✓ Copied</span>';
-                setTimeout(() => {
-                  copyBtn.innerHTML = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span>Copy</span>';
-                }, 2000);
-              } catch (_) {}
-            };
-          }
-        }
-      }
-    }
-    $('messages').scrollTop = $('messages').scrollHeight;
+    await post('/api/model/select', { session_id: S.session, model_id: S.model }).catch(() => {});
+    showView('chat');
+    closeDrawers();
+    renderSessions();
+    loadStack();
+    $('input').focus();
   }
-
-  function fmtWhen(ts) {
-    if (!ts) return '';
-    const d = new Date(ts * 1000), now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
-    return sameDay
-      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  }
-
-  async function loadSessions() {
-    let sessions = [];
-    try { sessions = (await j('/api/sessions')).sessions || []; } catch (e) { toast(e.message); }
-    const list = $('session-list');
-    list.innerHTML = sessions.length ? '' : '<p class="px-2 py-3 text-xs text-stone-400">No previous chats yet.</p>';
-    for (const s of sessions) {
-      const item = document.createElement('div');
-      item.className = 'sess-item' + (s.session_id === S.session ? ' active' : '');
-      item.innerHTML = `<button class="sess-open cursor-pointer" title="${esc(s.title)}">
-          <div class="sess-title">${esc(s.title || 'Chat')}</div>
-          <div class="sess-meta">${esc(fmtWhen(s.updated_at))} · ${s.message_count} msg</div>
-        </button>
-        <button class="sess-del cursor-pointer" title="Delete chat" aria-label="Delete chat">×</button>`;
-      item.querySelector('.sess-open').onclick = () => openSession(s.session_id);
-      item.querySelector('.sess-del').onclick = async ev => {
-        ev.stopPropagation();
-        if (!confirm(`Delete chat "${s.title}"? This removes the saved history.`)) return;
-        try {
-          await post(`/api/session/${encodeURIComponent(s.session_id)}/delete`, {});
-          if (s.session_id === S.session) await newChat(false);
-          else await loadSessions();
-        } catch (e) { toast(e.message); }
-      };
-      list.appendChild(item);
-    }
-  }
+  $('new-chat').onclick = () => newChat().catch(e => toast(e.message));
 
   async function openSession(id) {
-    if (S.busy) { toast('Wait for the current reply to finish.'); return; }
+    if (S.busy) { toast('Tunggu balasan selesai, atau tekan stop.'); return; }
     try {
-      const d = await j(`/api/session/${encodeURIComponent(id)}/messages`);
+      const data = await api(`/api/session/${encodeURIComponent(id)}/messages`);
       S.session = id;
-      localStorage.setItem('session', id);
-      $('chat-title').textContent = d.title || 'Chat';
-      renderHistory(d.messages);
-      if (d.model_used && S.byId[d.model_used]) {
-        S.current = d.model_used;
-        $('model-select').value = d.model_used;
-        await post('/api/model/select', { session_id: id, model_id: d.model_used }).catch(() => {});
-      }
-      if (window.innerWidth < 1024) closeDrawers();
-      await loadSessions();
-    } catch (e) { toast(e.message); }
-  }
-
-  async function newChat(reload = true) {
-    if (S.busy) { toast('Wait for the current reply to finish.'); return; }
-    try {
-      const s = await j('/api/session/new');
-      S.session = s.session_id;
-      localStorage.setItem('session', s.session_id);
-      $('chat-title').textContent = 'New chat';
+      store.set('session', id);
+      $('chat-title').textContent = data.title || 'Chat';
       clearThread();
-      if (S.current) await post('/api/model/select', { session_id: S.session, model_id: S.current }).catch(() => {});
-      if (reload) await loadSessions();
+      for (const message of data.messages || []) {
+        if (message.role === 'user') addUser(message.content);
+        else if (message.role === 'assistant') addHistoryAnswer(message);
+      }
+      scrollDown(true);
+      showView('chat');
+      closeDrawers();
+      renderSessions();
+      loadStack();
     } catch (e) { toast(e.message); }
   }
 
-  $('new-chat').onclick = () => newChat();
+  /* ── Thread ───────────────────────────────────────── */
+  const scroller = $('scroller');
+  const nearBottom = () => scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120;
+  const scrollDown = force => { if (force || nearBottom()) scroller.scrollTop = scroller.scrollHeight; };
 
-  function connectWS() {
-    return new Promise((resolve, reject) => {
-      const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/chat');
-      ws.onopen = () => resolve(ws);
-      ws.onerror = () => reject(new Error('WebSocket connection failed'));
-      ws.onclose = () => { S.ws = null; };
-      S.ws = ws;
+  function addUser(text) {
+    $('empty').classList.add('hidden');
+    const row = document.createElement('div');
+    row.className = 'turn-user';
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    bubble.textContent = text;
+    row.appendChild(bubble);
+    $('thread').appendChild(row);
+  }
+
+  function enhanceCode(container) {
+    container.querySelectorAll('pre > code').forEach(code => {
+      const pre = code.parentElement;
+      if (pre.parentElement.classList.contains('code')) return;
+      if (window.hljs) window.hljs.highlightElement(code);
+      const language = (code.className.match(/language-([\w-]+)/) || [])[1] || 'code';
+      const wrap = document.createElement('div');
+      wrap.className = 'code';
+      wrap.innerHTML = `<div class="code-head"><span>${esc(language)}</span><button class="code-copy" type="button">Salin</button></div>`;
+      wrap.querySelector('button').onclick = e => copyText(code.textContent, e.currentTarget);
+      pre.replaceWith(wrap);
+      wrap.appendChild(pre);
     });
   }
 
-  /* Prompt suggestions */
-  document.querySelectorAll('.prompt-suggestion').forEach(btn => {
-    btn.onclick = () => {
-      const p = btn.dataset.prompt || btn.innerText.trim();
-      $('input').value = p;
-      autosize();
-      send();
-    };
-  });
-
-  async function send() {
-    const text = $('input').value.trim();
-    if ((!text && !S.attachments.length) || S.busy) return;
-    S.busy = true; $('send').disabled = true;
-    const files = S.attachments.map(a => `<file name="${a.name}">\n${a.markdown}\n</file>`).join('\n\n');
-    const full = files ? `${files}\n\n${text}` : text;
-    const label = (S.attachments.length ? S.attachments.map(a => `[${a.name}] `).join('') : '') + text;
-    const images = S.attachments.map(a => a.image_data_url).filter(Boolean);
-    S.attachments = []; renderChips(); $('input').value = ''; autosize();
-
-    addMsg('user').querySelector('.msg-user').textContent = label;
-    if ($('chat-title').textContent === 'New chat') {
-      const t = label.replace(/\s+/g, ' ').trim();
-      $('chat-title').textContent = t.length > 60 ? t.slice(0, 60) + '…' : t;
-    }
-
-    const el = addMsg('assistant');
-    const out = el.querySelector('.prose-out');
-    const processCard = el.querySelector('.process-card');
-    const timerEl = el.querySelector('.process-timer');
-    const statusEl = el.querySelector('.process-status');
-    const shimmerEl = el.querySelector('.process-shimmer');
-    const thinkDetails = el.querySelector('.think-details');
-    const thinkPre = el.querySelector('.think-pre');
-    const thinkBadge = el.querySelector('.think-badge');
-    const metaTag = el.querySelector('.meta-tag');
-    const footerMeta = el.querySelector('.footer-meta');
-
-    let content = '', hint = '', thinkDuration = 0;
-    const startTime = performance.now();
-    const timerInterval = setInterval(() => {
-      const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
-      if (timerEl) timerEl.textContent = elapsed + 's';
-    }, 100);
-
+  async function copyText(text, button) {
     try {
-      if (!S.ws || S.ws.readyState !== 1) await connectWS();
-      S.ws.onmessage = ev => {
-        const m = JSON.parse(ev.data);
-        if (m.type === 'meta' && m.event === 'classified') {
-          hint = `${m.task_type} · ${m.difficulty}${m.continuation ? ' · lanjutan' : ''}`;
-          if (metaTag) metaTag.textContent = hint;
-          const shortModel = (m.model || S.current || '').split('/').pop();
-          if (statusEl) statusEl.textContent = `Routing: ${shortModel} (${m.difficulty})...`;
-        }
-        else if (m.type === 'thinking') {
-          if (shimmerEl) shimmerEl.classList.add('hidden');
-          if (statusEl) statusEl.textContent = 'Reasoning process...';
-          if (thinkDetails) thinkDetails.classList.remove('hidden');
-          if (thinkPre) {
-            thinkPre.textContent += m.content;
-            thinkPre.scrollTop = thinkPre.scrollHeight;
-          }
-        }
-        else if (m.type === 'content') {
-          if (shimmerEl) shimmerEl.classList.add('hidden');
-          if (statusEl) statusEl.textContent = 'Generating final answer...';
-          if (thinkDetails && thinkDetails.open && !thinkDuration) {
-            thinkDuration = ((performance.now() - startTime) / 1000).toFixed(1);
-            if (thinkBadge) thinkBadge.textContent = `${thinkDuration}s`;
-            thinkDetails.open = false;
-          }
-          content += m.content;
-          out.innerHTML = md(content);
-          enhanceCodeBlocks(out);
-        }
-        else if (m.type === 'error') {
-          clearInterval(timerInterval);
-          if (processCard) processCard.classList.add('hidden');
-          out.innerHTML = `<div class="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs">${esc(m.content)}</div>`;
-          finish();
-        }
-        else if (m.type === 'done') {
-          clearInterval(timerInterval);
-          const totalSec = (m.latency_ms / 1000).toFixed(1);
-          if (processCard) {
-            if (thinkPre && thinkPre.textContent.trim()) {
-              if (statusEl) statusEl.textContent = `Thought process completed (${thinkDuration || totalSec}s)`;
-              if (shimmerEl) shimmerEl.classList.add('hidden');
-            } else {
-              processCard.classList.add('hidden');
-            }
-          }
-          if (footerMeta) {
-            footerMeta.classList.remove('hidden');
-            const modelBadge = footerMeta.querySelector('.model-badge');
-            if (modelBadge) modelBadge.textContent = m.model_used;
-            const tokenBadge = footerMeta.querySelector('.token-badge');
-            if (tokenBadge) tokenBadge.textContent = `${(m.total_tokens || 0).toLocaleString()} tokens`;
-            const latBadge = footerMeta.querySelector('.latency-badge');
-            if (latBadge) latBadge.textContent = `${totalSec}s`;
-            const copyBtn = footerMeta.querySelector('.copy-resp-btn');
-            if (copyBtn) {
-              copyBtn.onclick = async () => {
-                try {
-                  await navigator.clipboard.writeText(content);
-                  copyBtn.innerHTML = '<span>✓ Copied</span>';
-                  setTimeout(() => {
-                    copyBtn.innerHTML = '<svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg><span>Copy</span>';
-                  }, 2000);
-                } catch (_) {}
-              };
-            }
-          }
-          enhanceCodeBlocks(out);
-          finish();
-          loadSessions();
-        }
-        $('messages').scrollTop = $('messages').scrollHeight;
-      };
-      S.ws.send(JSON.stringify({ message: full, session_id: S.session, images }));
-    } catch (err) {
-      clearInterval(timerInterval);
-      if (processCard) processCard.classList.add('hidden');
-      out.innerHTML = `<div class="p-3 rounded-xl border border-red-200 bg-red-50 text-red-700 text-xs">${esc(err.message)}</div>`;
-      finish();
-    }
+      await navigator.clipboard.writeText(text);
+      const before = button.textContent;
+      button.textContent = 'Tersalin';
+      setTimeout(() => { button.textContent = before; }, 1600);
+    } catch { toast('Tidak bisa menyalin.'); }
   }
 
-  function finish() {
-    S.busy = false;
-    $('send').disabled = false;
-    $('input').focus();
+  function addHistoryAnswer(message) {
+    const turn = createTurn();
+    turn.setContent(message.content);
+    turn.finish();
+    turn.foot({ model: message.model_used, tokens: message.token_count, text: message.content });
+  }
+
+  function createTurn() {
+    $('empty').classList.add('hidden');
+    const row = document.createElement('article');
+    row.className = 'turn-agent';
+    row.innerHTML = `
+      <div class="working"><span class="pulse"></span><span class="working-text">Menyiapkan</span></div>
+      <details class="steps hidden"><summary><span class="chev">${icon('chevron', 12)}</span><span class="steps-title"></span></summary>
+        <ul class="step-list"></ul><pre class="thinking hidden"></pre></details>
+      <div class="prose"></div>
+      <div class="turn-foot hidden"></div>`;
+    $('thread').appendChild(row);
+
+    const out = row.querySelector('.prose');
+    const steps = row.querySelector('.steps');
+    const stepList = row.querySelector('.step-list');
+    const thinking = row.querySelector('.thinking');
+    const working = row.querySelector('.working');
+    const workingText = row.querySelector('.working-text');
+    const open = new Map();
+    let toolCount = 0;
+    let content = '';
+    let pendingRender = 0;
+
+    const render = () => {
+      pendingRender = 0;
+      const stick = nearBottom();
+      out.innerHTML = md(content);
+      if (stick) scrollDown(true);
+    };
+
+    const updateTitle = () => {
+      const parts = [];
+      if (toolCount) parts.push(`${toolCount} langkah`);
+      if (thinking.textContent) parts.push('proses berpikir');
+      row.querySelector('.steps-title').textContent = parts.join(' · ');
+      steps.classList.toggle('hidden', !parts.length);
+    };
+
+    return {
+      row,
+      status(text) { workingText.textContent = text; },
+      thinking(chunk) {
+        thinking.classList.remove('hidden');
+        thinking.textContent += chunk;
+        workingText.textContent = 'Berpikir';
+        updateTitle();
+      },
+      content(chunk) {
+        working.classList.add('hidden');
+        content += chunk;
+        if (!pendingRender) pendingRender = requestAnimationFrame(render);
+      },
+      setContent(text) {
+        working.classList.add('hidden');
+        content = text;
+        render();
+        enhanceCode(out);
+      },
+      reset() {
+        content = '';
+        out.innerHTML = '';
+        working.classList.remove('hidden');
+        workingText.textContent = 'Memperbaiki hasil';
+      },
+      progress(event) {
+        if (event.kind === 'route') {
+          workingText.textContent = `Menunggu ${shortModel(event.model)}`;
+        } else if (event.kind === 'status') {
+          workingText.textContent = event.text || 'Bekerja';
+        } else if (event.kind === 'remembered') {
+          (event.items || []).forEach(item => toast(`Diingat: ${item}`));
+        } else if (event.kind === 'tool' && event.phase === 'start') {
+          working.classList.remove('hidden');
+          workingText.textContent = `Menjalankan ${event.name}`;
+          const li = document.createElement('li');
+          li.className = 'step';
+          li.innerHTML = `<span class="step-mark">·</span><span class="step-name">${esc(event.name)}</span><span class="step-detail">${esc(event.detail || '')}</span><span class="step-ms"></span>`;
+          stepList.appendChild(li);
+          open.set(`${event.name}:${event.detail || ''}`, li);
+          toolCount += 1;
+          steps.open = true;
+          updateTitle();
+          scrollDown();
+        } else if (event.kind === 'tool') {
+          const li = open.get(`${event.name}:${event.detail || ''}`);
+          open.delete(`${event.name}:${event.detail || ''}`);
+          if (li) {
+            const mark = li.querySelector('.step-mark');
+            mark.textContent = event.ok ? '✓' : '✗';
+            mark.classList.add(event.ok ? 'ok' : 'bad');
+            li.querySelector('.step-ms').textContent = `${event.ms}ms`;
+            if (!event.ok && event.error) li.insertAdjacentHTML('afterend', `<li class="step-error">${esc(event.error)}</li>`);
+          }
+          workingText.textContent = 'Menunggu model';
+        }
+      },
+      finish() {
+        if (pendingRender) { cancelAnimationFrame(pendingRender); render(); }
+        working.classList.add('hidden');
+        steps.open = false;
+        enhanceCode(out);
+      },
+      error(message) {
+        working.classList.add('hidden');
+        out.insertAdjacentHTML('beforeend', `<div class="notice">${esc(message)}</div>`);
+      },
+      stopped() {
+        working.classList.add('hidden');
+        out.insertAdjacentHTML('beforeend', '<div class="notice soft">Dihentikan.</div>');
+      },
+      foot({ model, tokens, ms, harness, text }) {
+        const foot = row.querySelector('.turn-foot');
+        const bits = [];
+        const stats = harness || {};
+        if (stats.unresolved && stats.unresolved.length) bits.push('<span class="badge warn">Belum terverifikasi</span>');
+        else if (stats.verified && stats.verified.length) bits.push(`<span class="badge ok" title="${esc(stats.verified.join(', '))}">✓ Terverifikasi</span>`);
+        if (model) bits.push(`<span>${esc(shortModel(model))}</span>`);
+        if (stats.escalated_to) bits.push(`<span>naik ke ${esc(shortModel(stats.escalated_to))}</span>`);
+        if (tokens) bits.push(`<span>${formatTokens(tokens)} token</span>`);
+        if (ms) bits.push(`<span>${formatSeconds(ms)}</span>`);
+        if (stats.skills_used && stats.skills_used.length) bits.push(`<span>skill ${esc(stats.skills_used.join(', '))}</span>`);
+        foot.innerHTML = `${bits.join('')}<button class="link-btn" type="button">Salin</button>`;
+        foot.querySelector('button').onclick = e => copyText(text || content, e.currentTarget);
+        foot.classList.remove('hidden');
+      },
+    };
+  }
+
+  /* ── Sending ──────────────────────────────────────── */
+  function connect() {
+    return new Promise((resolve, reject) => {
+      if (S.ws && S.ws.readyState === WebSocket.OPEN) { resolve(S.ws); return; }
+      const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+      const ws = new WebSocket(`${scheme}${location.host}/ws/chat`);
+      ws.onopen = () => { S.ws = ws; resolve(ws); };
+      ws.onerror = () => reject(new Error('Tidak bisa terhubung ke server.'));
+    });
+  }
+
+  function setBusy(busy) {
+    S.busy = busy;
+    const send = $('send');
+    send.classList.toggle('stop', busy);
+    send.setAttribute('aria-label', busy ? 'Hentikan' : 'Kirim');
+    send.innerHTML = icon(busy ? 'stop' : 'send');
+  }
+
+  async function sendMessage() {
+    const input = $('input');
+    const text = input.value.trim();
+    if ((!text && !S.attachments.length) || S.busy) return;
+
+    const files = S.attachments.map(a => `<file name="${a.name}">\n${a.markdown}\n</file>`).join('\n\n');
+    const full = files ? `${files}\n\n${text}` : text;
+    const label = S.attachments.map(a => `[${a.name}] `).join('') + text;
+    const images = S.attachments.map(a => a.image_data_url).filter(Boolean);
+    S.attachments = [];
+    renderChips();
+    input.value = '';
+    autosize();
+
+    addUser(label);
+    if ($('chat-title').textContent === 'Chat baru') $('chat-title').textContent = label.replace(/\s+/g, ' ').slice(0, 70);
+    const turn = createTurn();
+    scrollDown(true);
+    setBusy(true);
+
+    const settle = () => {
+      setBusy(false);
+      S.stopTurn = null;
+      if (S.ws) { S.ws.onmessage = null; S.ws.onclose = null; }
+      loadSessions();
+      loadStack();
+      // The code graph rebuilds in the background after files change.
+      setTimeout(loadStack, 5000);
+    };
+
+    try {
+      const ws = await connect();
+      S.stopTurn = () => ws.send(JSON.stringify({ type: 'stop' }));
+      ws.onclose = () => { S.ws = null; turn.error('Koneksi terputus.'); turn.finish(); settle(); };
+      ws.onmessage = event => {
+        const m = JSON.parse(event.data);
+        if (m.type === 'content') turn.content(m.content);
+        else if (m.type === 'thinking') turn.thinking(m.content);
+        else if (m.type === 'reset') turn.reset();
+        else if (m.type === 'progress') turn.progress(m);
+        else if (m.type === 'done') {
+          turn.finish();
+          turn.foot({ model: m.model_used, tokens: m.total_tokens, ms: m.latency_ms, harness: m.harness });
+          settle();
+        } else if (m.type === 'stopped') { turn.finish(); turn.stopped(); settle(); }
+        else if (m.type === 'error') { turn.finish(); turn.error(m.content); settle(); }
+      };
+      ws.send(JSON.stringify({ message: full, session_id: S.session, images }));
+    } catch (err) {
+      turn.finish();
+      turn.error(err.message);
+      settle();
+    }
   }
 
   function autosize() {
-    const t = $('input');
-    t.style.height = 'auto';
-    t.style.height = Math.min(t.scrollHeight, 180) + 'px';
+    const input = $('input');
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight, 220)}px`;
+    input.style.overflowY = input.scrollHeight > 220 ? 'auto' : 'hidden';
   }
   $('input').oninput = autosize;
   $('input').onkeydown = e => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
       e.preventDefault();
-      send();
+      sendMessage();
     }
   };
-  $('send').onclick = send;
+  $('composer').onsubmit = e => {
+    e.preventDefault();
+    if (S.busy) { if (S.stopTurn) S.stopTurn(); return; }
+    sendMessage();
+  };
+  document.querySelectorAll('.suggestion').forEach(button => {
+    button.onclick = () => { $('input').value = button.dataset.prompt; autosize(); $('input').focus(); };
+  });
 
-  /* ---------- Canvas ---------- */
-  const NODE_W = 200, NODE_H = 78;
-  const posKey = (tid, mid) => `pos:${tid}:${mid}`;
-  const newId = () => 'a' + Math.random().toString(36).slice(2, 9);
-
-  async function loadTeams() {
-    if (S.features && S.features.teams === false) return;
-    try {
-      S.teams = (await j('/api/teams')).teams;
-      renderTeamList();
-      if (S.team === null && !S.members.length) newTeam();
-    } catch (e) { toast(e.message); }
+  /* ── Attachments ──────────────────────────────────── */
+  function renderChips() {
+    const chips = $('chips');
+    chips.innerHTML = S.attachments.map((a, i) =>
+      `<span class="chip"><span class="chip-name">${esc(a.name)}</span><button type="button" data-remove="${i}" aria-label="Hapus ${esc(a.name)}">${icon('x', 12)}</button></span>`).join('');
+    chips.querySelectorAll('[data-remove]').forEach(button => {
+      button.onclick = () => { S.attachments.splice(Number(button.dataset.remove), 1); renderChips(); };
+    });
   }
+  $('file-input').onchange = async e => {
+    for (const file of e.target.files) {
+      try {
+        const response = await fetch(`/api/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || 'Unggah gagal');
+        S.attachments.push(data);
+      } catch (err) { toast(`${file.name}: ${err.message}`); }
+    }
+    e.target.value = '';
+    renderChips();
+  };
 
-  function renderTeamList() {
-    $('team-list').innerHTML = S.teams.map(t =>
-      `<button data-t="${esc(t.id)}" class="w-full text-left px-2.5 py-2 rounded-md hover:bg-stone-100 ${t.id === S.team ? 'bg-stone-100 font-medium' : ''}">${esc(t.name)}<div class="text-xs text-stone-400 font-normal">${t.members.length} agents</div></button>`).join('')
-      || '<p class="px-2 py-1 text-stone-400 text-xs">No saved teams.</p>';
-    document.querySelectorAll('[data-t]').forEach(b => b.onclick = () => openTeam(b.dataset.t));
-  }
+  /* ── Session panel ────────────────────────────────── */
+  function renderStack(info, findings) {
+    const graph = info.graphify;
+    const slop = info.aislop;
+    const last = slop.last;
+    const memory = info.memory;
+    const box = $('stack');
 
-  function layout(members, tid) {
-    members.forEach((m, i) => {
-      const saved = tid && localStorage.getItem(posKey(tid, m.id));
-      if (saved) { const [x, y] = saved.split(',').map(Number); m.x = x; m.y = y; }
-      else if (m.x === undefined) { m.x = 80 + (i % 4) * 260; m.y = 80 + Math.floor(i / 4) * 170; }
+    const scoreClass = score => (score >= 80 ? 'good' : score >= 50 ? 'mid' : 'low');
+    const toggle = (key, on, label) =>
+      `<button class="switch" role="switch" aria-checked="${on}" aria-label="${label}" data-toggle="${key}"></button>`;
+
+    box.innerHTML = `
+      <section class="card">
+        <div class="card-head"><span class="card-title">Ponytail</span></div>
+        <p class="card-text">Seberapa keras agent menahan diri dari kode berlebihan.</p>
+        <div class="segmented" role="group" aria-label="Mode Ponytail">
+          ${info.ponytail.modes.map(mode => `<button data-ponytail="${esc(mode)}" aria-pressed="${mode === info.ponytail.mode}">${esc(mode)}</button>`).join('')}
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <span class="status-dot ${graph.installed && graph.built ? 'on' : ''}"></span>
+          <span class="card-title">Graphify</span>
+          ${graph.installed ? toggle('graphify', graph.enabled, 'Graphify untuk chat ini') : ''}
+        </div>
+        ${!graph.installed
+          ? '<p class="card-text">Belum terpasang. <code>uv tool install graphifyy</code></p>'
+          : graph.built
+            ? `<div class="stats"><div class="stat"><strong>${graph.nodes ?? 0}</strong><span>node</span></div><div class="stat"><strong>${graph.edges ?? 0}</strong><span>relasi</span></div></div>
+               <div class="card-actions"><button class="btn btn-ghost btn-small" data-action="graph">Bangun ulang</button></div>`
+            : `<p class="card-text">Graph kode chat ini dibuat otomatis setelah ada file yang berubah.</p>
+               <div class="card-actions"><button class="btn btn-ghost btn-small" data-action="graph">Bangun sekarang</button></div>`}
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <span class="status-dot ${slop.installed && last ? 'on' : ''}"></span>
+          <span class="card-title">aislop</span>
+          ${slop.installed ? toggle('aislop', slop.enabled, 'aislop untuk chat ini') : ''}
+        </div>
+        ${!slop.installed
+          ? '<p class="card-text">Belum terpasang. <code>npm install -g aislop</code></p>'
+          : `${last && last.score !== null && last.score !== undefined
+              ? `<p class="score ${scoreClass(last.score)}">${last.score}<small> / 100 · ${esc(last.label || '')}</small></p>
+                 <p class="card-text">${last.errors ?? 0} error, ${last.warnings ?? 0} peringatan</p>`
+              : '<p class="card-text">Belum dipindai. File yang diubah agent akan diperiksa otomatis.</p>'}
+             <div class="card-actions"><button class="btn btn-ghost btn-small" data-action="aislop">Pindai sekarang</button></div>
+             ${findings && findings.length ? `<ul class="findings">${findings.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}`}
+      </section>
+
+      <section class="card">
+        <div class="card-head"><span class="status-dot ${info.vault.notes ? 'on' : ''}"></span><span class="card-title">Vault Obsidian</span></div>
+        <p class="card-text">${info.vault.notes} catatan milik chat ini.</p>
+        <code class="path">${esc(info.vault.path)}</code>
+      </section>
+
+      <section class="card">
+        <div class="card-head"><span class="card-title">Memori</span></div>
+        <div class="stats">
+          <div class="stat"><strong>${memory.decisions}</strong><span>keputusan</span></div>
+          <div class="stat"><strong>${memory.facts}</strong><span>fakta</span></div>
+          <div class="stat"><strong>${memory.files}</strong><span>file</span></div>
+        </div>
+        <p class="card-text">${info.profile.entries} hal tentang kamu diingat di semua chat.</p>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <span class="status-dot ${info.sandbox.backend && info.sandbox.backend !== 'none' ? 'on' : 'bad'}"></span>
+          <span class="card-title">Sandbox</span>
+        </div>
+        <p class="card-text">${info.sandbox.error
+          ? 'Tidak tersedia, perintah agent ditolak. Jalankan <code>python main.py doctor</code>.'
+          : info.sandbox.backend === 'none'
+            ? 'Mati. Perintah berjalan langsung di mesin ini.'
+            : `${esc(info.sandbox.backend)}, internet ${info.sandbox.network ? 'nyala' : 'mati'}. Perintah hanya bisa menulis ke folder chat ini.`}</p>
+        <code class="path">${esc(info.folder)}</code>
+      </section>`;
+
+    box.querySelectorAll('[data-ponytail]').forEach(button => {
+      button.onclick = () => updateStack({ ponytail: button.dataset.ponytail });
+    });
+    box.querySelectorAll('[data-toggle]').forEach(button => {
+      button.onclick = () => updateStack({ [button.dataset.toggle]: button.getAttribute('aria-checked') !== 'true' });
+    });
+    box.querySelectorAll('[data-action]').forEach(button => {
+      button.onclick = () => runStackAction(button);
     });
   }
 
-  function openTeam(id) {
-    const t = S.teams.find(x => x.id === id); if (!t) return;
-    stopEvents(); S.run = null;
-    S.team = t.id; S.lead = t.lead_id; S.selected = null;
-    S.members = t.members.map(m => ({ ...m }));
-    layout(S.members, t.id);
-    $('team-name').value = t.name;
-    $('result').classList.add('hidden'); $('run-info').textContent = '';
-    renderTeamList(); renderBoard(); renderInspector();
+  async function loadStack() {
+    if (!S.session) return;
+    try { renderStack(await api(`/api/session/${encodeURIComponent(S.session)}/stack`)); } catch (e) { toast(e.message); }
+  }
+  async function updateStack(changes) {
+    try { renderStack(await post(`/api/session/${encodeURIComponent(S.session)}/stack`, changes)); } catch (e) { toast(e.message); }
+  }
+  async function runStackAction(button) {
+    const action = button.dataset.action;
+    const before = button.textContent;
+    button.disabled = true;
+    button.textContent = 'Berjalan…';
+    try {
+      const data = await post(`/api/session/${encodeURIComponent(S.session)}/${action}`);
+      if (data.result && data.result.ok === false) toast(data.result.error);
+      renderStack(data.stack, action === 'aislop' ? data.result.findings : null);
+    } catch (e) {
+      toast(e.message);
+      button.disabled = false;
+      button.textContent = before;
+    }
   }
 
-  function newTeam() {
-    stopEvents(); S.run = null; S.team = null;
-    const mid = S.current || S.models[0]?.id || '';
-    S.members = [
-      { id: newId(), name: 'Lead', role: 'Plans the work and writes the final answer', model_id: mid, instructions: '' },
-      { id: newId(), name: 'Researcher', role: 'Finds facts and sources', model_id: mid, instructions: '' },
-    ];
-    S.lead = S.members[0].id; S.selected = S.members[0].id;
-    layout(S.members, null);
-    $('team-name').value = '';
-    $('result').classList.add('hidden'); $('run-info').textContent = '';
-    renderTeamList(); renderBoard(); renderInspector();
+  /* ── Views ────────────────────────────────────────── */
+  function showView(name) {
+    const team = name === 'team' && S.features.teams !== false;
+    $('view-chat').classList.toggle('hidden', team);
+    $('view-team').classList.toggle('hidden', !team);
+    $('nav-chat').classList.toggle('hidden', !team);
+    $('open-inspector').classList.toggle('hidden', team);
+    $('shell').classList.toggle('team-mode', team);
+    if (team) {
+      $('chat-title').textContent = 'Tim agent';
+      loadTeams();
+      closeDrawers();
+    } else if ($('chat-title').textContent === 'Tim agent') {
+      const current = S.sessions.find(s => s.session_id === S.session);
+      $('chat-title').textContent = current ? current.title : 'Chat baru';
+    }
+    store.set('view', team ? 'team' : 'chat');
+  }
+  $('nav-team').onclick = () => showView('team');
+  $('nav-chat').onclick = () => showView('chat');
+
+  /* ── Team canvas ──────────────────────────────────── */
+  const NODE_W = 196;
+  const NODE_H = 72;
+  const newId = () => `a${Math.random().toString(36).slice(2, 9)}`;
+  const posKey = (team, member) => `pos:${team}:${member}`;
+  const finished = status => ['completed', 'failed', 'cancelled'].includes(status);
+
+  function depth(member, seen = new Set()) {
+    if (seen.has(member.id)) return 0;
+    seen.add(member.id);
+    const parents = (member.depends_on || []).map(id => S.members.find(m => m.id === id)).filter(Boolean);
+    return parents.length ? 1 + Math.max(...parents.map(p => depth(p, new Set(seen)))) : 0;
+  }
+
+  function autoLayout(teamId) {
+    const columns = {};
+    const workers = S.members.filter(m => m.id !== S.lead && m.id !== S.reviewer);
+    const lastWorker = workers.length ? Math.max(...workers.map(m => depth(m))) : -1;
+    S.members.forEach(member => {
+      const saved = teamId && store.get(posKey(teamId, member.id));
+      if (saved) {
+        const [x, y] = saved.split(',').map(Number);
+        member.x = x;
+        member.y = y;
+        return;
+      }
+      if (member.x !== undefined) return;
+      let column = depth(member);
+      if (member.id === S.lead) column = lastWorker + 1;
+      if (member.id === S.reviewer) column = lastWorker + 2;
+      const row = columns[column] = (columns[column] || 0) + 1;
+      member.x = 32 + column * 228;
+      member.y = 40 + (row - 1) * 120;
+    });
+  }
+
+  function edges() {
+    const lines = [];
+    const add = (from, to, cls = '') => {
+      if (!from || !to) return;
+      const x1 = from.x + NODE_W;
+      const y1 = from.y + NODE_H / 2;
+      const x2 = to.x;
+      const y2 = to.y + NODE_H / 2;
+      const bend = Math.max(30, Math.abs(x2 - x1) / 2);
+      lines.push(`<path class="edge ${cls}" d="M${x1} ${y1}C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}" marker-end="url(#arrow)"/>`);
+    };
+    const lead = S.members.find(m => m.id === S.lead);
+    const reviewer = S.members.find(m => m.id === S.reviewer);
+    const workers = S.members.filter(m => m !== lead && m !== reviewer);
+    const dependedOn = new Set(workers.flatMap(m => m.depends_on || []));
+    workers.forEach(member => {
+      (member.depends_on || []).forEach(id => add(S.members.find(m => m.id === id), member));
+      if (!dependedOn.has(member.id)) add(member, lead);
+    });
+    if (reviewer) add(lead, reviewer, 'review');
+    $('edge-lines').innerHTML = lines.join('');
+  }
+
+  function roleLabel(member) {
+    if (member.id === S.lead) return 'Lead';
+    if (member.id === S.reviewer) return 'Reviewer';
+    return 'Agent';
   }
 
   function renderBoard() {
-    $('nodes').innerHTML = S.members.map(m => `
-      <div class="node ${m.id === S.selected ? 'selected' : ''}" data-id="${esc(m.id)}" style="left:${m.x}px;top:${m.y}px">
-        <div class="handle"><div class="font-medium truncate text-xs">${esc(m.name || 'Unnamed')}${m.id === S.lead ? ' <span class="text-[10px] text-stone-400 font-normal">lead</span>' : ''}</div>
-        <div class="text-[11px] text-stone-500 truncate">${esc(m.role)}</div></div>
-        <div class="px-2.5 pb-2 pt-1 text-[11px] text-stone-400 truncate">${esc(S.byId[m.model_id]?.display_name || m.model_id)}</div>
-        <div class="px-2.5 pb-2 state text-[11px]"></div>
+    $('nodes').innerHTML = S.members.map(member => `
+      <div class="node ${member.id === S.selected ? 'selected' : ''}" data-id="${esc(member.id)}" style="left:${member.x}px;top:${member.y}px" tabindex="0">
+        <div class="node-role">${roleLabel(member)}</div>
+        <div class="node-name">${esc(member.name || 'Tanpa nama')}</div>
+        <div class="node-model">${esc(shortModel(member.model_id))}</div>
+        <div class="node-state"></div>
       </div>`).join('');
-    document.querySelectorAll('.node').forEach(el => {
-      el.onpointerdown = e => startDrag(e, el);
-    });
-    drawEdges(); paintRun();
+    document.querySelectorAll('.node').forEach(el => { el.onpointerdown = e => startDrag(e, el); });
+    edges();
+    paintRun();
   }
 
-  function drawEdges() {
-    const lead = S.members.find(m => m.id === S.lead);
-    $('edges').innerHTML = lead ? S.members.filter(m => m.id !== lead.id).map(m =>
-      `<line x1="${m.x + NODE_W / 2}" y1="${m.y + NODE_H / 2}" x2="${lead.x + NODE_W / 2}" y2="${lead.y + NODE_H / 2}"/>`).join('') : '';
-  }
-
-  function startDrag(e, el) {
-    const m = S.members.find(x => x.id === el.dataset.id);
-    const ox = e.clientX - m.x, oy = e.clientY - m.y;
-    let moved = false;
-    if (S.selected !== m.id) {
-      S.selected = m.id;
+  function startDrag(event, el) {
+    const member = S.members.find(m => m.id === el.dataset.id);
+    const offsetX = event.clientX - member.x;
+    const offsetY = event.clientY - member.y;
+    if (S.selected !== member.id) {
+      S.selected = member.id;
       document.querySelectorAll('.node').forEach(n => n.classList.toggle('selected', n === el));
-      renderInspector();
-      if (window.matchMedia('(max-width: 1023px)').matches) setDrawer('inspector', true);
+      renderMember();
     }
-    el.setPointerCapture(e.pointerId);
-    el.onpointermove = ev => {
-      moved = true;
-      m.x = Math.max(0, Math.min(2400 - NODE_W, ev.clientX - ox));
-      m.y = Math.max(0, Math.min(1600 - NODE_H, ev.clientY - oy));
-      el.style.left = m.x + 'px'; el.style.top = m.y + 'px'; drawEdges();
+    el.setPointerCapture(event.pointerId);
+    el.onpointermove = e => {
+      member.x = Math.max(0, Math.min(2000 - NODE_W, e.clientX - offsetX));
+      member.y = Math.max(0, Math.min(1400 - NODE_H, e.clientY - offsetY));
+      el.style.left = `${member.x}px`;
+      el.style.top = `${member.y}px`;
+      edges();
     };
     el.onpointerup = () => {
-      el.onpointermove = el.onpointerup = null;
-      if (moved && S.team) localStorage.setItem(posKey(S.team, m.id), `${m.x},${m.y}`);
+      el.onpointermove = null;
+      el.onpointerup = null;
+      if (S.team) store.set(posKey(S.team, member.id), `${member.x},${member.y}`);
     };
   }
 
-  function renderInspector() {
-    const m = S.members.find(x => x.id === S.selected);
-    const box = $('inspector');
-    if (!m) { box.className = 'p-4 text-stone-400 text-xs'; box.textContent = 'Select an agent on the canvas.'; return; }
-    box.className = 'p-4 space-y-3';
-    const opts = Object.entries(S.models.reduce((a, x) => ((a[x.provider] ||= []).push(x), a), {}))
-      .map(([p, l]) => `<optgroup label="${esc(p)}">${l.map(x => `<option value="${esc(x.id)}" ${x.id === m.model_id ? 'selected' : ''}>${esc(x.display_name)}</option>`).join('')}</optgroup>`).join('');
+  function renderMember() {
+    const box = $('member-panel');
+    const member = S.members.find(m => m.id === S.selected);
+    if (!member) {
+      box.innerHTML = '<p class="hint">Pilih agent di kanvas untuk mengaturnya.</p>';
+      return;
+    }
+    const others = S.members.filter(m => m.id !== member.id && m.id !== S.lead && m.id !== S.reviewer);
+    const isWorker = member.id !== S.lead && member.id !== S.reviewer;
     box.innerHTML = `
-      <div class="field"><label>Name</label><input data-f="name" value="${esc(m.name)}" maxlength="60"></div>
-      <div class="field"><label>Role</label><input data-f="role" value="${esc(m.role)}" maxlength="120"></div>
-      <div class="field"><label>Model</label><select data-f="model_id">${opts}</select></div>
-      <div class="field"><label>Instructions</label><textarea data-f="instructions" rows="6" maxlength="4000">${esc(m.instructions)}</textarea></div>
-      <label class="flex items-center gap-2 text-xs"><input type="radio" name="lead" ${m.id === S.lead ? 'checked' : ''} id="set-lead"> Lead agent</label>
-      <button id="remove-node" class="border border-stone-300 rounded-md px-3 py-1.5 text-red-700 hover:bg-red-50 w-full text-xs cursor-pointer">Remove agent</button>`;
-    box.querySelectorAll('[data-f]').forEach(inp => inp.oninput = inp.onchange = () => {
-      m[inp.dataset.f] = inp.value;
-      const node = document.querySelector(`.node[data-id="${m.id}"]`);
-      if (node && inp.dataset.f !== 'instructions') renderBoardKeep();
+      <label class="field"><span>Nama</span><input data-field="name" value="${esc(member.name)}" maxlength="60"></label>
+      <label class="field"><span>Peran</span><input data-field="role" value="${esc(member.role)}" maxlength="120"></label>
+      <label class="field"><span>Model</span><select data-field="model_id"></select></label>
+      <label class="field"><span>Instruksi tambahan</span><textarea data-field="instructions" rows="4" maxlength="4000">${esc(member.instructions)}</textarea></label>
+      <div class="field">
+        <label class="check"><input type="radio" name="position" value="worker" ${isWorker ? 'checked' : ''}>Agent biasa</label>
+        <label class="check"><input type="radio" name="position" value="lead" ${member.id === S.lead ? 'checked' : ''}>Lead, menulis jawaban akhir</label>
+        <label class="check"><input type="radio" name="position" value="reviewer" ${member.id === S.reviewer ? 'checked' : ''}>Reviewer, memeriksa dan meminta revisi</label>
+      </div>
+      ${isWorker && others.length ? `<div class="field"><span>Berjalan setelah</span>
+        ${others.map(o => `<label class="check"><input type="checkbox" data-after="${esc(o.id)}" ${(member.depends_on || []).includes(o.id) ? 'checked' : ''}>${esc(o.name)}</label>`).join('')}
+      </div>` : ''}
+      <button id="remove-node" class="btn btn-ghost btn-danger btn-block" type="button">Hapus agent</button>`;
+
+    fillModelOptions(box.querySelector('[data-field="model_id"]'), member.model_id, false);
+    box.querySelectorAll('[data-field]').forEach(input => {
+      input.oninput = () => {
+        member[input.dataset.field] = input.value;
+        const node = document.querySelector(`.node[data-id="${CSS.escape(member.id)}"]`);
+        if (node) {
+          node.querySelector('.node-name').textContent = member.name || 'Tanpa nama';
+          node.querySelector('.node-model').textContent = shortModel(member.model_id);
+        }
+      };
     });
-    $('set-lead').onchange = () => { S.lead = m.id; renderBoardKeep(); };
+    box.querySelectorAll('input[name="position"]').forEach(radio => {
+      radio.onchange = () => {
+        if (S.lead === member.id) S.lead = null;
+        if (S.reviewer === member.id) S.reviewer = null;
+        if (radio.value === 'lead') { S.lead = member.id; member.depends_on = []; }
+        if (radio.value === 'reviewer') { S.reviewer = member.id; member.depends_on = []; }
+        if (!S.lead) S.lead = (S.members.find(m => m.id !== S.reviewer) || member).id;
+        renderBoard();
+        renderMember();
+      };
+    });
+    box.querySelectorAll('[data-after]').forEach(check => {
+      check.onchange = () => {
+        const set = new Set(member.depends_on || []);
+        if (check.checked) set.add(check.dataset.after); else set.delete(check.dataset.after);
+        member.depends_on = [...set];
+        edges();
+      };
+    });
     $('remove-node').onclick = () => {
-      if (S.members.length <= 2) return toast('A team needs at least 2 agents');
-      S.members = S.members.filter(x => x.id !== m.id);
-      if (S.lead === m.id) S.lead = S.members[0].id;
-      S.selected = null; renderBoard(); renderInspector();
+      if (S.members.length <= 2) { toast('Tim butuh minimal 2 agent.'); return; }
+      S.members = S.members.filter(m => m.id !== member.id);
+      S.members.forEach(m => { m.depends_on = (m.depends_on || []).filter(id => id !== member.id); });
+      if (S.reviewer === member.id) S.reviewer = null;
+      if (S.lead === member.id) S.lead = S.members[0].id;
+      S.selected = null;
+      renderBoard();
+      renderMember();
     };
   }
-  function renderBoardKeep() { renderBoard(); }
 
+  function renderTeamOptions() {
+    $('team-select').innerHTML = `<option value="">Tim baru</option>${S.teams.map(t =>
+      `<option value="${esc(t.id)}" ${t.id === S.team ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}`;
+  }
+
+  function blankTeam() {
+    stopEvents();
+    S.run = null;
+    S.team = null;
+    S.reviewer = null;
+    const model = S.model !== 'auto' && S.byId[S.model] ? S.model : (S.models[0] && S.models[0].id) || '';
+    S.members = [
+      { id: newId(), name: 'Lead', role: 'Menyusun jawaban akhir', model_id: model, instructions: '', depends_on: [] },
+      { id: newId(), name: 'Peneliti', role: 'Mencari fakta dan sumber', model_id: model, instructions: '', depends_on: [] },
+    ];
+    S.lead = S.members[0].id;
+    S.selected = null;
+    $('team-name').value = '';
+    resetRunView();
+    autoLayout(null);
+    renderTeamOptions();
+    renderBoard();
+    renderMember();
+  }
+
+  function openTeam(id) {
+    const team = S.teams.find(t => t.id === id);
+    if (!team) { blankTeam(); return; }
+    stopEvents();
+    S.run = null;
+    S.team = team.id;
+    S.lead = team.lead_id;
+    S.reviewer = team.reviewer_id || null;
+    S.selected = null;
+    S.members = team.members.map(m => ({ ...m, depends_on: m.depends_on || [] }));
+    $('team-name').value = team.name;
+    resetRunView();
+    autoLayout(team.id);
+    renderTeamOptions();
+    renderBoard();
+    renderMember();
+  }
+
+  function useTemplate(key) {
+    const template = S.templates.find(t => t.key === key);
+    if (!template) return;
+    stopEvents();
+    S.run = null;
+    S.team = null;
+    S.lead = template.lead_id;
+    S.reviewer = template.reviewer_id || null;
+    S.selected = null;
+    S.members = template.members.map(m => ({ ...m, depends_on: m.depends_on || [] }));
+    $('team-name').value = template.name;
+    resetRunView();
+    autoLayout(null);
+    renderTeamOptions();
+    renderBoard();
+    renderMember();
+    toast(template.description);
+  }
+
+  async function loadTeams() {
+    if (S.features.teams === false) return;
+    try {
+      const [teams, templates] = await Promise.all([api('/api/teams'), api('/api/teams/templates')]);
+      S.teams = teams.teams;
+      S.templates = templates.templates;
+      $('template-select').innerHTML = `<option value="">Template</option>${S.templates.map(t =>
+        `<option value="${esc(t.key)}">${esc(t.name)}</option>`).join('')}`;
+      renderTeamOptions();
+      if (S.team === null && !S.members.length) blankTeam();
+    } catch (e) { toast(e.message); }
+  }
+  $('team-select').onchange = e => openTeam(e.target.value);
+  $('template-select').onchange = e => { useTemplate(e.target.value); e.target.value = ''; };
   $('add-node').onclick = () => {
-    if (S.members.length >= 6) return toast('Maximum 6 agents');
-    const i = S.members.length;
-    const m = { id: newId(), name: `Agent ${i + 1}`, role: 'Specialist', model_id: S.current || S.models[0]?.id || '', instructions: '', x: 80 + (i % 4) * 260, y: 80 + Math.floor(i / 4) * 170 };
-    S.members.push(m); S.selected = m.id; renderBoard(); renderInspector();
+    if (S.members.length >= 6) { toast('Maksimal 6 agent.'); return; }
+    const model = S.members[0] ? S.members[0].model_id : '';
+    const member = { id: newId(), name: `Agent ${S.members.length + 1}`, role: 'Spesialis', model_id: model, instructions: '', depends_on: [] };
+    S.members.push(member);
+    S.selected = member.id;
+    autoLayout(S.team);
+    renderBoard();
+    renderMember();
   };
-  $('new-team').onclick = newTeam;
-
-  function payload() {
-    return {
-      name: $('team-name').value.trim(),
-      description: '',
-      members: S.members.map(({ id, name, role, model_id, instructions }) => ({ id, name, role, model_id, instructions })),
-      lead_id: S.lead,
-    };
-  }
 
   async function saveTeam() {
-    const p = payload();
-    if (!p.name) { $('team-name').focus(); throw new Error('Give the team a name'); }
-    const t = S.team
-      ? await j('/api/teams/' + S.team, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(p) })
-      : await post('/api/teams', p);
-    const old = S.members;
-    S.team = t.id; S.lead = t.lead_id;
-    S.members = t.members.map((m, i) => ({ ...m, x: old[i]?.x, y: old[i]?.y }));
-    S.selected = S.members.find((_, i) => old[i]?.id === S.selected)?.id || null;
-    S.members.forEach(m => localStorage.setItem(posKey(t.id, m.id), `${m.x},${m.y}`));
-    S.teams = (await j('/api/teams')).teams;
-    renderTeamList(); renderBoard(); renderInspector();
-    return t;
+    const name = $('team-name').value.trim();
+    if (!name) { $('team-name').focus(); throw new Error('Beri nama tim dulu.'); }
+    const body = {
+      name,
+      description: '',
+      members: S.members.map(({ id, name: memberName, role, model_id, instructions, depends_on }) =>
+        ({ id, name: memberName, role, model_id, instructions: instructions || '', depends_on: depends_on || [] })),
+      lead_id: S.lead,
+      reviewer_id: S.reviewer || null,
+    };
+    const saved = S.team
+      ? await api(`/api/teams/${S.team}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      : await post('/api/teams', body);
+    S.team = saved.id;
+    S.members.forEach(m => store.set(posKey(saved.id, m.id), `${m.x},${m.y}`));
+    S.teams = (await api('/api/teams')).teams;
+    renderTeamOptions();
+    return saved;
   }
-  $('save-team').onclick = () => saveTeam().then(() => toast('Saved')).catch(e => toast(e.message));
-
+  $('save-team').onclick = () => saveTeam().then(() => toast('Tersimpan.')).catch(e => toast(e.message));
   $('delete-team').onclick = async () => {
-    if (!S.team) return newTeam();
-    if (!confirm('Delete this team and its run history?')) return;
-    try { await j('/api/teams/' + S.team, { method: 'DELETE' }); S.teams = S.teams.filter(t => t.id !== S.team); newTeam(); } catch (e) { toast(e.message); }
+    if (!S.team) { blankTeam(); return; }
+    if (!confirm('Hapus tim ini beserta riwayatnya?')) return;
+    try {
+      await api(`/api/teams/${S.team}`, { method: 'DELETE' });
+      S.teams = S.teams.filter(t => t.id !== S.team);
+      blankTeam();
+    } catch (e) { toast(e.message); }
   };
 
-  /* ---------- Run ---------- */
+  function resetRunView() {
+    $('result').classList.add('hidden');
+    $('run-info').textContent = '';
+    $('cancel').classList.add('hidden');
+    $('run').disabled = false;
+  }
+
   function paintRun() {
-    document.querySelectorAll('.node').forEach(n => {
-      const a = S.run?.agents?.[n.dataset.id];
-      n.dataset.status = a?.status || '';
-      n.querySelector('.state').textContent = a ? a.status + (a.error ? ' · ' + a.error : '') : '';
+    document.querySelectorAll('.node').forEach(node => {
+      const agent = S.run && S.run.agents ? S.run.agents[node.dataset.id] : null;
+      node.dataset.status = agent ? agent.status : '';
+      const labels = { queued: 'Menunggu', running: 'Berjalan', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan' };
+      const state = node.querySelector('.node-state');
+      state.textContent = agent ? (labels[agent.status] || agent.status) + (agent.error ? `: ${agent.error}` : '') : '';
     });
   }
 
   function showRun(run) {
-    S.run = run; paintRun();
-    const active = !done(run.status);
-    $('run-info').textContent = `${run.status} · ${(run.total_tokens || 0).toLocaleString()} tokens`;
+    S.run = run;
+    paintRun();
+    const active = !finished(run.status);
+    const labels = { queued: 'Menunggu', running: 'Berjalan', synthesizing: 'Lead menyusun jawaban', reviewing: 'Reviewer memeriksa', revising: 'Lead merevisi', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan' };
+    const reviews = (run.reviews || []).map(r => r.verdict).join(', ');
+    $('run-info').textContent = `${labels[run.status] || run.status} · ${formatTokens(run.total_tokens || 0)} token${reviews ? ` · review: ${reviews}` : ''}`;
     $('cancel').classList.toggle('hidden', !active);
     $('run').disabled = active;
-    const r = $('result');
+    const result = $('result');
     if (run.result || run.error) {
-      r.classList.remove('hidden');
-      r.innerHTML = run.error ? `<p class="text-red-700">${esc(run.error)}</p>` : md(run.result);
-      enhanceCodeBlocks(r);
-    } else r.classList.add('hidden');
+      result.classList.remove('hidden');
+      result.innerHTML = run.error ? `<div class="notice">${esc(run.error)}</div>` : md(run.result);
+      enhanceCode(result);
+    } else result.classList.add('hidden');
   }
 
-  function stopEvents() { if (S.events) { S.events.close(); S.events = null; } }
+  function stopEvents() {
+    if (S.events) { S.events.close(); S.events = null; }
+  }
 
-  $('run').onclick = async () => {
+  $('run-form').onsubmit = async e => {
+    e.preventDefault();
     const task = $('task').value.trim();
-    if (!task) return $('task').focus();
+    if (!task) { $('task').focus(); return; }
     $('run').disabled = true;
     try {
       await saveTeam();
       const run = await post(`/api/teams/${S.team}/runs`, { task });
-      showRun(run); stopEvents();
+      showRun(run);
+      stopEvents();
       S.events = new EventSource(`/api/teams/runs/${run.id}/events`);
-      S.events.onmessage = ev => {
-        const d = JSON.parse(ev.data);
-        if (!S.run || d.run.id !== S.run.id) return;
-        showRun(d.run);
-        if (d.type === 'run_finished') stopEvents();
+      S.events.onmessage = event => {
+        const data = JSON.parse(event.data);
+        if (!S.run || data.run.id !== S.run.id) return;
+        showRun(data.run);
+        if (data.type === 'run_finished') stopEvents();
       };
-      S.events.onerror = () => { if (S.run && done(S.run.status)) stopEvents(); };
-    } catch (e) { toast(e.message); $('run').disabled = false; }
+      S.events.onerror = () => { if (S.run && finished(S.run.status)) stopEvents(); };
+    } catch (err) {
+      toast(err.message);
+      $('run').disabled = false;
+    }
   };
-  $('task').onkeydown = e => { if (e.key === 'Enter') $('run').click(); };
   $('cancel').onclick = async () => {
     if (!S.run) return;
-    try { showRun(await j(`/api/teams/runs/${S.run.id}/cancel`, { method: 'POST' })); } catch (e) { toast(e.message); }
+    try { showRun(await api(`/api/teams/runs/${S.run.id}/cancel`, { method: 'POST' })); } catch (e) { toast(e.message); }
   };
 
-  /* ---------- Init ---------- */
+  /* ── Start ────────────────────────────────────────── */
   (async () => {
-    let defaultModel = null;
     try {
-      const cfg = await j('/api/config').catch(() => ({}));
-      applyFeatures(cfg.features);
-      const s = await j('/api/session/new'); S.session = s.session_id; defaultModel = s.default_model;
+      const config = await api('/api/config').catch(() => ({ features: {} }));
+      S.features = config.features || {};
+      $('nav-team').classList.toggle('hidden', S.features.teams === false);
       await loadModels();
-      if (S.current !== defaultModel) await post('/api/model/select', { session_id: S.session, model_id: S.current }).catch(() => {});
-    } catch (e) { toast(e.message); }
-    showTab(localStorage.getItem('tab') || 'chat');
-
-    // Restore desktop sidebar collapsed state
-    if (window.innerWidth >= 1024 && localStorage.getItem('sidebar_collapsed') === '1') {
-      $('session-panel').classList.add('desktop-collapsed');
+      await loadSessions();
+      const last = store.get('session');
+      if (last && S.sessions.some(s => s.session_id === last)) await openSession(last);
+      else await newChat();
+      if (store.get('view') === 'team') showView('team');
+    } catch (e) {
+      toast(e.message);
     }
-
-    // Restore the last opened chat, otherwise show the empty new session.
-    const last = localStorage.getItem('session');
-    if (last) {
-      try {
-        const d = await j(`/api/session/${encodeURIComponent(last)}/messages`);
-        if (d.messages && d.messages.length) { await openSession(last); }
-      } catch (_) { localStorage.removeItem('session'); }
-    }
-    loadSessions();
   })();
 })();

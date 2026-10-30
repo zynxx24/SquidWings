@@ -16,6 +16,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = _PROJECT_ROOT / "workspace"
 
 _active_workspace: ContextVar[str] = ContextVar("active_workspace", default="")
+_active_session: ContextVar[str] = ContextVar("active_session", default="")
+_active_ponytail: ContextVar[str] = ContextVar("active_ponytail", default="")
 
 
 def session_workspace(session_id: str) -> Path:
@@ -32,3 +34,20 @@ def set_active_workspace(path: str | Path) -> None:
 
 def get_active_workspace() -> str:
     return _active_workspace.get()
+
+
+def set_active_session(session_id: str) -> None:
+    _active_session.set(session_id)
+
+
+def get_active_session() -> str:
+    return _active_session.get()
+
+
+def set_active_ponytail(mode: str) -> None:
+    """This session's Ponytail mode. Empty means the PONYTAIL_MODE default."""
+    _active_ponytail.set(mode)
+
+
+def get_active_ponytail() -> str:
+    return _active_ponytail.get()

@@ -10,27 +10,30 @@ Dipanggil saat startup. Mendaftarkan semua tool yang AI bisa pakai:
 
 from __future__ import annotations
 
+from config.settings import get_settings
 from tool.execute.execute_auto_generate.auto_generate_tool import auto_generate
+from tool.execute.execute_code_intel.code_intel_tool import (
+    code_outline,
+    find_symbol,
+    project_overview,
+    run_checks,
+)
+from tool.execute.execute_code_intel.quality_tools import (
+    aislop_scan,
+    code_graph,
+    has_aislop,
+    has_graphify,
+)
 from tool.execute.execute_command_prompt.run_command_tool import execute_command
 from tool.execute.execute_discard_change_file.discard_tool import discard_changes
-from tool.execute.execute_local_memory.memory_tool import (
-    graphify_ingest,
-    graphify_query,
-    memory_index_rebuild,
-    memory_stats,
-    obsidian_list,
-    obsidian_read,
-    obsidian_search,
-    obsidian_write,
-)
-from tool.execute.execute_local_memory.smart_memory_tool import (
-    memory_capture,
+from tool.execute.execute_local_memory.memory_tool import graphify_ingest, graphify_query
+from tool.execute.execute_local_memory.project_memory_tool import (
+    memory_forget,
     memory_rank_files,
     memory_recall,
     memory_remember,
 )
 from tool.execute.execute_local_memory.vault_tool import (
-    vault_boot,
     vault_explain,
     vault_graph_build,
     vault_health,
@@ -55,6 +58,7 @@ from tool.execute.execute_local_ops.local_ops_tool import (
     text_transform,
     time_now,
 )
+from tool.execute.execute_skills.skill_tool import load_skill
 from tool.execute.execute_upload_file.read_file_tool import list_directory, read_file
 from tool.execute.execute_web_search.web_search_tool import web_search
 from tool.registry.tool_registry import ToolRegistry
@@ -498,130 +502,45 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         time_now,
     )
 
-    # ─── local memory: Obsidian + Graphify ───────────────────
-    reg.register(
-        ToolSchema(
-            name="obsidian_search",
-            description=(
-                "Search notes in the configured Obsidian vault by title, tag, "
-                "or body text. Uses a cached index for speed."
+    # The vault already covers notes and its graph. These only add something when
+    # an external Graphify service is configured.
+    settings = get_settings()
+    if settings.graphify_memory_enabled and settings.graphify_memory_endpoint:
+        reg.register(
+            ToolSchema(
+                name="graphify_ingest",
+                description="Persist a structured event to Graphify; falls back to the built-in vault (00-inbox) when no endpoint is configured or reachable.",
+                parameters=[
+                    ToolParameter(name="kind", param_type=ParamType.STRING,
+                                  description="Event kind, e.g. 'note', 'task'.", required=True),
+                    ToolParameter(name="payload", param_type=ParamType.OBJECT,
+                                  description="Event payload dict.", required=True),
+                    ToolParameter(name="workspace", param_type=ParamType.STRING,
+                                  description="Optional workspace path.", required=False),
+                    ToolParameter(name="tags", param_type=ParamType.ARRAY,
+                                  description="Optional tags list.", required=False),
+                ],
             ),
-            parameters=[
-                ToolParameter(name="query", param_type=ParamType.STRING,
-                              description="Search text (empty = all).", required=True),
-                ToolParameter(name="tag", param_type=ParamType.STRING,
-                              description="Optional tag filter.", required=False),
-                ToolParameter(name="limit", param_type=ParamType.INTEGER,
-                              description="Max results (default 20).", required=False, default=20),
-                ToolParameter(name="include_body", param_type=ParamType.BOOLEAN,
-                              description="Include snippet from body (default false).",
-                              required=False, default=False),
-            ],
-        ),
-        obsidian_search,
-    )
+            graphify_ingest,
+        )
 
-    reg.register(
-        ToolSchema(
-            name="obsidian_read",
-            description="Read a note from the Obsidian vault by relative path.",
-            parameters=[
-                ToolParameter(name="rel_path", param_type=ParamType.STRING,
-                              description="Relative path inside the vault.", required=True),
-            ],
-        ),
-        obsidian_read,
-    )
-
-    reg.register(
-        ToolSchema(
-            name="obsidian_write",
-            description=(
-                "Write or append a note in the Obsidian vault. Adds YAML "
-                "frontmatter when creating a new note."
+        reg.register(
+            ToolSchema(
+                name="graphify_query",
+                description="Query stored events from Graphify; falls back to the built-in vault index (kind maps to tag, text to query).",
+                parameters=[
+                    ToolParameter(name="kind", param_type=ParamType.STRING,
+                                  description="Optional kind filter.", required=False),
+                    ToolParameter(name="workspace", param_type=ParamType.STRING,
+                                  description="Optional workspace filter.", required=False),
+                    ToolParameter(name="limit", param_type=ParamType.INTEGER,
+                                  description="Max results (default 20).", required=False, default=20),
+                    ToolParameter(name="text", param_type=ParamType.STRING,
+                                  description="Optional text filter.", required=False),
+                ],
             ),
-            parameters=[
-                ToolParameter(name="rel_path", param_type=ParamType.STRING,
-                              description="Relative path inside the vault.", required=True),
-                ToolParameter(name="body", param_type=ParamType.STRING,
-                              description="Markdown body.", required=True),
-                ToolParameter(name="frontmatter", param_type=ParamType.OBJECT,
-                              description="Optional frontmatter dict.", required=False),
-                ToolParameter(name="append", param_type=ParamType.BOOLEAN,
-                              description="Append instead of overwrite (default false).",
-                              required=False, default=False),
-            ],
-        ),
-        obsidian_write,
-    )
-
-    reg.register(
-        ToolSchema(
-            name="obsidian_list",
-            description="List notes in the Obsidian vault (optionally under a folder).",
-            parameters=[
-                ToolParameter(name="folder", param_type=ParamType.STRING,
-                              description="Optional folder prefix.", required=False),
-                ToolParameter(name="limit", param_type=ParamType.INTEGER,
-                              description="Max notes (default 100).", required=False, default=100),
-            ],
-        ),
-        obsidian_list,
-    )
-
-    reg.register(
-        ToolSchema(
-            name="graphify_ingest",
-            description="Persist a structured event to Graphify; falls back to the built-in vault (00-inbox) when no endpoint is configured or reachable.",
-            parameters=[
-                ToolParameter(name="kind", param_type=ParamType.STRING,
-                              description="Event kind, e.g. 'note', 'task'.", required=True),
-                ToolParameter(name="payload", param_type=ParamType.OBJECT,
-                              description="Event payload dict.", required=True),
-                ToolParameter(name="workspace", param_type=ParamType.STRING,
-                              description="Optional workspace path.", required=False),
-                ToolParameter(name="tags", param_type=ParamType.ARRAY,
-                              description="Optional tags list.", required=False),
-            ],
-        ),
-        graphify_ingest,
-    )
-
-    reg.register(
-        ToolSchema(
-            name="graphify_query",
-            description="Query stored events from Graphify; falls back to the built-in vault index (kind maps to tag, text to query).",
-            parameters=[
-                ToolParameter(name="kind", param_type=ParamType.STRING,
-                              description="Optional kind filter.", required=False),
-                ToolParameter(name="workspace", param_type=ParamType.STRING,
-                              description="Optional workspace filter.", required=False),
-                ToolParameter(name="limit", param_type=ParamType.INTEGER,
-                              description="Max results (default 20).", required=False, default=20),
-                ToolParameter(name="text", param_type=ParamType.STRING,
-                              description="Optional text filter.", required=False),
-            ],
-        ),
-        graphify_query,
-    )
-
-    reg.register(
-        ToolSchema(
-            name="memory_index_rebuild",
-            description="Rebuild the Obsidian vault search index.",
-            parameters=[],
-        ),
-        memory_index_rebuild,
-    )
-
-    reg.register(
-        ToolSchema(
-            name="memory_stats",
-            description="Report local memory status (Obsidian vault, Graphify endpoint).",
-            parameters=[],
-        ),
-        memory_stats,
-    )
+            graphify_query,
+        )
 
     # --- smart memory: memory_recall ---
     reg.register(
@@ -654,12 +573,13 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         ToolSchema(
             name="memory_remember",
             description=(
-                "Persist a decision, fact, error, or progress note into "
-                "workspace memory. Near-duplicates are merged automatically."
+                "Remember something. Use kind user for preferences and personal facts, kept "
+                "across all projects. The other kinds stay with this project. Near-duplicates "
+                "are merged automatically."
             ),
             parameters=[
                 ToolParameter(name="kind", param_type=ParamType.STRING,
-                              description="One of: decision, fact, error, progress.",
+                              description="One of: user, decision, fact, error, progress.",
                               required=True),
                 ToolParameter(name="text", param_type=ParamType.STRING,
                               description="What to remember.", required=True),
@@ -672,27 +592,18 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         memory_remember,
     )
 
-    # --- smart memory: memory_capture ---
     reg.register(
         ToolSchema(
-            name="memory_capture",
-            description=(
-                "Auto-extract decisions, facts, and errors from a turn and "
-                "store them in workspace memory. Deduplicates near-identical "
-                "entries."
-            ),
+            name="memory_forget",
+            description="Remove remembered items that are wrong or out of date, from this project and the user profile.",
             parameters=[
-                ToolParameter(name="user_input", param_type=ParamType.STRING,
-                              description="The user's message.", required=True),
-                ToolParameter(name="assistant_output", param_type=ParamType.STRING,
-                              description="The assistant's reply.", required=True),
-                ToolParameter(name="model_id", param_type=ParamType.STRING,
-                              description="Model that produced the reply.", required=False),
+                ToolParameter(name="text", param_type=ParamType.STRING,
+                              description="Words from the item to remove.", required=True),
                 ToolParameter(name="workspace_path", param_type=ParamType.STRING,
                               description="Workspace root.", required=False),
             ],
         ),
-        memory_capture,
+        memory_forget,
     )
 
     # --- smart memory: memory_rank_files ---
@@ -718,22 +629,108 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         memory_rank_files,
     )
 
-    # --- vault memory: vault_boot ---
+    # --- code intelligence: cheap ways to understand a project ---
+    workspace_param = ToolParameter(
+        name="workspace_path", param_type=ParamType.STRING, description="Workspace root.", required=False
+    )
     reg.register(
         ToolSchema(
-            name="vault_boot",
+            name="project_overview",
             description=(
-                "Load the always-on session context (L1): boot file, hubs, open "
-                "questions, recent decisions, and memory health. Start here."
+                "Stack, layout, and the commands that test and lint this project. "
+                "Call this first on a project you have not seen."
+            ),
+            parameters=[workspace_param],
+        ),
+        project_overview,
+    )
+    reg.register(
+        ToolSchema(
+            name="code_outline",
+            description=(
+                "List a file's functions and classes with line numbers. Use this before "
+                "read_file, then read only the lines you need."
             ),
             parameters=[
-                ToolParameter(name="token_budget", param_type=ParamType.INTEGER,
-                              description="Token budget for the boot context (default 1200).", required=False, default=1200),
-                ToolParameter(name="workspace_path", param_type=ParamType.STRING,
-                              description="Workspace root.", required=False),
+                ToolParameter(name="path", param_type=ParamType.STRING, description="File to outline.", required=True),
+                workspace_param,
             ],
         ),
-        vault_boot,
+        code_outline,
+    )
+    reg.register(
+        ToolSchema(
+            name="find_symbol",
+            description=(
+                "Find where a function, class, or variable is defined and used, as file:line. "
+                "Use this before changing anything that other code calls."
+            ),
+            parameters=[
+                ToolParameter(name="name", param_type=ParamType.STRING, description="Exact symbol name.", required=True),
+                workspace_param,
+            ],
+        ),
+        find_symbol,
+    )
+    reg.register(
+        ToolSchema(
+            name="run_checks",
+            description=(
+                "Run the project's own tests, linter, and type checker, and report failures. "
+                "Use this after every change, before saying the work is done."
+            ),
+            parameters=[
+                ToolParameter(
+                    name="kinds", param_type=ParamType.ARRAY,
+                    description="Any of test, lint, types, build. Default: all except build.",
+                    required=False,
+                ),
+                workspace_param,
+            ],
+        ),
+        run_checks,
+    )
+    # These run programs installed on this machine, so they are only offered when present.
+    if has_graphify():
+        reg.register(
+            ToolSchema(
+                name="code_graph",
+                description=(
+                    "Ask this chat's code graph how the code connects. Actions: hubs (most connected "
+                    "parts), query (a question), explain (one symbol), affected (what breaks if it "
+                    "changes), path (how two symbols connect), build (rebuild the graph)."
+                ),
+                parameters=[
+                    ToolParameter(name="action", param_type=ParamType.STRING, description="One of the actions above.", required=False),
+                    ToolParameter(name="target", param_type=ParamType.STRING, description="Question or symbol name.", required=False),
+                    ToolParameter(name="other", param_type=ParamType.STRING, description="Second symbol, for path.", required=False),
+                    workspace_param,
+                ],
+            ),
+            code_graph,
+        )
+    if has_aislop():
+        reg.register(
+            ToolSchema(
+                name="aislop_scan",
+                description=(
+                    "Score the code from 0 to 100 for patterns AI agents leave behind: swallowed errors, "
+                    "narrative comments, invented imports, dead code, secrets. Lists findings as file:line."
+                ),
+                parameters=[workspace_param],
+            ),
+            aislop_scan,
+        )
+
+    reg.register(
+        ToolSchema(
+            name="load_skill",
+            description="Load a step-by-step guide by name, such as fix-bug, add-feature, clean-code, design-ui, build-web, or build-backend.",
+            parameters=[
+                ToolParameter(name="name", param_type=ParamType.STRING, description="Skill name.", required=True),
+            ],
+        ),
+        load_skill,
     )
 
     # --- vault memory: vault_graph_build ---
@@ -831,6 +828,9 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
                               description="Max results (default 10).", required=False, default=10),
                 ToolParameter(name="include_stale", param_type=ParamType.BOOLEAN,
                               description="Include superseded/archived notes (default false).", required=False, default=False),
+                ToolParameter(name="scope", param_type=ParamType.STRING,
+                              description="session (this chat, default) or global (shared by all chats).",
+                              required=False),
                 ToolParameter(name="workspace_path", param_type=ParamType.STRING,
                               description="Workspace root.", required=False),
             ],
@@ -851,6 +851,9 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
                               description="Note reference: 'Foo', 'Foo.md', or '20-concepts/Foo.md'.", required=True),
                 ToolParameter(name="max_chars", param_type=ParamType.INTEGER,
                               description="Truncate the body at this many characters.", required=False, default=40000),
+                ToolParameter(name="scope", param_type=ParamType.STRING,
+                              description="session (this chat, default) or global (shared by all chats).",
+                              required=False),
                 ToolParameter(name="workspace_path", param_type=ParamType.STRING,
                               description="Workspace root.", required=False),
             ],
@@ -922,45 +925,3 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
     )
 
     return reg
-
-
-def build_skills_prompt(registry: ToolRegistry) -> str:
-    """Build a skills-awareness prompt from all registered tools.
-
-    Generates a compact text block that tells the AI what tools/skills
-    it has available. Designed to be injected into the system prompt.
-
-    Args:
-        registry: The tool registry with all registered tools.
-
-    Returns:
-        str: Skills description text for system prompt injection.
-             Empty string if no tools are registered.
-    """
-    if registry.tool_count == 0:
-        return ""
-
-    lines = [
-        "\n## Kemampuan / Skills yang Kamu Miliki:",
-        "Kamu memiliki akses ke tool-tool berikut yang bisa kamu gunakan secara proaktif:",
-        "",
-    ]
-
-    for i, schema_dict in enumerate(registry.get_all_schemas(), 1):
-        func = schema_dict.get("function", {})
-        name = func.get("name", "unknown")
-        desc = func.get("description", "")
-        params = func.get("parameters", {}).get("properties", {})
-
-        param_names = ", ".join(params.keys()) if params else "—"
-        lines.append(f"{i}. **{name}**({param_names})")
-        lines.append(f"   {desc}")
-        lines.append("")
-
-    lines.append(
-        "Gunakan skill di atas secara proaktif ketika relevan. "
-        "Jangan tunggu user minta — kalau kamu perlu baca file, jalankan command, "
-        "atau revert perubahan, langsung lakukan."
-    )
-
-    return "\n".join(lines)

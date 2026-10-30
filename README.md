@@ -21,6 +21,7 @@ yang dibungkus Security Layer.
 - [Security Layer](#security-layer)
 - [Menjalankan Test](#menjalankan-test)
 - [Struktur Proyek](#struktur-proyek)
+- [Execution Harness](#execution-harness)
 - [Troubleshooting](#troubleshooting)
 - [Lisensi](#lisensi)
 
@@ -77,7 +78,7 @@ Semua pengaturan ada di `.env`. Contoh lengkap dengan komentar ada di
 |---|---|
 | API | `API_BASE_URL`, `API_KEY`, `TIMEOUT_SECONDS`, `MAX_RETRIES` |
 | Model | `DEFAULT_MODEL`, `DEFAULT_TEMPERATURE`, `DEFAULT_MAX_TOKENS` |
-| Web | `WEB_HOST`, `WEB_PORT`, `WEB_PUBLIC_ACCESS`, `WEB_AUTH_TOKEN` |
+| Web | `WEB_HOST`, `WEB_PORT`, `WEB_ALLOWED_HOSTS`, `WEB_ALLOWED_ORIGINS` |
 | Workspace | `SQUIDWINGS_WORKSPACE` |
 | Ponytail | `PONYTAIL_MODE`, `PONYTAIL_TASKS` |
 | Ringkasan riwayat | `HISTORY_SUMMARY_CHARS`, `HISTORY_SUMMARY_SHARE` |
@@ -105,7 +106,7 @@ python main.py web --tunnel     # buka akses publik lewat Cloudflare Tunnel
 `python cli.py <perintah>` setara dengan `python main.py <perintah>`.
 
 Mode tunnel juga tersedia lewat skrip: `./tunnel.sh start [port]`.
-Bila akses publik dinyalakan, isi `WEB_AUTH_TOKEN`.
+Tidak ada login. Dengan `--tunnel`, siapa pun yang punya URL bisa memakai agent dan membaca semua chat.
 
 ---
 
@@ -140,22 +141,63 @@ CLI dan Web memakai tata letak yang sama: `workspace/<session_id>/`.
 
 ## Memory
 
-- Riwayat chat: bila tidak muat anggaran token, bagian lama diringkas secara ekstraktif (tanpa LLM)
-  dan ditaruh di awal riwayat. Atur dengan `HISTORY_SUMMARY_CHARS` (0 untuk mematikan)
-  dan `HISTORY_SUMMARY_SHARE`.
-- Memory vault Obsidian: ringkasan dari folder `vault/` masuk ke system prompt di CLI dan Web.
-  Hasilnya di-cache berdasarkan waktu modifikasi vault. Di web, blok ini ditaruh setelah prefix
-  yang di-cache agar cache tidak rusak.
+Memory punya tiga lapisan, dan setiap jenis fakta hanya punya satu tempat:
+
+| Lapisan | Isi | Lokasi |
+|---|---|---|
+| Sesi | Riwayat chat. Bagian lama diringkas tanpa LLM (`HISTORY_SUMMARY_CHARS`, `HISTORY_MAX_TOKENS`). | `brain/memory/conversation_store.py` |
+| Proyek | File yang disentuh, keputusan, fakta, error, dan output yang terpotong. Disimpan di `<workspace>/.agent_memory`. | `brain/memory/project_memory.py` |
+| Pengetahuan | Catatan dan playbook yang berlaku lintas proyek. Bisa dibuka langsung di Obsidian. | `vault/` |
+
+- Profil pengguna ada di `vault/90-meta/user-profile.md` dan berlaku di semua proyek. Hanya yang kamu nyatakan yang disimpan: `ingat: saya memakai pnpm`, `nama saya Wira`, atau `/memory add`. Hapus dengan `/memory forget`.
+- Ringkasan memori proyek diurutkan menurut relevansinya dengan permintaan saat ini, lalu menurut usianya.
+- Web chat, team run, dan CLI memakai orchestrator yang sama, jadi perilaku memorinya juga sama.
+- Tool catatan hanya `vault_*`. Nama lama `obsidian_*` otomatis diarahkan ke sana.
 - Hasil web search bisa disimpan ke vault (`WEB_SEARCH_OBSIDIAN_ENABLED`, `OBSIDIAN_VAULT_PATH`).
-- Graphify: aktifkan dengan `GRAPHIFY_MEMORY_ENABLED=true` dan isi `GRAPHIFY_MEMORY_ENDPOINT`.
-  Keluaran graph ada di `graphify-out/` dan `vault/graphify-out/`.
+- Tool `graphify_*` hanya aktif bila `GRAPHIFY_MEMORY_ENABLED=true` dan `GRAPHIFY_MEMORY_ENDPOINT` terisi. Graph vault lokal tersedia lewat `vault_graph_build`, `vault_neighbours`, dan `vault_explain`.
 
 Struktur vault:
 
 ```text
 vault/
-  00-inbox  10-sessions  20-concepts  30-decisions  40-people-projects  90-meta
+  00-inbox  10-sessions  20-concepts  30-decisions  40-people-projects  50-playbooks  90-meta
 ```
+
+---
+
+## Satu Sesi, Satu Set Lengkap
+
+Setiap chat punya foldernya sendiri di `workspace/<sesi>/`, sehingga apa yang dipelajari di satu chat tidak tercampur ke chat lain:
+
+| Komponen | Milik sesi | Lokasi |
+|---|---|---|
+| Memori proyek | Keputusan, fakta, error, file, output terpotong | `.agent_memory/` |
+| Vault Obsidian | Catatan chat ini, bisa dibuka di Obsidian | `.vault/` |
+| Graphify | Graph kode, diperbarui otomatis setelah file berubah | `graphify-out/` |
+| aislop | Skor kualitas, ikut memeriksa file yang baru diubah | `.agent_memory/aislop.json` |
+| Ponytail | Mode per chat: `off`, `lite`, `full`, `ultra` | `.agent_memory/session.json` |
+
+Profil kamu dan playbook tetap global, karena isinya tentang kamu dan cara bekerja. Vault bersama tetap bisa dibaca lewat `scope: global`.
+
+```bash
+npm install -g aislop          # opsional, aktif otomatis setelah terpasang
+uv tool install graphifyy      # opsional, aktif otomatis setelah terpasang
+```
+
+Hapus sesi di web juga menghapus foldernya. Di CLI: `/stack` dan `/ponytail lite`.
+
+---
+
+## Sandbox
+
+Perintah agent (`execute_command`, `run_checks`, dan tes dari verifikasi) berjalan terisolasi. Agent hanya bisa menulis ke folder proyek aktif. Folder home, file `.env`, kunci SSH, dan API key tidak terlihat, internet mati secara default, dan pemakaian CPU, ukuran file, serta jumlah proses dibatasi.
+
+```bash
+sudo apt install bubblewrap   # atau jalankan Docker
+python main.py doctor         # mencoba keluar dari sandbox dan melaporkan hasilnya
+```
+
+Tanpa bubblewrap atau Docker, perintah agent ditolak. Atur `SANDBOX_NETWORK=true` agar `pip install` dan `npm install` bisa jalan, atau `SANDBOX_MODE=off` untuk mematikan isolasi. Tanpa proyek aktif, kode agent sendiri bersifat hanya-baca bagi perintah tersebut.
 
 ---
 
@@ -233,6 +275,32 @@ Folder itu diabaikan Git, jadi hanya `README.md` dan `LICENSE` yang tampil di re
 
 ---
 
+## Execution Harness
+
+`agent/harness/` memindahkan tanggung jawab disiplin dari model ke loop, supaya model murah bekerja lebih mendekati model mahal. Harness berjalan di web chat, team run, dan CLI. Semuanya berjalan di kode tanpa token, kecuali advisor.
+
+| Lapisan | Fungsi |
+|---|---|
+| Tier (`tiers.py`) | Membagi model menjadi lite, standard, dan frontier. Tier lebih murah mendapat batas lebih ketat dan pengawasan lebih banyak. Pola bisa diganti lewat `harness.tiers` di `models_config.yaml`. |
+| Pemilihan tool (`tool_select.py`) | Menawarkan 12 sampai 18 tool yang relevan, bukan 40 tool (sekitar 5 ribu token skema per request). |
+| Guard (`guards.py`) | Memperbaiki argumen rusak, menjelaskan argumen yang kurang, memangkas hasil panjang, dan mendeteksi panggilan yang berulang atau terus gagal. |
+| Verifier (`verifier.py`) | Sebelum jawaban diterima: berkas yang berubah harus valid, tes yang ada harus lulus, dan klaim pekerjaan harus didukung tool call. Kegagalan dikembalikan ke model. Yang tetap gagal ditampilkan ke pengguna sebagai belum terverifikasi. |
+| Advisor (`advisor.py`) | Run yang macet mendapat saran singkat dari model lebih kuat, lalu diserahkan ke model itu jika saran tidak membantu. Set `HARNESS_ADVISOR=false` agar biaya tetap. |
+| Playbook (`playbooks.py`) | Run dengan minimal tiga tool call disimpan ke `vault/50-playbooks` dan bisa dibaca di Obsidian. Permintaan serupa berikutnya memakai langkah dan jebakan dari catatan itu. |
+| Briefing (`briefing.py`) | Memasukkan playbook, catatan vault, dan berkas yang relevan ke prompt, sehingga model tidak perlu ingat untuk mencarinya. |
+
+Tool berjalan di mesin ini dan tunduk pada `security/policy.yaml`. Pakai `AGENT_DISABLED_TOOLS` untuk menolak tool tertentu, misalnya `execute_command`.
+
+Tool kode untuk memahami proyek tanpa membaca semuanya: `project_overview` (stack dan cara menjalankan tes), `code_outline` (fungsi dan kelas beserta nomor baris), `find_symbol` (definisi dan pemakaian), dan `run_checks` (tes, lint, dan type check proyek). `file_patch` kini menoleransi selisih indentasi bila hanya ada satu lokasi yang cocok, dan memberi baris terdekat saat gagal.
+
+Skill ada di `brain/skills/`: `fix-bug`, `add-feature`, `clean-code`, `design-ui`, `build-web`, dan `build-backend`. Skill yang cocok dengan permintaan masuk ke prompt model lite dan standard secara otomatis, sisanya bisa dimuat dengan `load_skill`. Tambahkan skill sendiri lewat `SKILLS_DIR`.
+
+Model tanpa tool calling bawaan tetap bisa memakai tool: daftar tool dikirim sebagai teks dan loop membaca panggilannya dari jawaban model.
+
+Provider tambahan didaftarkan di `config/providers.yaml`, masing-masing dengan URL, key, prefix model, dan batas konkurensi sendiri, sehingga satu tim bisa memakai beberapa provider. Bila saldo satu provider habis (HTTP 402), model provider itu dilewati 10 menit dan request pindah ke provider lain.
+
+Team flow menambahkan `depends_on` antar-agent, reviewer opsional yang bisa mengembalikan draf lead sampai dua kali, dan template siap pakai di `GET /api/teams/templates`.
+
 ## Troubleshooting
 
 | Gejala | Penyebab dan solusi |
@@ -243,7 +311,7 @@ Folder itu diabaikan Git, jadi hanya `README.md` dan `LICENSE` yang tampil di re
 | Video ditolak | Set `VIDEO_UPLOAD_ENABLED=true` dan pasang ffmpeg |
 | Gambar tidak terbaca model | Model tidak mendukung vision. Pilih model vision |
 | Nilai env tidak terbaca | Pastikan tidak ada komentar di baris yang sama dengan nilai |
-| Web tidak bisa diakses dari luar | Gunakan `--tunnel` dan isi `WEB_AUTH_TOKEN` |
+| Web tidak bisa diakses dari luar | Gunakan `--tunnel` |
 
 ---
 

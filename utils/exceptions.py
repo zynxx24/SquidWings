@@ -116,6 +116,18 @@ class RateLimitError(ModelError):
         self.details["retry_after"] = retry_after
 
 
+class ReasoningBudgetError(ModelError):
+    """A reasoning model produced no answer, usually with a short provider lockout.
+
+    Attributes:
+        retry_after: Seconds until the provider accepts this model again.
+    """
+
+    def __init__(self, message: str, retry_after: float | None = None, **kwargs: Any) -> None:
+        super().__init__(message, **kwargs)
+        self.retry_after = retry_after
+
+
 class TimeoutError(ModelError):  # noqa: A001
     """Request timed out.
 

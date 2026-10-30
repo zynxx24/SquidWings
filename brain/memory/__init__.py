@@ -1,9 +1,6 @@
-"""Conversation, workspace, and continuation memory utilities."""
+"""Memory layers: see ``project_memory`` for how they fit together."""
 
-from brain.memory.continuation_memory import ContinuationMemory
-from brain.memory.workspace_memory import WorkspaceMemory
+from brain.memory.conversation_store import ConversationStore
+from brain.memory.project_memory import ProjectMemory
 
-__all__ = [
-    "ContinuationMemory",
-    "WorkspaceMemory",
-]
+__all__ = ["ConversationStore", "ProjectMemory"]
