@@ -106,6 +106,16 @@ class FallbackStrategy:
                     )
                     return model
 
+        # If configured chain models are not available in current registry,
+        # fallback dynamically to any other registered model.
+        for alt_model in self._registry.get_all():
+            if alt_model.id not in tried and alt_model.id != failed_model:
+                logger.info(
+                    f"[fallback] Dynamic fallback for {task_type.value}: "
+                    f"{failed_model} → {alt_model.id}"
+                )
+                return alt_model
+
         logger.warning(
             f"[fallback] All models exhausted for {task_type.value}. "
             f"Tried: {sorted(tried)}"

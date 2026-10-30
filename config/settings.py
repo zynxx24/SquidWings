@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     deepseek_base_url: str = "https://api.deepseek.com/v1"
     graphify_base_url: str = "https://api.graphify.ai/v1"
 
+    # --- Web feature flags ---
+    # ``None`` means "decide from APP_ENV": development is chat-only, other
+    # environments keep the team canvas. Set WEB_TEAMS_ENABLED explicitly to
+    # force the behaviour either way.
+    web_teams_enabled: bool | None = None
+
     # --- Web public access ---
     web_public_access: bool = False
     web_auth_token: str = ""
@@ -124,6 +130,18 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() in {"production", "prod"}
+
+    @property
+    def teams_enabled(self) -> bool:
+        """Whether the multi-agent team canvas is available.
+
+        Development runs chat-only: the team API is not mounted and the UI
+        hides the canvas tab. Other environments keep the canvas unless the
+        flag is switched off explicitly.
+        """
+        if self.web_teams_enabled is not None:
+            return self.web_teams_enabled
+        return self.app_env.lower() not in {"development", "dev", "local"}
 
 
 @lru_cache(maxsize=1)

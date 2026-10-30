@@ -34,7 +34,10 @@ class RunInput(BaseModel):
 
 
 def service(request: Request) -> Any:
-    return request.app.state.team_orchestrator
+    manager = getattr(request.app.state, "team_orchestrator", None)
+    if manager is None:
+        raise HTTPException(503, "Team service is not available")
+    return manager
 
 
 def member_data(member: MemberInput) -> dict[str, Any]:

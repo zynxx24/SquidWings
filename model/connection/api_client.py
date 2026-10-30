@@ -21,6 +21,7 @@ import httpx
 from dotenv import load_dotenv
 
 from model.connection.base_client import BaseClient
+from model.settings.rate_limiter import RateLimiter, get_default_rate_limiter
 from utils.exceptions import (
     ConnectionError,  # noqa: A004
     ModelError,
@@ -49,12 +50,30 @@ class APIClient(BaseClient):
         base_url: str,
         api_key: str,
         timeout: int = 120,
+        rate_limiter: RateLimiter | None = None,
+        max_retries: int | None = None,
+        retry_backoff_factor: float | None = None,
     ) -> None:
         super().__init__(base_url, api_key, timeout)
         self._client: httpx.AsyncClient | None = None
         self._bansos_client: httpx.AsyncClient | None = None
         self._bansos_url: str = ""
         self._bansos_key: str = ""
+        self.rate_limiter = rate_limiter or get_default_rate_limiter()
+        if max_retries is not None:
+            self.max_retries = max_retries
+        else:
+            try:
+                self.max_retries = int(os.getenv("MAX_RETRIES", "3"))
+            except ValueError:
+                self.max_retries = 3
+        if retry_backoff_factor is not None:
+            self.retry_backoff_factor = retry_backoff_factor
+        else:
+            try:
+                self.retry_backoff_factor = float(os.getenv("RETRY_BACKOFF_FACTOR", "1.5"))
+            except ValueError:
+                self.retry_backoff_factor = 1.5
 
     def _is_bansos(self, model: str) -> bool:
         return model.startswith("bansos/") or model == "deepseek-v4.1-flash-1017"
@@ -209,6 +228,7 @@ class APIClient(BaseClient):
             )
 
             try:
+                await self.rate_limiter.wait_and_acquire(api_model, max_wait=30.0)
                 async with Timer(f"chat_completion({model})") as t:
                     response = await client.post(
                         "/chat/completions",
@@ -260,6 +280,19 @@ class APIClient(BaseClient):
                     await asyncio.sleep(backoff)
                     continue
                 else:
+                    if isinstance(e, RateLimitError):
+                        retry_after = e.retry_after
+                        if retry_after is None or retry_after <= 0:
+                            retry_after = min(2.0 * (self.retry_backoff_factor ** (attempt - 1)), 15.0)
+                        self.rate_limiter.penalize(api_model, penalty_seconds=retry_after)
+                        if attempt <= self.max_retries:
+                            logger.warning(
+                                f"[api] Rate limited on {api_model} (HTTP 429). "
+                                f"Retrying in {retry_after:.1f}s (attempt {attempt}/{self.max_retries})..."
+                            )
+                            await asyncio.sleep(retry_after)
+                            continue
+
                     if isinstance(e, (ConnectionError, TimeoutError, RateLimitError, ModelError)):
                         raise
                     if isinstance(e, httpx.ConnectError):
@@ -317,6 +350,7 @@ class APIClient(BaseClient):
             logger.debug(f"[api] POST /chat/completions (stream) | model={api_model} | attempt={attempt}")
 
             try:
+                await self.rate_limiter.wait_and_acquire(api_model, max_wait=30.0)
                 async with client.stream(
                     "POST",
                     "/chat/completions",
@@ -357,6 +391,19 @@ class APIClient(BaseClient):
                     await asyncio.sleep(backoff)
                     continue
                 else:
+                    if isinstance(e, RateLimitError):
+                        retry_after = e.retry_after
+                        if retry_after is None or retry_after <= 0:
+                            retry_after = min(2.0 * (self.retry_backoff_factor ** (attempt - 1)), 15.0)
+                        self.rate_limiter.penalize(api_model, penalty_seconds=retry_after)
+                        if attempt <= self.max_retries:
+                            logger.warning(
+                                f"[api] Rate limited on stream {api_model} (HTTP 429). "
+                                f"Retrying in {retry_after:.1f}s (attempt {attempt}/{self.max_retries})..."
+                            )
+                            await asyncio.sleep(retry_after)
+                            continue
+
                     if isinstance(e, (ConnectionError, TimeoutError, RateLimitError, ModelError)):
                         raise
                     if isinstance(e, httpx.TimeoutException):

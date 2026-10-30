@@ -207,7 +207,7 @@ python -m pytest -m "not live"   # lewati tes yang memanggil API asli
 ruff check .
 ```
 
-Terakhir dijalankan: 208 tes lolos. Alur gambar dan workspace sesi di web belum punya tes ujung ke ujung.
+Terakhir dijalankan: 218 tes lolos. Alur gambar dan workspace sesi di web belum punya tes ujung ke ujung.
 
 ---
 

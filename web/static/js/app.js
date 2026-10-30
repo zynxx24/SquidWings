@@ -7,7 +7,7 @@
 
   const S = {
     models: [], byId: {}, current: null, session: null, ws: null,
-    attachments: [], busy: false,
+    attachments: [], busy: false, features: {},
     teams: [], team: null, members: [], lead: null, selected: null, run: null, events: null,
   };
 
@@ -44,8 +44,15 @@
   const post = (url, body) => j(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
   /* ---------- Tabs ---------- */
+  function tabAvailable(name) {
+    const btn = document.querySelector(`.tab[data-tab="${name}"]`);
+    if (!btn) return false;
+    return !btn.dataset.feature || !S.features || S.features[btn.dataset.feature] !== false;
+  }
+
   function showTab(name) {
     closeDrawers();
+    if (!tabAvailable(name)) name = 'chat';
     document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
     $('view-' + name).classList.remove('hidden');
     document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
@@ -53,6 +60,17 @@
     if (name === 'canvas') loadTeams();
   }
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+  /* ---------- Features ---------- */
+  function applyFeatures(features) {
+    S.features = features || {};
+    document.querySelectorAll('.tab[data-feature]').forEach(b => {
+      const on = S.features[b.dataset.feature] !== false;
+      b.classList.toggle('hidden', !on);
+    });
+    const canvas = $('view-canvas');
+    if (canvas && S.features.teams === false) canvas.classList.add('hidden');
+  }
 
   /* ---------- Models ---------- */
   async function loadModels(refresh = false) {
@@ -276,6 +294,7 @@
   const newId = () => 'a' + Math.random().toString(36).slice(2, 9);
 
   async function loadTeams() {
+    if (S.features && S.features.teams === false) return;
     try {
       S.teams = (await j('/api/teams')).teams;
       renderTeamList();
@@ -489,6 +508,8 @@
   (async () => {
     let defaultModel = null;
     try {
+      const cfg = await j('/api/config').catch(() => ({}));
+      applyFeatures(cfg.features);
       const s = await j('/api/session/new'); S.session = s.session_id; defaultModel = s.default_model;
       await loadModels();
       if (S.current !== defaultModel) await post('/api/model/select', { session_id: S.session, model_id: S.current }).catch(() => {});

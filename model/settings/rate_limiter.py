@@ -72,9 +72,13 @@ class RateLimiter:
     and refill rate. Thread-safe.
     """
 
-    # Default: 10 requests/minute = 0.167 requests/second
-    DEFAULT_CAPACITY: float = 10.0
-    DEFAULT_REFILL_RATE: float = 10.0 / 60.0
+    # Default: 100 requests/minute = 1.667 requests/second
+    DEFAULT_CAPACITY: float = 100.0
+    DEFAULT_REFILL_RATE: float = 100.0 / 60.0
+
+    # Default for free-tier models (100 capacity, 100 req/min)
+    FREE_MODEL_CAPACITY: float = 100.0
+    FREE_MODEL_REFILL_RATE: float = 100.0 / 60.0
 
     def __init__(
         self,
@@ -90,8 +94,31 @@ class RateLimiter:
             model_limits: Per-model overrides, e.g.
                 ``{"model-id": {"capacity": 20, "refill_rate": 0.5}}``.
         """
-        self._default_capacity = default_capacity or self.DEFAULT_CAPACITY
-        self._default_refill_rate = default_refill_rate or self.DEFAULT_REFILL_RATE
+        import os
+
+        env_cap = os.getenv("RATE_LIMIT_CAPACITY")
+        env_rpm = os.getenv("RATE_LIMIT_RPM")
+
+        if default_capacity is not None:
+            self._default_capacity = default_capacity
+        elif env_cap:
+            try:
+                self._default_capacity = float(env_cap)
+            except ValueError:
+                self._default_capacity = self.DEFAULT_CAPACITY
+        else:
+            self._default_capacity = self.DEFAULT_CAPACITY
+
+        if default_refill_rate is not None:
+            self._default_refill_rate = default_refill_rate
+        elif env_rpm:
+            try:
+                self._default_refill_rate = float(env_rpm) / 60.0
+            except ValueError:
+                self._default_refill_rate = self.DEFAULT_REFILL_RATE
+        else:
+            self._default_refill_rate = self.DEFAULT_REFILL_RATE
+
         self._buckets: dict[str, TokenBucket] = {}
         self._lock = threading.Lock()
 
@@ -114,9 +141,12 @@ class RateLimiter:
         if model_id not in self._buckets:
             with self._lock:
                 if model_id not in self._buckets:
+                    is_free = "free" in model_id.lower()
+                    cap = self.FREE_MODEL_CAPACITY if is_free else self._default_capacity
+                    refill = self.FREE_MODEL_REFILL_RATE if is_free else self._default_refill_rate
                     self._buckets[model_id] = TokenBucket(
-                        capacity=self._default_capacity,
-                        refill_rate=self._default_refill_rate,
+                        capacity=cap,
+                        refill_rate=refill,
                     )
         return self._buckets[model_id]
 
@@ -169,11 +199,65 @@ class RateLimiter:
             Seconds to wait, or 0.0 if available now.
         """
         bucket = self._get_bucket(model_id)
+        now = time.monotonic()
+        penalty_wait = max(0.0, bucket.last_refill - now)
         available = bucket.available
-        if available >= 1.0:
+        if available >= 1.0 and penalty_wait == 0.0:
             return 0.0
-        needed = 1.0 - available
-        return needed / bucket.refill_rate if bucket.refill_rate > 0 else float("inf")
+        needed = max(0.0, 1.0 - available)
+        refill_time = (needed / bucket.refill_rate) if bucket.refill_rate > 0 else 5.0
+        return penalty_wait + refill_time
+
+    async def wait_and_acquire(
+        self,
+        model_id: str,
+        tokens: float = 1.0,
+        max_wait: float = 30.0,
+    ) -> bool:
+        """Wait until tokens are available (up to max_wait) and acquire them.
+
+        Args:
+            model_id: The model identifier.
+            tokens: Number of tokens to consume.
+            max_wait: Maximum seconds to wait before giving up.
+
+        Returns:
+            True if acquired, False if timed out.
+        """
+        import asyncio
+
+        start = time.monotonic()
+        while True:
+            if self.acquire(model_id, tokens):
+                return True
+            wait_time = self.get_wait_time(model_id)
+            elapsed = time.monotonic() - start
+            if wait_time <= 0.0:
+                wait_time = 0.5
+            if (elapsed + wait_time) > max_wait:
+                logger.warning(
+                    f"[rate_limit] Max wait {max_wait}s exceeded for {model_id} (needed {wait_time:.1f}s)"
+                )
+                return False
+            logger.info(
+                f"[rate_limit] Throttling {model_id}: waiting {wait_time:.2f}s before sending..."
+            )
+            await asyncio.sleep(wait_time)
+
+    def penalize(self, model_id: str, penalty_seconds: float = 5.0) -> None:
+        """Penalize model bucket after HTTP 429 so subsequent/concurrent calls back off.
+
+        Args:
+            model_id: The model that was rate limited.
+            penalty_seconds: Seconds to cool down before token refills resume.
+        """
+        bucket = self._get_bucket(model_id)
+        with self._lock:
+            bucket.tokens = 0.0
+            bucket.last_refill = time.monotonic() + penalty_seconds
+            logger.warning(
+                f"[rate_limit] Model {model_id} penalized with {penalty_seconds:.1f}s cool-down"
+            )
 
     def get_status(self, model_id: str) -> dict[str, Any]:
         """Get rate limit status for a model.
@@ -204,3 +288,15 @@ class RateLimiter:
                 self._buckets.pop(model_id, None)
             else:
                 self._buckets.clear()
+
+
+_default_rate_limiter: RateLimiter | None = None
+
+
+def get_default_rate_limiter() -> RateLimiter:
+    """Get the shared singleton RateLimiter instance."""
+    global _default_rate_limiter
+    if _default_rate_limiter is None:
+        _default_rate_limiter = RateLimiter()
+    return _default_rate_limiter
+

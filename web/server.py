@@ -57,6 +57,14 @@ async def shutdown_event() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """FastAPI lifespan context manager for startup and shutdown."""
+    # Build the shared backend at startup instead of on first request. The team
+    # canvas streams runs through the same orchestrator, so a lazy build left
+    # ``app.state.team_orchestrator`` as ``None`` for any team request that
+    # arrived before the first chat call (the 500 on ``None.store``).
+    try:
+        get_orchestrator()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning(f"[web] eager orchestrator init failed: {exc}")
     yield
     await shutdown_event()
 
@@ -70,7 +78,11 @@ app = FastAPI(
 )
 app.state.team_orchestrator = None
 
-app.include_router(team_router)
+# The team canvas is a development-optional feature: it is not mounted at all
+# when disabled, so the endpoints 404 instead of leaking a half-wired surface.
+_TEAMS_ENABLED = get_settings().teams_enabled
+if _TEAMS_ENABLED:
+    app.include_router(team_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -97,9 +109,10 @@ def get_orchestrator() -> Orchestrator:
     if _orchestrator is None:
         settings = get_settings()
         _orchestrator = Orchestrator.from_settings(settings)
-        app.state.team_orchestrator = TeamOrchestrator(
-            _orchestrator, TeamStore(Path(__file__).parent / "data" / "teams")
-        )
+        if settings.teams_enabled:
+            app.state.team_orchestrator = TeamOrchestrator(
+                _orchestrator, TeamStore(Path(__file__).parent / "data" / "teams")
+            )
         logger.info("[web] Orchestrator initialized")
     return _orchestrator
 
@@ -395,6 +408,13 @@ async def health_check() -> dict[str, Any]:
         return {"status": "healthy" if healthy else "unhealthy", "healthy": healthy}
     except Exception as e:
         return {"status": "error", "healthy": False, "error": str(e)}
+
+
+@app.get("/api/config")
+async def client_config() -> dict[str, Any]:
+    """Feature flags the frontend needs to render its navigation."""
+    settings = get_settings()
+    return {"features": {"teams": settings.teams_enabled}}
 
 
 @app.get("/api/security")
