@@ -125,7 +125,7 @@ def _compile_prompt(
 
 def _execute_system_inject(state: WorkingMemoryState) -> str:
     """Ringkasan working memory yang disuntikkan ke system prompt saat EXECUTE."""
-    return state.to_prompt_block()
+    return state.to_cache_block()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -281,6 +281,9 @@ class PipelineExecutor:
             self._wm.save(state)
             return
 
+        executor = web_tool.executor
+        is_async = web_tool.is_async
+
         done_queries = {r.query for r in state.web_results}
 
         for query in state.search_queries:
@@ -289,8 +292,18 @@ class PipelineExecutor:
                 continue
 
             try:
-                raw_result = await web_tool.execute({"query": query, "max_results": 4})
-                results    = _parse_web_results(query, raw_result)
+                raw_result = executor({"query": query, "max_results": 4})
+                if is_async:
+                    raw_result = await raw_result
+
+                if isinstance(raw_result, dict) and raw_result.get("ok") is False:
+                    logger.warning(
+                        "[pipeline] SEARCH '%s' returned not-ok: %s",
+                        query, raw_result.get("error", "unknown error"),
+                    )
+                    continue
+
+                results = _parse_web_results(query, raw_result)
                 state.web_results.extend(results)
                 self._wm.save(state)   # checkpoint setelah setiap query
                 logger.info("[pipeline] SEARCH '%s' → %d results", query, len(results))
@@ -353,16 +366,16 @@ class PipelineExecutor:
             api_client=self._api,
             tool_registry=self._tools,
             max_iterations=_TOOL_MAX_CALLS,
-            stream=stream,
-            on_content_chunk=on_content_chunk,
-            on_thinking_chunk=on_thinking_chunk,
         )
 
         loop_result = await loop.run(
-            model=model_id,
+            model_id=model_id,
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
+            stream=stream,
+            on_content_chunk=on_content_chunk,
+            on_thinking_chunk=on_thinking_chunk,
         )
 
         # Checkpoint tool calls ke working memory
@@ -407,8 +420,7 @@ class PipelineExecutor:
             temperature=0.3,   # deterministik untuk planning
             stream=False,
         )
-        handler = ResponseHandler()
-        parsed  = handler.parse(resp)
+        parsed = ResponseHandler.handle(resp)
         return parsed.content or ""
 
 

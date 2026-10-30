@@ -22,6 +22,42 @@ logger = get_logger(__name__)
 # Type for tool executor functions
 ToolExecutor = Callable[..., Any] | Callable[..., Awaitable[Any]]
 
+# Models frequently invent near-miss tool names ("shell", "bash", "read").
+# Resolving them here keeps one wasted iteration from killing a whole turn.
+_TOOL_ALIASES: dict[str, str] = {
+    "shell": "execute_command",
+    "bash": "execute_command",
+    "sh": "execute_command",
+    "terminal": "execute_command",
+    "run_command": "execute_command",
+    "run_shell": "execute_command",
+    "cmd": "execute_command",
+    "read": "read_file",
+    "cat": "read_file",
+    "open_file": "read_file",
+    "view_file": "read_file",
+    "list_dir": "list_directory",
+    "ls": "list_directory",
+    "dir_list": "list_directory",
+    "grep": "file_search",
+    "search_file": "file_search",
+    "search_files": "file_search",
+    "find": "file_search",
+    "write": "file_write",
+    "write_file": "file_write",
+    "create_file": "file_write",
+    "edit": "file_patch",
+    "patch": "file_patch",
+    "apply_patch": "file_patch",
+    "rename": "file_move",
+    "mv": "file_move",
+    "rm": "file_delete",
+    "delete_file": "file_delete",
+    "stat": "file_stat",
+    "mkdir": "dir_create",
+    "websearch": "web_search",
+}
+
 
 class _ToolEntry:
     """Internal entry for a registered tool."""
@@ -149,6 +185,28 @@ class ToolRegistry:
         """Get all registered tool names."""
         return list(self._tools.keys())
 
+    def resolve_name(self, tool_name: str) -> str:
+        """Map a model-proposed tool name onto a registered tool.
+
+        Handles exact matches, provider prefixes (``functions.read_file``,
+        ``tool:read_file``), case differences, and a small alias table for
+        common inventions such as ``shell`` or ``bash``.
+        """
+        name = (tool_name or "").strip()
+        if name in self._tools:
+            return name
+
+        bare = name.lower()
+        for sep in ("::", "."):
+            if sep in bare:
+                bare = bare.rsplit(sep, 1)[-1]
+        bare = bare.strip("/: ").replace("-", "_")
+
+        for candidate in (bare, _TOOL_ALIASES.get(bare, "")):
+            if candidate and candidate in self._tools:
+                return candidate
+        return name
+
     async def execute(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         """Execute a registered tool.
 
@@ -162,10 +220,19 @@ class ToolRegistry:
         Raises:
             ToolError: If tool is not found or execution fails.
         """
+        resolved = self.resolve_name(tool_name)
+        if resolved != tool_name:
+            logger.info(f"[tool_registry] Resolved tool name: {tool_name} -> {resolved}")
+            tool_name = resolved
+
         entry = self._tools.get(tool_name)
         if not entry:
+            import difflib
+
+            close = difflib.get_close_matches(tool_name, list(self._tools), n=3, cutoff=0.5)
+            hint = f" Available tools: {', '.join(close)}" if close else ""
             raise ToolError(
-                message=f"Unknown tool: {tool_name}",
+                message=f"Unknown tool: {tool_name}.{hint}",
                 tool_name=tool_name,
             )
 
@@ -231,8 +298,8 @@ class ToolRegistry:
             return None
 
     def has_tool(self, tool_name: str) -> bool:
-        """Check if a tool is registered."""
-        return tool_name in self._tools
+        """Check if a tool is registered (aliases and prefixes included)."""
+        return self.resolve_name(tool_name) in self._tools
 
     @property
     def tool_count(self) -> int:

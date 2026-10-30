@@ -438,7 +438,8 @@ class AgentLoop:
             and not arguments.get("workspace_path")
         ):
             import os as _os
-            _ws = _os.getenv("SQUIDWINGS_WORKSPACE", "").strip()
+            from utils.workspace_context import get_active_workspace as _gaw
+            _ws = _gaw() or _os.getenv("SQUIDWINGS_WORKSPACE", "").strip()
             if _ws:
                 arguments["workspace_path"] = _ws
 

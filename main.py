@@ -40,6 +40,10 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.tree import Tree
 
+from brain.classifier.continuation import (
+    continuation_hint,
+    is_continuation_input,
+)
 from brain.classifier.intent_classifier import IntentClassifier
 from brain.context.context_assembler import ContextAssembler
 from brain.memory.continuation_memory import ContinuationMemory
@@ -1121,6 +1125,27 @@ def _append_to_system_message(
         msg["content"] = str(content or "") + separator + extra_text
 
 
+def _append_volatile_to_system_message(msg: dict[str, Any], extra_text: str) -> None:
+    """Append per-turn content without breaking the prompt-cache prefix.
+
+    ``apply_cache_control`` puts a cache breakpoint at the end of the system
+    block. Text appended *inside* that block changes the cached prefix, so
+    any volatile content (vault memory, which is rewritten every few turns by
+    session distill) would invalidate the whole cache on each edit. Appending
+    it as a separate, uncached block keeps the stable prefix cacheable and
+    still lands in the system message, after the cached part.
+    """
+    if not extra_text:
+        return
+    content = msg.get("content")
+    if isinstance(content, list) and any(
+        isinstance(block, dict) and block.get("cache_control") for block in content
+    ):
+        content.append({"type": "text", "text": extra_text})
+        return
+    _append_to_system_message(msg, extra_text, separator="")
+
+
 async def _distill_cli_session(
     conversation_store: ConversationStore,
     session_id: str,
@@ -1187,16 +1212,29 @@ async def process_input(
         str: The model's response text.
     """
     with Timer("total_pipeline"):
-        # 1. Classify intent + difficulty
+        # 1. Classify intent + difficulty.
+        # A bare "lanjutkan" carries no intent of its own: the heuristic
+        # classifier can only answer "activity/easy, conf≈0.30", which then
+        # routes the turn to an unrelated model and throws away the context of
+        # the truncated work. Continuation turns therefore inherit the model
+        # that produced the previous output.
+        resume_model_id = (
+            previous_model or conversation_store.get_last_used_model(session_id)
+        )
+        is_continue_turn = is_continuation_input(user_input)
+
         classification, difficulty = classifier.classify_with_difficulty(user_input)
         diff_enum = Difficulty(difficulty)
 
-        task_label = classification.task_type.value
-        conf_label = f"{classification.confidence:.2f}"
-        console.print(
-            f"  [dim]📋 {task_label}/{difficulty} "
-            f"(conf={conf_label})[/dim]"
-        )
+        if is_continue_turn:
+            console.print("  [dim]🔁 continuation turn — reusing previous model[/dim]")
+        else:
+            task_label = classification.task_type.value
+            conf_label = f"{classification.confidence:.2f}"
+            console.print(
+                f"  [dim]📋 {task_label}/{difficulty} "
+                f"(conf={conf_label})[/dim]"
+            )
 
         # 1b. Reset fallback chain — setiap request baru mulai bersih
         fallback.reset_session(session_id)
@@ -1205,10 +1243,20 @@ async def process_input(
         handler = HANDLERS.get(classification.task_type, HANDLERS[TaskType.ACTIVITY])
 
         # 3. Route to model (or use override)
+        model = None
         if override_model and registry:
             model = registry.get(override_model)
             if not model:
                 console.print(f"[red]❌ Override model '{override_model}' not found[/red]")
+                model = router.route(classification.task_type, diff_enum)
+        elif is_continue_turn and resume_model_id and registry:
+            model = registry.get(resume_model_id)
+            if not model:
+                logger.warning(
+                    "[process_input] continuation model '%s' not in registry; "
+                    "falling back to normal routing",
+                    resume_model_id,
+                )
                 model = router.route(classification.task_type, diff_enum)
         else:
             model = router.route(classification.task_type, diff_enum)
@@ -1233,18 +1281,10 @@ async def process_input(
             _cont_memory = ContinuationMemory(active_workspace)
             _ws_memory.increment_turn()
 
-            # Detect "continue" — inject truncation buffer instead of full context
-            # Normalize: lowercase, strip punctuation/extra spaces so that
-            # "Lanjut!", "continue." or "lanjut  aja" still hit this branch.
-            _norm_input = " ".join(
-                re.sub(r"[^\w\s]", " ", user_input.lower()).split()
-            )
-            is_continue = _norm_input in {
-                "continue", "continew", "lanjut", "lanjutkan", "terusin",
-                "sambung", "next", "go on", "keep going",
-                "lanjut aja", "lanjutkan aja", "lanjut dong", "terus",
-                "teruskan", "gas", "ok lanjut", "oke lanjut",
-            }
+            # Detect "continue" — inject truncation buffer instead of full context.
+            # The detector lives in brain.classifier.continuation so routing and
+            # memory injection can never disagree about what a continuation is.
+            is_continue = is_continue_turn
 
             if is_continue and (_ws_memory.has_truncation() or _cont_memory.has_code_buffer()):
                 # Prefer continuation_memory's smart code buffer
@@ -1265,7 +1305,7 @@ async def process_input(
                     parts.append(activity_ctx)
                 if continuity_ctx:
                     parts.append(continuity_ctx)
-                parts.append(f"[USER REQUEST]\n{user_input} (Lanjutkan langkah berikutnya sesuai rencana dan konteks sebelumnya)")
+                parts.append(f"[USER REQUEST]\n{user_input} {continuation_hint()}")
                 augmented_input = "\n\n".join(parts)
                 console.print("  [dim cyan]🔄 Continue mode — melanjutkan langkah berikutnya...[/dim cyan]")
             else:
@@ -1289,6 +1329,12 @@ async def process_input(
                 context_parts.append(f"[USER REQUEST]\n{user_input}")
 
                 augmented_input = "\n\n".join(context_parts)
+
+        # Continuation turn without an active workspace: there is no buffer to
+        # inject, but the message is too thin to stand alone, so state the
+        # resume intent explicitly rather than letting the model ask "lanjut apa?".
+        if is_continue_turn and augmented_input == user_input:
+            augmented_input = f"{user_input}\n\n{continuation_hint()}"
 
         # Inject memory context (for cross-model continuity)
         if memory_context:
@@ -1320,7 +1366,7 @@ async def process_input(
         if vault_memory and ctx.messages:
             for msg in ctx.messages:
                 if msg.get("role") == "system":
-                    _append_to_system_message(msg, vault_memory, separator="")
+                    _append_volatile_to_system_message(msg, vault_memory)
                     break
 
         # 5. Prepare request params
@@ -2084,26 +2130,10 @@ async def chat_mode() -> None:
     )
 
     # Fetch full models from 9Router and register Gemini, Kagiro, and Claude models
-    try:
-        gemini_api_models = await api_client.list_gemini_models()
-        registry.register_from_api_models(gemini_api_models)
-        logger.info(f"[main] Loaded {len(gemini_api_models)} Gemini models dynamically from 9Router")
-    except Exception as e:
-        logger.warning(f"[main] Could not dynamically load Gemini models from 9Router: {e}")
-
-    try:
-        kg_api_models = await api_client.list_kg_models()
-        registry.register_from_api_models(kg_api_models)
-        logger.info(f"[main] Loaded {len(kg_api_models)} Kagiro models dynamically from 9Router")
-    except Exception as e:
-        logger.warning(f"[main] Could not dynamically load Kagiro models from 9Router: {e}")
-
-    try:
-        claude_api_models = await api_client.list_claude_models()
-        registry.register_from_api_models(claude_api_models)
-        logger.info(f"[main] Loaded {len(claude_api_models)} Claude models dynamically from 9Router")
-    except Exception as e:
-        logger.warning(f"[main] Could not dynamically load Claude models from 9Router: {e}")
+    # Auto-fetch /models from every endpoint (main router + Bansos) and
+    # register everything, so new models appear without editing config.
+    synced = await api_client.sync_all_models(registry)
+    logger.info(f"[main] Auto-synced models: {synced}")
     classifier = IntentClassifier()
     router = RoutingType(config_path=settings.models_config_path, registry=registry)
     conversation_store = ConversationStore()
@@ -2316,6 +2346,14 @@ async def chat_mode() -> None:
                 )
                 if response_text and not response_text.startswith("Maaf, model"):
                     last_successful_model = override_model or conversation_store.get_last_used_model(session_id)
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                # Ctrl+C must not print a traceback or kill the session. Note
+                # that CancelledError and KeyboardInterrupt are BaseException
+                # subclasses, so a plain ``except Exception`` would miss them.
+                logger.info("[chat_mode] turn interrupted by user")
+                console.print()
+                console.print("[dim]⏹ Dihentikan (Ctrl+C). Sesi tetap aktif.[/dim]")
+                response_text = ""
             except Exception as proc_err:
                 logger.exception(f"[chat_mode] Unhandled error during process_input: {proc_err}")
                 console.print(f"\n[red]❌ Terjadi kendala: {escape(str(proc_err))}[/red]")
@@ -2337,7 +2375,15 @@ async def chat_mode() -> None:
                 "[dim]─────────────────────── ✅ Selesai — ketik balasan Anda ───────────────────────[/dim]"
             )
     finally:
-        await api_client.close()
+        # The client may already be mid-teardown when the user interrupts the
+        # loop; a second interrupt here would replace a clean exit with a
+        # traceback.
+        try:
+            await api_client.close()
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            logger.info("[chat_mode] client close interrupted")
+        except Exception as exc:  # noqa: BLE001 - shutdown must not raise
+            logger.warning("[chat_mode] client close failed: %s", exc)
         console.print("\n[dim]Goodbye! 👋[/dim]")
 
 
@@ -2570,6 +2616,20 @@ async def ask_cmd(question: str, model: str | None = None) -> None:
         await api_client.close()
 
 
+def _run_async(coro_fn, *fn_args, **fn_kwargs) -> None:
+    """Run a coroutine function and exit quietly when the user hits Ctrl+C.
+
+    Without this, ``asyncio.run`` lets ``KeyboardInterrupt`` bubble out of
+    ``main()`` and Python prints a full traceback for what is a normal way to
+    quit a CLI.
+    """
+    try:
+        asyncio.run(coro_fn(*fn_args, **fn_kwargs))
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("[main] interrupted by user")
+        console.print("\n[dim]⏹ Dihentikan.[/dim]")
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -2623,15 +2683,15 @@ Examples:
     args = parser.parse_args()
 
     if args.command == "chat" or args.command is None:
-        asyncio.run(chat_mode())
+        _run_async(chat_mode)
     elif args.command == "ask":
-        asyncio.run(ask_cmd(args.question, getattr(args, "model", None)))
+        _run_async(ask_cmd, args.question, getattr(args, "model", None))
     elif args.command == "models":
-        asyncio.run(list_models_cmd())
+        _run_async(list_models_cmd)
     elif args.command in ("fetch", "fetch-models"):
-        asyncio.run(fetch_models_cmd())
+        _run_async(fetch_models_cmd)
     elif args.command == "health":
-        asyncio.run(health_cmd())
+        _run_async(health_cmd)
     elif args.command == "web":
         from rich.panel import Panel
 

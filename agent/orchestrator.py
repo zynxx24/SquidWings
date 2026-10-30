@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from brain.classifier.continuation import continuation_hint, is_continuation_input
 from brain.classifier.intent_classifier import IntentClassifier
 from brain.classifier.llm_classifier import LLMIntentClassifier
 from brain.context.context_assembler import ContextAssembler
@@ -288,6 +289,7 @@ class Orchestrator:
         on_thinking_chunk: Callable[[str], None] | None = None,
         workspace_context: str | None = None,
         _fallback_depth: int = 0,
+        images: list[str] | None = None,
     ) -> AgentResponse:
         """Process a user input through the full pipeline.
 
@@ -327,6 +329,7 @@ class Orchestrator:
 
         classification = None
         model = None
+        is_continue_turn = is_continuation_input(user_input)
 
         try:
             # 1. Classify intent + difficulty. Preserve support for custom
@@ -351,10 +354,32 @@ class Orchestrator:
                 classification.task_type, _HANDLERS[TaskType.ACTIVITY]
             )
 
-            # 3. Route to model
-            model = self._select_model(
-                classification.task_type, diff_enum, override_model
+            # 3. Route to model. A bare "lanjutkan" carries no intent of its
+            # own, so normal routing would answer it with whatever bucket the
+            # low-confidence classification points at and drop the thread of
+            # the truncated work. Continuation turns resume the model that
+            # produced the previous answer instead.
+            resume_model_id = (
+                self._conversation_store.get_last_used_model(session_id)
+                if is_continue_turn
+                else None
             )
+            model = None
+            if resume_model_id and not override_model:
+                model = self._registry.get(resume_model_id)
+                if model:
+                    logger.info(
+                        f"[orchestrator] Continuation turn → reuse {model.id}"
+                    )
+                else:
+                    logger.warning(
+                        f"[orchestrator] Continuation model '{resume_model_id}' "
+                        f"not in registry; falling back to routing"
+                    )
+            if model is None:
+                model = self._select_model(
+                    classification.task_type, diff_enum, override_model
+                )
             if not model:
                 return AgentResponse(
                     content="Error: No model available for this request.",
@@ -370,6 +395,10 @@ class Orchestrator:
             augmented_input = user_input
             if workspace_context:
                 augmented_input = f"{workspace_context}\n\n[USER REQUEST]\n{user_input}"
+            # A continuation nudge is too thin to stand alone: state the resume
+            # intent explicitly so the model does not ask "lanjut apa?".
+            if is_continue_turn:
+                augmented_input = f"{augmented_input}\n\n{continuation_hint()}"
 
             # 5. Assemble context
             ctx = self._context_assembler.assemble(
@@ -380,6 +409,16 @@ class Orchestrator:
                 context_window=model.context_window,
                 model_max_output=model.max_output,
             )
+
+            # 5a. L1 vault memory as an uncached block after the cached prefix
+            # (same behaviour as the CLI in main.py).
+            self._inject_vault_memory(ctx.messages)
+
+            # 5b. Attach images (data URLs) to the final user message
+            if images and not getattr(model, "supports_vision", True):
+                logger.warning(f"[images] {model.id} has no vision support; images dropped")
+            elif images:
+                self._attach_images(ctx.messages, images)
 
             # 6. Prepare request params
             params = handler.prepare_request_params(model)
@@ -501,10 +540,44 @@ class Orchestrator:
 
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
+            msg = str(e)
             logger.error(f"[orchestrator] Pipeline error: {e}")
             if model is not None:
                 # Feed failures back so routing can skip unhealthy models.
                 self._health_checker.record_failure(model.id)
+
+            # Billing/quota failures (HTTP 402, API key exhausted, rate
+            # limits) affect every model on the same provider. Trying the
+            # whole fallback chain would only burn time and tokens, so
+            # surface the error immediately instead.
+            lowered = msg.lower()
+            is_billing_error = any(
+                token in lowered
+                for token in (
+                    "402",
+                    "billing_error",
+                    "token budget exhausted",
+                    "insufficient_quota",
+                    "top up at",
+                    "api key",
+                )
+            )
+            if is_billing_error and _fallback_depth == 0:
+                logger.warning(
+                    "[orchestrator] Billing/quota failure detected; "
+                    "skipping fallback chain"
+                )
+                return AgentResponse(
+                    content=(
+                        "Model request failed: the API key's token budget is "
+                        "exhausted (HTTP 402). Top up your balance at the "
+                        "provider's billing page or switch to another model "
+                        "in the model selector, then retry."
+                    ),
+                    status=ResponseStatus.ERROR,
+                    error_message=msg,
+                    latency_ms=latency_ms,
+                )
 
             # Nested attempts must not recurse: the outer fallback loop owns
             # the chain and advances to the next model itself.
@@ -591,6 +664,43 @@ class Orchestrator:
     # ──────────────────────────────────────────────────────────────────────────
     # Pipeline helpers
     # ──────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _inject_vault_memory(messages: list[dict[str, Any]]) -> None:
+        """Append L1 vault memory to the system message without breaking the cache."""
+        from tool.execute.execute_local_memory.vault_context import build_context
+
+        text = build_context()
+        if not text:
+            return
+        for msg in messages:
+            if msg.get("role") != "system":
+                continue
+            content = msg.get("content")
+            if isinstance(content, list):
+                content.append({"type": "text", "text": text})
+            else:
+                msg["content"] = (content or "") + text
+            return
+
+    @staticmethod
+    def _attach_images(messages: list[dict[str, Any]], images: list[str]) -> None:
+        """Convert the last user message into multimodal parts, in place."""
+        for msg in reversed(messages):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if isinstance(content, str):
+                parts: list[dict[str, Any]] = [{"type": "text", "text": content}]
+            elif isinstance(content, list):
+                parts = list(content)
+            else:
+                return
+            parts.extend(
+                {"type": "image_url", "image_url": {"url": url}} for url in images
+            )
+            msg["content"] = parts
+            return
 
     def _should_use_pipeline(self, user_input: str, task_type: Any) -> bool:
         """Decide whether to route through the PLAN→SEARCH→COMPILE→EXECUTE pipeline.

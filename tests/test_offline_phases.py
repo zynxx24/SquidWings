@@ -31,7 +31,8 @@ def test_phase_0_configuration_loads_offline() -> None:
     assert settings.models_config_path.exists()
     assert get_settings() is get_settings()
     config = yaml.safe_load(settings.models_config_path.read_text(encoding="utf-8"))
-    assert len(config["models"]) >= 10
+    assert "models" not in config
+    assert config["routing"] and config["default_model"]
 
 
 def test_phase_1_registry_request_and_response_contracts(tmp_path: Path) -> None:

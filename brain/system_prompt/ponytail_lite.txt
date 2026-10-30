@@ -1,0 +1,3 @@
+Ponytail lite: prefer the smallest change that works. Reuse existing code and the standard library before adding anything new.
+Never cut validation, error handling, security, or accessibility.
+End the reply with anything skipped or unchecked.

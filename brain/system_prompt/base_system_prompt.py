@@ -7,6 +7,7 @@ Combines a shared base prompt with a task-specific prompt and caches both.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from config.constants import TaskType
@@ -24,6 +25,26 @@ _PROMPT_FILES: dict[TaskType, str] = {
     TaskType.MULTIMODAL: "multimodal_system_prompt.txt",
     TaskType.GENERATE_IMG: "generate_img_system_prompt.txt",
 }
+
+# Ponytail minimal-code ruleset. Customize without editing code:
+#   PONYTAIL_MODE  = off | lite | full (default) | ultra
+#   PONYTAIL_TASKS = comma-separated task types (default "code")
+# Edit brain/system_prompt/ponytail*.txt to change the wording itself.
+_PONYTAIL_FILES = {
+    "lite": "ponytail_lite.txt",
+    "full": "ponytail.txt",
+    "ultra": "ponytail_ultra.txt",
+}
+
+
+def _ponytail_tasks() -> set[TaskType]:
+    names = {n.strip().lower() for n in os.environ.get("PONYTAIL_TASKS", "code").split(",")}
+    return {t for t in TaskType if t.value.lower() in names}
+
+
+def _ponytail_file() -> str:
+    mode = os.environ.get("PONYTAIL_MODE", "full").strip().lower()
+    return _PONYTAIL_FILES.get(mode, "")
 
 
 class SystemPromptManager:
@@ -65,7 +86,9 @@ class SystemPromptManager:
 
         base_prompt = self._load_file("_base.txt")
         task_prompt = self._load_file(filename)
-        prompt = "\n\n".join(part for part in (base_prompt, task_prompt) if part)
+        pony = _ponytail_file()
+        extra = self._load_file(pony) if pony and task_type in _ponytail_tasks() else ""
+        prompt = "\n\n".join(part for part in (base_prompt, task_prompt, extra) if part)
         self._cache[filename] = prompt
         return prompt
 

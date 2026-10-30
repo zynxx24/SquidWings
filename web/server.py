@@ -13,6 +13,7 @@ Provides REST + WebSocket endpoints for the agent:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import time
 from collections.abc import AsyncGenerator
@@ -20,16 +21,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent.orchestrator import Orchestrator
 from agent.team_orchestrator import TeamOrchestrator, TeamStore
+from brain.classifier.continuation import is_continuation_input
 from config.settings import get_settings
 from utils.helpers import format_tokens, generate_session_id
 from utils.logger import get_logger
+from utils.workspace_context import session_workspace, set_active_workspace
 from web.team_api import router as team_router
 
 logger = get_logger(__name__)
@@ -119,106 +122,268 @@ if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-# ─── Allowed Models for UI ──────────────────────────────────────────
-ALLOWED_UI_MODELS: dict[str, str] = {
-    "ag/gemini-3.8-flash-high": "Gemini 3.8 Flash",
-    "gemini/gemini-4-argon": "Gemini 4 Argon (High)",
-    "kg/deepseek-4-1-flash": "DeepSeek 4.1 Flash",
-    "kg/dp4.1ftest": "DeepSeek 4.1 Flash Test",
-    "kg/deepseek-v4-pro": "DeepSeek V4 Pro",
-    "kg/qwen3.8max": "Qwen 3.8 Max",
-    "kg/gemini-3.7-flash": "Gemini 3.7 Flash",
-    "kg/gpt-5-5": "GPT-5.5",
-    "kg/claude-opus-5.5": "Claude Opus 5.5",
-    "kg/mimo-v2.6-flash": "Xiaomi MiMo 2.6 Flash",
-    "kg/hy3": "Tencent Hunyuan 3",
-    "kg/hy4-preview": "Tencent Hunyuan 4 Preview",
-    "bansos/deepseek-v4.1-flash-1017": "🆓 DeepSeek V4.1 Flash (Bansos)",
-}
+# ─── Dynamic Models (auto-fetched from /models) ─────────────────────
 
-MODEL_ALIASES: dict[str, str] = {
-    "ag/gemini-3.8-flash": "ag/gemini-3.8-flash-high",
-    "gemini-3.8-flash": "ag/gemini-3.8-flash-high",
-    "gemini/gemini-4-argon": "gemini/gemini-4-argon",
-    "gemini-4-argon": "gemini/gemini-4-argon",
-    "gemini/gemini-4-argon(high)": "gemini/gemini-4-argon",
-    "kg/deepseek 4.1 flash": "kg/deepseek-4-1-flash",
-    "deepseek 4.1 flash": "kg/deepseek-4-1-flash",
-    "deepseek-4.1-flash": "kg/deepseek-4-1-flash",
-    "kg/dp4.1ftest": "kg/dp4.1ftest",
-    "dp4.1ftest": "kg/dp4.1ftest",
-    "kg/deepseek-v4-pro": "kg/deepseek-v4-pro",
-    "deepseek-v4-pro": "kg/deepseek-v4-pro",
-    "deepseek v4 pro": "kg/deepseek-v4-pro",
-    "kg/qwen3.8max": "kg/qwen3.8max",
-    "qwen3.8max": "kg/qwen3.8max",
-    "qwen-3.8-max": "kg/qwen3.8max",
-    "qwen 3.8 max": "kg/qwen3.8max",
-    "kg/gemini-3.7-flash": "kg/gemini-3.7-flash",
-    "gemini-3.7-flash": "kg/gemini-3.7-flash",
-    "kg/gpt-5-5": "kg/gpt-5-5",
-    "gpt-5-5": "kg/gpt-5-5",
-    "gpt 5.5": "kg/gpt-5-5",
-    "kg/claude-opus-5.5": "kg/claude-opus-5.5",
-    "claude-opus-5.5": "kg/claude-opus-5.5",
-    "claude-opus-5-5": "kg/claude-opus-5.5",
-    "claude opus 5.5": "kg/claude-opus-5.5",
-    "kg/mimo-v2.6-flash": "kg/mimo-v2.6-flash",
-    "mimo-v2.6-flash": "kg/mimo-v2.6-flash",
-    "mimo 2.6 flash": "kg/mimo-v2.6-flash",
-    "kg/hy3": "kg/hy3",
-    "hy3": "kg/hy3",
-    "hunyuan 3": "kg/hy3",
-    "kg/hy4-preview": "kg/hy4-preview",
-    "hy4-preview": "kg/hy4-preview",
-    "hunyuan 4": "kg/hy4-preview",
-    "bansos/deepseek-v4.1-flash-1017": "bansos/deepseek-v4.1-flash-1017",
-    "bansos": "bansos/deepseek-v4.1-flash-1017",
-    "deepseek bansos": "bansos/deepseek-v4.1-flash-1017",
-    "bansos deepseek": "bansos/deepseek-v4.1-flash-1017",
-}
+_models_synced = False
+_models_lock = asyncio.Lock()
+_FALLBACK_DEFAULT = "ag/gemini-3.8-flash-high"
 
-DEFAULT_MODEL = "ag/gemini-3.8-flash-high"
+
+async def ensure_models(force: bool = False) -> dict[str, int]:
+    """Fetch /models from every endpoint once, then reuse the registry."""
+    global _models_synced
+    orch = get_orchestrator()
+    async with _models_lock:
+        if _models_synced and not force:
+            return {}
+        syncer = getattr(orch.api_client, "sync_all_models", None)
+        if not callable(syncer):
+            _models_synced = True
+            return {}
+        try:
+            result = syncer(orch.registry)
+            if inspect.isawaitable(result):
+                result = await result
+            counts = result if isinstance(result, dict) else {}
+        except Exception as exc:  # offline / mocked client must not break the UI
+            logger.warning(f"[web] Model sync failed: {exc}")
+            counts = {}
+        _models_synced = True
+        logger.info(f"[web] Models synced: {counts}")
+        return counts
+
+
+def default_model_id() -> str:
+    """Configured default if registered, otherwise the first known model."""
+    orch = get_orchestrator()
+    if orch.registry.get(_FALLBACK_DEFAULT):
+        return _FALLBACK_DEFAULT
+    ids = orch.registry.model_ids
+    ids = ids() if callable(ids) else ids
+    return next(iter(ids), _FALLBACK_DEFAULT)
+
+
+def accepted_uploads(model: Any) -> list[str]:
+    """File kinds a model can take. Text/code is always accepted."""
+    kinds = ["text"]
+    if model is None:
+        return kinds
+    if model.supports_vision:
+        kinds.append("image")
+    if model.capabilities.pdf:
+        kinds.append("pdf")
+    if model.supports_audio:
+        kinds.append("audio")
+    if model.supports_video:
+        kinds.append("video")
+    return kinds
+
+
+def model_payload(m: Any) -> dict[str, Any]:
+    return {
+        "id": m.id,
+        "display_name": m.display_name,
+        "provider": m.provider or "unknown",
+        "supports_vision": m.supports_vision,
+        "supports_audio": m.supports_audio,
+        "supports_search": m.supports_search,
+        "supports_tools": m.supports_tools,
+        "supports_reasoning": m.supports_reasoning,
+        "context_window": m.context_window,
+        "context_window_display": format_tokens(m.context_window),
+        "max_output": m.max_output,
+        "max_output_display": format_tokens(m.max_output),
+        "thinking_format": m.thinking_format,
+        "uploads": accepted_uploads(m),
+    }
 
 
 # ─── REST Endpoints ──────────────────────────────────────────────────
 
 @app.get("/api/models")
-async def list_models() -> dict[str, Any]:
-    """List models allowed for the UI."""
+async def list_models(refresh: bool = False) -> dict[str, Any]:
+    """List every model fetched from the configured endpoints."""
+    await ensure_models(force=refresh)
     orch = get_orchestrator()
-    models = orch.registry.get_all()
-
-    # Filter strictly to allowed models
-    filtered = [m for m in models if m.id in ALLOWED_UI_MODELS]
-
-    # Group by provider
+    models = sorted(orch.registry.get_all(), key=lambda m: (m.provider or "", m.id))
     by_provider: dict[str, list[dict[str, Any]]] = {}
-    for m in filtered:
-        provider = m.provider or "unknown"
-        if provider not in by_provider:
-            by_provider[provider] = []
-        by_provider[provider].append({
-            "id": m.id,
-            "display_name": ALLOWED_UI_MODELS.get(m.id, m.display_name),
-            "provider": m.provider,
-            "supports_vision": m.supports_vision,
-            "supports_audio": m.supports_audio,
-            "supports_search": m.supports_search,
-            "supports_tools": m.supports_tools,
-            "supports_reasoning": m.supports_reasoning,
-            "context_window": m.context_window,
-            "context_window_display": format_tokens(m.context_window),
-            "max_output": m.max_output,
-            "max_output_display": format_tokens(m.max_output),
-            "thinking_format": m.thinking_format,
-        })
-
+    for m in models:
+        by_provider.setdefault(m.provider or "unknown", []).append(model_payload(m))
     return {
         "models": by_provider,
-        "total": len(filtered),
+        "total": len(models),
         "providers": list(by_provider.keys()),
+        "default_model": default_model_id(),
     }
+
+
+@app.post("/api/models/refresh")
+async def refresh_models() -> dict[str, Any]:
+    """Re-fetch /models from all endpoints."""
+    counts = await ensure_models(force=True)
+    return {"status": "ok", "synced": counts, "total": get_orchestrator().registry.count}
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    import os
+
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    import os
+
+    try:
+        return int(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+MAX_UPLOAD_BYTES = _env_int("MAX_UPLOAD_MB", 20) * 1024 * 1024
+MAX_UPLOAD_CHARS = _env_int("MAX_UPLOAD_CHARS", 120_000)
+MAX_CHAT_IMAGES = _env_int("MAX_CHAT_IMAGES", 4)
+IMAGE_MAX_SIDE = _env_int("IMAGE_MAX_SIDE", 1536)
+_DOC_EXTS = {
+    ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".csv", ".json", ".xml", ".html", ".htm",
+    ".epub", ".zip", ".txt", ".md", ".markdown", ".py", ".js", ".ts", ".tsx", ".jsx",
+    ".css", ".yaml", ".yml", ".toml", ".ini", ".log", ".sql", ".sh", ".go", ".rs",
+    ".java", ".c", ".cpp", ".h", ".rb", ".php",
+}
+_PLAIN_EXTS = {
+    ".txt", ".md", ".markdown", ".py", ".js", ".ts", ".tsx", ".jsx", ".css", ".yaml",
+    ".yml", ".toml", ".ini", ".log", ".sql", ".sh", ".go", ".rs", ".java", ".c",
+    ".cpp", ".h", ".rb", ".php", ".csv", ".json", ".xml",
+}
+_markitdown: Any = None
+# Audio upload is intentionally unsupported. Video is a draft feature: it is
+# off unless VIDEO_UPLOAD_ENABLED=true (needs ffmpeg + speech transcription).
+_AUDIO_EXTS: set[str] = set()
+_VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+_DOC_EXTS |= _IMAGE_EXTS
+if _env_bool("VIDEO_UPLOAD_ENABLED", False):
+    _DOC_EXTS |= _VIDEO_EXTS
+
+
+def _ffmpeg_exe() -> str:
+    import imageio_ffmpeg
+
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def _transcribe(name: str, data: bytes, is_video: bool) -> str:
+    """Extract mono 16k WAV with ffmpeg, then transcribe it via MarkItDown."""
+    import io
+    import subprocess
+    import tempfile
+
+    global _markitdown
+    from markitdown import MarkItDown, StreamInfo
+
+    if _markitdown is None:
+        _markitdown = MarkItDown(enable_plugins=False)
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / ("in" + Path(name).suffix.lower())
+        wav = Path(tmp) / "out.wav"
+        src.write_bytes(data)
+        proc = subprocess.run(
+            [_ffmpeg_exe(), "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", "-t", "600", str(wav)],
+            capture_output=True, timeout=120,
+        )
+        if proc.returncode != 0 or not wav.exists():
+            raise RuntimeError("No audio track could be extracted")
+        try:
+            result = _markitdown.convert_stream(io.BytesIO(wav.read_bytes()), stream_info=StreamInfo(extension=".wav"))
+            text = result.markdown.strip()
+        except Exception as exc:
+            if "UnknownValueError" not in str(exc):
+                raise
+            text = ""  # audio had no recognisable speech
+    kind = "Video" if is_video else "Audio"
+    return f"[{kind} transcript of {name}]\n{text or '(no speech detected)'}"
+
+
+def _describe_image(name: str, data: bytes) -> str:
+    import io
+
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as im:
+        return f"[Image {name}: {im.format} {im.width}x{im.height}, mode {im.mode}. Pixel content is not sent as text.]"
+
+
+def _image_data_url(data: bytes, max_side: int = 1536) -> str:
+    """Downscale an image and return it as a base64 data URL for vision models."""
+    import base64
+    import io
+
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as im:
+        im.load()
+        im.thumbnail((max_side, max_side))
+        has_alpha = im.mode in ("RGBA", "LA", "P")
+        buf = io.BytesIO()
+        if has_alpha:
+            im.convert("RGBA").save(buf, "PNG", optimize=True)
+            mime = "image/png"
+        else:
+            im.convert("RGB").save(buf, "JPEG", quality=85)
+            mime = "image/jpeg"
+    return f"data:{mime};base64,{base64.b64encode(buf.getvalue()).decode()}"
+
+
+def _convert_to_markdown(name: str, data: bytes) -> str:
+    """Convert uploaded bytes to Markdown using MarkItDown (stream mode only)."""
+    global _markitdown
+    import io
+
+    ext = Path(name).suffix.lower()
+    if ext in _PLAIN_EXTS:
+        return data.decode("utf-8", errors="replace")
+    if ext in _AUDIO_EXTS or ext in _VIDEO_EXTS:
+        return _transcribe(name, data, ext in _VIDEO_EXTS)
+    if ext in _IMAGE_EXTS:
+        return _describe_image(name, data)
+    from markitdown import MarkItDown, StreamInfo
+
+    if _markitdown is None:
+        _markitdown = MarkItDown(enable_plugins=False)
+    result = _markitdown.convert_stream(io.BytesIO(data), stream_info=StreamInfo(extension=ext))
+    return result.markdown
+
+
+@app.post("/api/upload")
+async def upload_file(request: Request, name: str = "file.txt") -> dict[str, Any]:
+    """Convert an uploaded document to Markdown. Body is the raw file bytes."""
+    safe_name = Path(name).name[:120] or "file.txt"
+    ext = Path(safe_name).suffix.lower()
+    if ext not in _DOC_EXTS:
+        raise HTTPException(status_code=415, detail=f"File type '{ext or 'unknown'}' is not supported")
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="File larger than 20 MB")
+    try:
+        markdown = await asyncio.to_thread(_convert_to_markdown, safe_name, data)
+    except Exception as exc:
+        logger.error(f"[upload] {safe_name}: {exc}")
+        raise HTTPException(status_code=422, detail=f"Could not read file: {exc}") from exc
+    markdown = markdown.strip()
+    truncated = len(markdown) > MAX_UPLOAD_CHARS
+    if truncated:
+        markdown = markdown[:MAX_UPLOAD_CHARS]
+    result: dict[str, Any] = {"name": safe_name, "markdown": markdown, "chars": len(markdown), "truncated": truncated}
+    if ext in _IMAGE_EXTS:
+        try:
+            result["image_data_url"] = await asyncio.to_thread(_image_data_url, data, IMAGE_MAX_SIDE)
+        except Exception as exc:
+            logger.warning(f"[upload] {safe_name}: image encode failed: {exc}")
+    return result
 
 
 @app.get("/api/health")
@@ -279,14 +444,14 @@ async def session_messages(session_id: str) -> dict[str, Any]:
     orch = get_orchestrator()
     history = orch.conversation_store.get_history(session_id)
     meta = orch.conversation_store.get_session_meta(session_id)
-    model = _override_models.get(session_id) or meta.get("model_used") or DEFAULT_MODEL
+    model = _override_models.get(session_id) or meta.get("model_used") or default_model_id()
     return {
         "session_id": session_id,
         "title": meta.get("title", "Chat"),
         "created_at": meta.get("created_at"),
         "updated_at": meta.get("updated_at"),
         "model_used": model,
-        "model_display": ALLOWED_UI_MODELS.get(model, model),
+        "model_display": (orch.registry.get(model).display_name if orch.registry.get(model) else model),
         "messages": [
             {
                 "role": m.role,
@@ -338,32 +503,30 @@ async def select_model(payload: dict[str, Any]) -> dict[str, Any]:
     raw_model_id = payload.get("model_id")
 
     if raw_model_id:
-        normalized_id = MODEL_ALIASES.get(raw_model_id, raw_model_id)
-        if normalized_id not in ALLOWED_UI_MODELS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Model '{raw_model_id}' is not permitted. Allowed models: {list(ALLOWED_UI_MODELS.keys())}",
-            )
+        normalized_id = raw_model_id
+        await ensure_models()
         orch = get_orchestrator()
         model = orch.registry.get(normalized_id)
         if not model:
             raise HTTPException(status_code=404, detail=f"Model '{normalized_id}' not found in registry")
         _override_models[session_id] = normalized_id
-        display_name = ALLOWED_UI_MODELS.get(normalized_id, model.display_name)
-        return {"status": "ok", "model_id": normalized_id, "display_name": display_name}
+        return {"status": "ok", "model_id": normalized_id, "display_name": model.display_name, "uploads": accepted_uploads(model)}
     else:
         # Default back to DEFAULT_MODEL
-        _override_models[session_id] = DEFAULT_MODEL
-        return {"status": "ok", "model_id": DEFAULT_MODEL, "display_name": ALLOWED_UI_MODELS[DEFAULT_MODEL]}
+        default_id = default_model_id()
+        _override_models[session_id] = default_id
+        return {"status": "ok", "model_id": default_id, "display_name": default_id}
 
 
 @app.get("/api/session/new")
 async def new_session() -> dict[str, Any]:
     """Create a new session with DEFAULT_MODEL pre-assigned."""
     orch = get_orchestrator()
+    await ensure_models()
     session = orch.session_manager.create_session()
-    _override_models[session.session_id] = DEFAULT_MODEL
-    return {"session_id": session.session_id, "default_model": DEFAULT_MODEL}
+    default_id = default_model_id()
+    _override_models[session.session_id] = default_id
+    return {"session_id": session.session_id, "default_model": default_id}
 
 
 # ─── WebSocket Chat ──────────────────────────────────────────────────
@@ -396,9 +559,18 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 continue
 
             orch = get_orchestrator()
-            override = _override_models.get(session_id, DEFAULT_MODEL)
-            if override not in ALLOWED_UI_MODELS:
-                override = DEFAULT_MODEL
+            override = _override_models.get(session_id) or default_model_id()
+            if not get_orchestrator().registry.get(override):
+                override = default_model_id()
+
+            # A bare "lanjutkan" carries no intent of its own: keep it on the
+            # model that produced the previous answer so the thread of the
+            # truncated work is not lost to a fresh routing decision.
+            is_continue = is_continuation_input(message)
+            if is_continue and override == default_model_id():
+                resume_model = orch.conversation_store.get_last_used_model(session_id)
+                if resume_model and orch.registry.get(resume_model):
+                    override = resume_model
 
             # Send classification info first
             classification, difficulty = orch.classifier.classify_with_difficulty(message)
@@ -408,6 +580,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 "task_type": classification.task_type.value,
                 "difficulty": difficulty,
                 "confidence": round(classification.confidence, 2),
+                "continuation": is_continue,
+                "model": override,
             })
 
             # Queue for thread-safe ordered streaming chunks
@@ -445,6 +619,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 q.put_nowait({"type": "thinking", "content": chunk})
 
             start_time = time.time()
+            # Save files from this chat under workspace/<session_id>/
+            set_active_workspace(session_workspace(session_id))
 
             try:
                 response = await orch.process(
@@ -452,6 +628,10 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     session_id=session_id,
                     override_model=override,
                     stream=True,
+                    images=[
+                        u for u in (data.get("images") or [])
+                        if isinstance(u, str) and u.startswith("data:image/")
+                    ][:MAX_CHAT_IMAGES],
                     on_content_chunk=on_content,
                     on_thinking_chunk=on_thinking,
                 )

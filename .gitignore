@@ -7,6 +7,13 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+audit/
+reports/
+tests/
+scripts/
+*.json
+add_model.md
+
 
 # === Environment & secrets ===
 .env
@@ -41,6 +48,12 @@ workspace/
 logs/
 *.log
 tunnel.log
+
+# === Docs: only README.md is public ===
+.internal/
+*.md
+!README.md
+!LICENSE
 
 # === Backups, archives, scratch ===
 *.bak

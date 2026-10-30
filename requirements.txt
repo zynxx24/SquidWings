@@ -12,6 +12,9 @@ tiktoken>=0.7.0               # OpenAI tokenizer
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
 websockets>=12.0
+markitdown[pdf,docx,pptx,xlsx,audio-transcription]>=0.1.9
+imageio-ffmpeg>=0.5   # bundled ffmpeg for audio/video upload
+pillow>=10   # Document upload -> Markdown
 
 # === CLI & Display ===
 rich>=13.0                    # Beautiful terminal output

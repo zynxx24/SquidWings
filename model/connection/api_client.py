@@ -394,6 +394,59 @@ class APIClient(BaseClient):
         logger.info(f"[api] Fetched {len(models)} models from API")
         return models
 
+    async def list_bansos_models(self) -> list[dict[str, Any]]:
+        """Fetch models from the Bansos endpoint (/models) and tag them.
+
+        IDs are prefixed with ``bansos/`` and ``owned_by`` is set to
+        ``bansos`` so routing (``_is_bansos``) works automatically.
+        Returns an empty list when no Bansos API key is configured.
+        """
+        client, _ = self._get_bansos_client()
+        if not self._bansos_key:
+            return []
+        try:
+            response = await client.get("/models")
+        except httpx.HTTPError as e:
+            raise ConnectionError(
+                message=f"Cannot connect to Bansos API at {self._bansos_url}",
+                url=self._bansos_url,
+                original_error=e,
+            ) from e
+        self._handle_error(response)
+        raw_json = response.json()
+        raw_data = raw_json.get("data", []) if isinstance(raw_json, dict) else []
+        models: list[dict[str, Any]] = []
+        for item in raw_data if isinstance(raw_data, list) else []:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            mid = str(item["id"])
+            tagged = dict(item)
+            tagged["id"] = mid if mid.startswith("bansos/") else f"bansos/{mid}"
+            tagged["owned_by"] = "bansos"
+            models.append(tagged)
+        logger.info(f"[api] Fetched {len(models)} Bansos models")
+        return models
+
+    async def sync_all_models(self, registry: Any) -> dict[str, int]:
+        """Auto-fetch /models from the main router and Bansos, register all.
+
+        Each source is independent: a failure in one never blocks the other.
+
+        Returns:
+            Mapping of source name to number of models registered.
+        """
+        counts: dict[str, int] = {}
+        sources = (("router", self.list_models), ("bansos", self.list_bansos_models))
+        for name, fetch in sources:
+            try:
+                items = [m for m in await fetch() if m.get("id")]
+                registry.register_from_api_models(items)
+                counts[name] = len(items)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[api] Auto-sync '{name}' failed: {e}")
+                counts[name] = 0
+        return counts
+
     async def list_gemini_models(self, provider: str | None = None) -> list[dict[str, Any]]:
         """Fetch all models from 9Router and filter Gemini/Gemma models.
 

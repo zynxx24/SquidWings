@@ -30,6 +30,7 @@ from brain.max_token.max_token_calculator import MaxTokenCalculator
 from brain.memory.context_window_manager import ContextWindowManager
 from brain.memory.conversation_store import ConversationStore
 from brain.memory.message_builder import MessageBuilder
+from brain.memory.summary_compressor import SummaryCompressor
 from brain.prompt_must_think.base_think_prompt import ThinkPromptManager
 from brain.system_prompt.base_system_prompt import SystemPromptManager
 from config.constants import TOKEN_BUFFER, TaskType
@@ -77,6 +78,7 @@ class ContextAssembler:
         self._window = window_manager or ContextWindowManager(self._counter)
         self._max_tokens = max_token_calculator or MaxTokenCalculator()
         self._input_budget = InputBudget()
+        self._summarizer = SummaryCompressor()
 
     # ------------------------------------------------------------------
     # Public API
@@ -152,6 +154,26 @@ class ContextAssembler:
             query=user_input,
             model=model_id,
         )
+
+        # Step 3b: keep a short extractive digest of history that did not fit,
+        # so older turns are not forgotten silently.
+        selected_ids = {id(m) for m in selected_history}
+        dropped = [m for m in history if id(m) not in selected_ids]
+        if dropped:
+            import os
+
+            def _num(name: str, default: int) -> int:
+                try:
+                    return int(os.environ.get(name, "").strip() or default)
+                except ValueError:
+                    return default
+
+            max_chars = _num("HISTORY_SUMMARY_CHARS", 600)
+            share = max(1, _num("HISTORY_SUMMARY_SHARE", 4))
+            digest = self._summarizer.compress_history(dropped, max_summary_length=max_chars)
+            digest_msg = {"role": "user", "content": digest["content"]}
+            if max_chars > 0 and self._counter.count_messages([digest_msg], model_id) <= plan.history_budget // share:
+                selected_history = [digest_msg, *selected_history]
 
         # Step 4: build full message list and fit to window (safety trim)
         messages = MessageBuilder.build(
