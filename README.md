@@ -9,7 +9,7 @@ Agent AI multi-model untuk terminal dan web. Agent ini mengerjakan tugas sungguh
 | Terminal dan Web UI | Satu orchestrator yang sama, tanpa login |
 | Multi-model | Routing, fallback, dan banyak provider lewat `config/providers.yaml` |
 | Execution harness | Verifikasi hasil, deteksi loop, perbaikan argumen tool, dan eskalasi ke model lebih kuat |
-| Tim agent | Kanvas multi-agent dengan dependensi antar-agent dan reviewer |
+| Tim agent | Kanvas alur seperti n8n: delay, gate OR, jadwal, output Telegram, dan pilihan database |
 | Riset web | Mencari, membuka beberapa halaman, membaca isinya, dan mencantumkan sumber |
 | Satu chat, satu set | Folder, memori, vault Obsidian, graph kode, skor aislop, dan mode Ponytail sendiri |
 | Sandbox | Perintah agent berjalan terisolasi lewat bubblewrap atau Docker |
@@ -61,6 +61,55 @@ Perintah di dalam `chat`: `/model`, `/stack`, `/ponytail`, `/memory`, `/sandbox`
 
 Menu tim agent di web aktif dengan `WEB_TEAMS_ENABLED=true`.
 
+Satu permintaan tim dibatasi 10 menit, dan tiap agent 4 menit serta 120 ribu token. Agent yang kehabisan batas menulis hasilnya, sedangkan laporan yang sudah selesai tetap dipakai. Ubah lewat `TEAM_RUN_SECONDS`, `TEAM_MEMBER_SECONDS`, `TEAM_MEMBER_ROUNDS`, dan `TEAM_MEMBER_TOKENS`.
+
+### Alur tim
+
+Kanvas tim bekerja seperti alur di n8n. Urutannya ditandai 1, 2, 3 mengikuti sambungan antar-node, dan node pertama diberi tanda **Mulai**. Jalur keluar dari gate dan switch diberi huruf, misalnya 5A dan 5B, dan hanya jalur yang terpilih yang berjalan.
+
+| Node | Fungsi |
+|---|---|
+| Agent | Mengerjakan tugas dengan model dan instruksinya sendiri |
+| Gate IF | Sampai 5 syarat digabung dengan AND atau OR. Terpenuhi ke jalur A, tidak ke jalur B |
+| Switch | Sampai 3 aturan. Aturan pertama yang cocok memilih jalur A, B, atau C, sisanya ke D |
+| Merge | Menggabungkan beberapa jalur, lanjut saat salah satu tiba atau menunggu semuanya |
+| Delay | Menunggu 1 sampai 3600 detik, tanpa memakan batas waktu tim |
+| Teks | Menyusun teks dengan `{{input}}`, `{{task}}`, `{{date}}`, `{{time}}`, `{{day}}`, `{{team}}`, dan `{{node.ID}}` |
+| HTTP | GET atau POST ke alamat publik, balasannya diteruskan ke node berikutnya |
+| Telegram | Mengirim hasil ke chat Telegram |
+| Database | Menyimpan hasil ke SQLite, PostgreSQL, MySQL, atau MongoDB |
+
+Syarat di gate dan switch bisa berupa: berisi atau tidak berisi kata kunci, sama persis, regex, kosong, rentang jam dan hari, atau pertanyaan ya/tidak ke AI. Syarat tanpa AI dicek lebih dulu, jadi AND yang sudah gagal atau OR yang sudah terpenuhi tidak memanggil model.
+
+Tombol **Jadwal** mengatur pemicunya:
+
+| Pemicu | Contoh |
+|---|---|
+| Manual | Tombol Jalankan |
+| Interval | Tiap 30 menit (minimal 5) |
+| Jam tertentu | `05:00, 12:00, 17:00` pada hari yang dipilih |
+| Cron | `0 7 * * 1-5` untuk 07:00 Senin sampai Jumat |
+| Sekali | 2026-11-02 09:00 |
+| Pesan Telegram | Semua pesan, atau hanya yang diawali kata seperti `/jadwal` |
+
+Pemicu berjalan selama server menyala. Jadwal yang terlewat saat server mati tidak dijalankan belakangan. Pada pemicu Telegram, isi pesan menjadi tugasnya, dan node Telegram tanpa Chat ID membalas ke chat yang mengirim. Hanya pesan dari `TELEGRAM_CHAT_ID` yang diterima, karena siapa pun bisa mengirim pesan ke bot.
+
+Template yang tersedia:
+
+- **Alarm bangun dan pengingat jadwal**: berjalan jam 05:00, 12:00, 17:00, dan 21:00. Pagi hari, gate AND (jam 04:00 sampai 10:00 dan catatan tidak berisi "libur") membangunkan lewat Telegram, lalu alarm kedua 10 menit kemudian. Di jam lain, agent mengingatkan kegiatan 4 jam ke depan. Ubah daftar kegiatan di node **Agenda**.
+- **Bot Telegram serba bisa**: berjalan saat kamu mengirim pesan ke bot. Switch memilah `/jadwal`, `/cuaca`, dan `/catat`, pesan lain dijawab agent umum, lalu balasan dikirim ke chat yang sama.
+- **Asisten sehari-hari**: mencari fakta nyata, jeda, gate, menulis jawaban, lalu mengirim ke Telegram dan menyimpan ke database.
+
+Telegram butuh `TELEGRAM_BOT_TOKEN` dan `TELEGRAM_CHAT_ID` di `.env`. Untuk tahu chat ID-mu, kirim pesan ke bot lalu buka `https://api.telegram.org/bot<TOKEN>/getUpdates`. Database selain SQLite butuh alamatnya di `.env` dan drivernya:
+
+```bash
+pip install "psycopg[binary]"   # TEAM_DB_POSTGRES_URL
+pip install pymysql             # TEAM_DB_MYSQL_URL
+pip install pymongo             # TEAM_DB_MONGODB_URL
+```
+
+Token dan alamat database hanya disimpan di `.env`, tidak di pengaturan tim.
+
 > **Tidak ada login.** Web UI hanya menerima akses dari mesin ini secara bawaan. Dengan `--tunnel`, siapa pun yang punya URL-nya bisa memakai agent dan membaca semua chat.
 
 ## Konfigurasi
@@ -76,6 +125,7 @@ Semua pengaturan ada di `.env`, dengan contoh lengkap di [.env.example](.env.exa
 | Riset web | `SEARXNG_URL`, `BRAVE_SEARCH_API_KEY`, `WEB_BROWSER_ENABLED` |
 | Memori | `HISTORY_SUMMARY_CHARS`, `HISTORY_MAX_TOKENS`, `OBSIDIAN_VAULT_PATH` |
 | Ponytail | `PONYTAIL_MODE`, `PONYTAIL_TASKS` |
+| Tim agent | `TEAM_RUN_SECONDS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TEAM_DB_POSTGRES_URL`, `TEAM_DB_MYSQL_URL`, `TEAM_DB_MONGODB_URL` |
 | Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `MAX_CHAT_IMAGES`, `IMAGE_MAX_SIDE` |
 
 Provider tambahan didaftarkan di `config/providers.yaml`. Key-nya tetap dibaca dari `.env`.
@@ -110,6 +160,8 @@ Profil pengguna dan playbook berlaku di semua chat, dan disimpan di `vault/`.
 
 Semua data ini diabaikan Git dan tidak ikut terbit. Menghapus chat di web juga menghapus foldernya.
 
+Saat agent membaca isi workspace, PDF dan file Office diubah ke Markdown lewat MarkItDown, lalu dipadatkan dengan parser markdown-it (`utils/markdown_compact.py`). Blok kode tidak diubah. File Markdown panjang juga dipadatkan, kecuali bila agent meminta rentang baris untuk mengedit.
+
 ## Sandbox
 
 `execute_command`, `run_checks`, dan tes dari verifikasi berjalan terisolasi. Agent hanya bisa menulis ke folder kerjanya, dan internet mati secara bawaan. Atur `SANDBOX_NETWORK=true` agar `pip install` dan `npm install` bisa jalan. `python main.py doctor` mencoba keluar dari sandbox dan melaporkan hasilnya.
@@ -127,7 +179,20 @@ Semua data ini diabaikan Git dan tidak ikut terbit. Menghapus chat di web juga m
 | `advisor.py` | Meminta saran model lebih kuat saat macet, lalu menyerahkan tugasnya bila perlu |
 | `playbooks.py`, `briefing.py` | Menyimpan cara kerja yang berhasil dan memakainya lagi |
 
-Panduan kerja ada di `brain/skills/`: `fix-bug`, `add-feature`, `clean-code`, `web-research`, `design-ui`, `build-web`, dan `build-backend`.
+Panduan kerja ada di `brain/skills/`: `fix-bug`, `add-feature`, `clean-code`, `web-research`, `design-ui`, `build-web`, `build-backend`, dan `animate`.
+
+Skill besar berupa folder dengan `SKILL.md` dan file pendamping. `animate` (diadaptasi dari [cth9191/animate](https://github.com/cth9191/animate), MIT) membuat video animasi pendek sepenuhnya dari kode, dengan gaya cut paper, crosshatch, riso, sketchbook, math, pixel, atau isometric. Agent memasang kit-nya ke `.skills/<sesi>/animate/`, satu salinan per sesi supaya dua chat di proyek yang sama tidak saling campur, lalu bertanya soal cerita, tampilan, dan storyboard sebelum merender. Butuh Node 18+, ffmpeg, dan Chromium untuk Playwright (`npx playwright install chromium`).
+
+Skill punya dua jenis:
+
+| Jenis | Kapan aktif |
+|---|---|
+| Utama (`scope: core`, bawaan) | Selalu ada di daftar skill. Panduannya ditambahkan saat permintaan cocok |
+| Kontekstual (`scope: contextual`) | Diam, tidak ada di prompt sama sekali, sampai permintaan cocok dengan `triggers` dan `context`-nya. Setelah itu tetap aktif sampai sesi itu selesai, dan hanya di sesi itu |
+
+`animate` termasuk kontekstual. "Buat video animasi 30 detik" membangunkannya, sedangkan "tambah animasi hover di tombol" tidak, karena tidak menyebut video. Memanggil `load_skill` dengan namanya juga membangunkannya.
+
+Skill tambahan bisa ditaruh di folder `SKILLS_DIR`, dan skill yang tidak dipakai bisa dimatikan dengan `SKILLS_DISABLED=animate,build-web`.
 
 ## Struktur proyek
 

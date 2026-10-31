@@ -115,8 +115,8 @@ async def test_review_rounds_are_capped(tmp_path: Path) -> None:
     team = manager.create_team("t", "", [member("lead"), member("rev")], "lead", "rev")
     run = await finish(manager, team.id)
     assert run.status == "completed"
-    assert len(run.reviews) == 3
-    assert sum("revision" in c["session_id"] for c in fake.calls) == 2
+    assert len(run.reviews) == 2
+    assert sum("revision" in c["session_id"] for c in fake.calls) == 1
 
 
 async def test_broken_reviewer_does_not_lose_the_answer(tmp_path: Path) -> None:
@@ -153,13 +153,16 @@ def test_templates_are_valid_and_spend_the_strong_model_on_review(tmp_path: Path
     templates = team_templates(models)
     assert templates
     for template in templates:
+        if not template["reviewer_id"]:
+            continue
         manager.create_team(template["name"], "", template["members"], template["lead_id"], template["reviewer_id"])
         reviewer = next(m for m in template["members"] if m["id"] == template["reviewer_id"])
         assert reviewer["model_id"] == "ag/claude-opus"
 
 
 def test_templates_work_with_a_single_model() -> None:
-    assert all(m["model_id"] == "only" for t in team_templates(["only"]) for m in t["members"])
+    used = [m["model_id"] for t in team_templates(["only"]) for m in t["members"] if m.get("kind", "agent") == "agent"]
+    assert used and all(model == "only" for model in used)
     assert team_templates([]) == []
 
 
@@ -168,3 +171,69 @@ async def test_agents_keep_the_task_as_intent_and_leave_no_chat_history(tmp_path
     team = manager.create_team("t", "", [member("a"), member("lead")], "lead")
     await finish(manager, team.id, task="audit keamanan")
     assert all(c["task_hint"] == "audit keamanan" and c["persist"] is False for c in fake.calls)
+
+
+def set_limits(monkeypatch: pytest.MonkeyPatch, **values: int) -> None:
+    from config.settings import get_settings
+
+    for name, value in values.items():
+        monkeypatch.setattr(get_settings(), name, value)
+
+
+async def test_members_get_a_budget(tmp_path: Path) -> None:
+    manager, fake = make(tmp_path)
+    team = manager.create_team("t", "", [member("lead"), member("a")], "lead")
+    await finish(manager, team.id)
+    by_mode = {c["session_id"].rsplit("-", 1)[1]: c["limits"] for c in fake.calls}
+    assert by_mode["worker"].max_rounds == 10
+    assert by_mode["lead"].max_rounds < by_mode["worker"].max_rounds
+    assert by_mode["lead"].tokens < by_mode["worker"].tokens
+
+
+async def test_workers_are_skipped_when_time_runs_out(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    set_limits(monkeypatch, team_run_seconds=0)
+    manager, fake = make(tmp_path)
+    team = manager.create_team("t", "", [member("lead"), member("a"), member("b", "a"), member("rev")], "lead", "rev")
+    manager.store.get_team(team.id).members[1].depends_on = []
+    run = await finish(manager, team.id)
+    assert run.agents["a"]["status"] == "skipped"
+    # With no reports at all there is nothing to write from.
+    assert run.status == "failed"
+    assert not fake.calls
+
+
+async def test_reports_survive_a_failing_lead(tmp_path: Path) -> None:
+    manager, fake = make(tmp_path, {"-a-worker": ["temuan penting"]})
+    original = fake.process
+
+    async def process(**kwargs: Any) -> AgentResponse:
+        if "lead" in kwargs["session_id"]:
+            raise RuntimeError("provider down")
+        return await original(**kwargs)
+
+    fake.process = process  # type: ignore[method-assign]
+    team = manager.create_team("t", "", [member("lead"), member("a")], "lead")
+    run = await finish(manager, team.id)
+    assert run.status == "completed"
+    assert "temuan penting" in run.result and "provider down" in run.result
+
+
+async def test_a_hanging_model_cannot_block_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent import team_orchestrator
+
+    monkeypatch.setattr(team_orchestrator, "HARD_TIMEOUT_GRACE_SECONDS", 0)
+    set_limits(monkeypatch, team_member_seconds=0)
+    manager, fake = make(tmp_path)
+    original = fake.process
+
+    async def process(**kwargs: Any) -> AgentResponse:
+        if "-a-" in kwargs["session_id"]:
+            await asyncio.sleep(60)
+        return await original(**kwargs)
+
+    fake.process = process  # type: ignore[method-assign]
+    team = manager.create_team("t", "", [member("lead"), member("a"), member("b")], "lead")
+    run = await finish(manager, team.id)
+    assert run.agents["a"]["status"] == "failed"
+    assert "batas waktu" in run.agents["a"]["error"]
+    assert run.status == "completed"

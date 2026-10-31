@@ -12,6 +12,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent.team_orchestrator import team_templates
+from agent.team_outputs import OutputError, database_options, send_telegram
+from config.settings import get_settings
 
 router = APIRouter(prefix="/api/teams", tags=["AI teams"])
 
@@ -19,18 +21,22 @@ router = APIRouter(prefix="/api/teams", tags=["AI teams"])
 class MemberInput(BaseModel):
     id: str | None = Field(default=None, max_length=40)
     name: str = Field(min_length=1, max_length=60)
-    role: str = Field(min_length=1, max_length=120)
-    model_id: str = Field(min_length=1, max_length=160)
+    role: str = Field(default="", max_length=120)
+    model_id: str = Field(default="", max_length=160)
     instructions: str = Field(default="", max_length=4000)
-    depends_on: list[str] = Field(default_factory=list, max_length=6)
+    depends_on: list[str] = Field(default_factory=list, max_length=12)
+    kind: str = Field(default="agent", max_length=20)
+    branch: str = Field(default="", max_length=1)
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class TeamInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=1000)
-    members: list[MemberInput] = Field(min_length=2, max_length=6)
+    members: list[MemberInput] = Field(min_length=2, max_length=12)
     lead_id: str | None = None
     reviewer_id: str | None = None
+    schedule: dict[str, Any] = Field(default_factory=dict)
 
 
 class RunInput(BaseModel):
@@ -61,12 +67,37 @@ async def list_templates(request: Request) -> dict[str, Any]:
     return {"templates": team_templates(models)}
 
 
+@router.get("/integrations")
+async def integrations(request: Request) -> dict[str, Any]:
+    """What a flow can deliver to. Says what is set up, never the secrets themselves."""
+    service(request)
+    settings = get_settings()
+    return {
+        "telegram": {"ready": bool(settings.telegram_bot_token), "default_chat": bool(settings.telegram_chat_id)},
+        "databases": database_options(),
+    }
+
+
+class TelegramTest(BaseModel):
+    chat_id: str = Field(default="", max_length=70)
+
+
+@router.post("/telegram/test")
+async def test_telegram(payload: TelegramTest, request: Request) -> dict[str, bool]:
+    service(request)
+    try:
+        await send_telegram("Tes dari SquidWings: Telegram sudah tersambung.", payload.chat_id.strip())
+    except OutputError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"sent": True}
+
+
 @router.post("", status_code=201)
 async def create_team(payload: TeamInput, request: Request) -> dict[str, Any]:
     try:
         team = service(request).create_team(
             payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id,
-            payload.reviewer_id,
+            payload.reviewer_id, payload.schedule,
         )
         return asdict(team)
     except ValueError as exc:
@@ -78,7 +109,7 @@ async def update_team(team_id: str, payload: TeamInput, request: Request) -> dic
     try:
         team = await service(request).update_team(
             team_id, payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id,
-            payload.reviewer_id,
+            payload.reviewer_id, payload.schedule,
         )
         return asdict(team)
     except KeyError as exc:

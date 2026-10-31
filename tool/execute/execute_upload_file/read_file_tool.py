@@ -14,16 +14,23 @@ Mendukung:
 
 from __future__ import annotations
 
+import functools
 import mimetypes
 from pathlib import Path
 from typing import Any
 
 from utils.logger import get_logger
+from utils.markdown_compact import compact_markdown, fit_markdown
 
 logger = get_logger(__name__)
 
 # Max text preview size
 MAX_PREVIEW_BYTES = 512_000  # 512KB
+DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".epub"}
+MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
+MAX_DOCUMENT_CHARS = 20_000
+MARKDOWN_EXTENSIONS = {".md", ".markdown"}
+COMPACT_MARKDOWN_ABOVE_CHARS = 6_000
 
 # Text-friendly extensions
 TEXT_EXTENSIONS: set[str] = {
@@ -34,6 +41,48 @@ TEXT_EXTENSIONS: set[str] = {
     ".php", ".swift", ".kt", ".dart", ".lua", ".r", ".R",
     ".dockerfile", ".makefile", ".gradle", ".properties",
 }
+
+
+@functools.lru_cache(maxsize=8)
+def _document_markdown(path: str, _modified: float) -> str:
+    """Convert a document once. Reading a range would otherwise convert it each time."""
+    from markitdown import MarkItDown
+
+    return compact_markdown(str(MarkItDown(enable_plugins=False).convert_local(path).markdown))
+
+
+def _read_document(
+    path: Path, ext: str, size: int, start_line: int | None, end_line: int | None
+) -> dict[str, Any] | None:
+    """A PDF or office file as compact Markdown, or None if it cannot be converted."""
+    if size > MAX_DOCUMENT_BYTES:
+        return None
+    try:
+        markdown = _document_markdown(str(path), path.stat().st_mtime)
+    except Exception as exc:  # noqa: BLE001 - the converter raises many types
+        logger.warning(f"[read_file] Could not convert {path.name}: {exc}")
+        return None
+    lines = markdown.split("\n")
+    result: dict[str, Any] = {
+        "success": True,
+        "file_path": str(path),
+        "file_name": path.name,
+        "extension": ext,
+        "file_size": size,
+        "file_size_human": _format_size(size),
+        "is_text": True,
+        "converted_from": ext.lstrip("."),
+        "total_lines": len(lines),
+    }
+    if start_line is not None or end_line is not None:
+        first = max(1, start_line or 1) - 1
+        last = min(len(lines), end_line or len(lines))
+        result.update(content="\n".join(lines[first:last]), shown_start=first + 1, shown_end=last)
+    else:
+        result["content"] = fit_markdown(markdown, MAX_DOCUMENT_CHARS)
+        if len(markdown) > MAX_DOCUMENT_CHARS:
+            result["note"] = "Long document, so some sections are skipped. Use start_line and end_line for more."
+    return result
 
 
 def read_file(
@@ -76,6 +125,11 @@ def read_file(
 
     ext = path.suffix.lower()
     size = path.stat().st_size
+
+    if ext in DOCUMENT_EXTENSIONS:
+        document = _read_document(path, ext, size, start_line, end_line)
+        if document:
+            return document
 
     # Check if it's a text file
     is_text = ext in TEXT_EXTENSIONS or ext == ""
@@ -145,7 +199,19 @@ def read_file(
         f"showing L{shown_start}-L{shown_end}"
     )
 
+    # An edit needs the exact text, so this only applies when no range was asked for.
+    note: dict[str, str] = {}
+    if (
+        ext in MARKDOWN_EXTENSIONS
+        and start_line is None
+        and end_line is None
+        and len(content) > COMPACT_MARKDOWN_ABOVE_CHARS
+    ):
+        content = fit_markdown(content, MAX_DOCUMENT_CHARS)
+        note = {"note": "Compacted view, not the exact text. Read with start_line and end_line before file_patch."}
+
     return {
+        **note,
         "success": True,
         "file_path": str(path),
         "file_name": path.name,

@@ -831,29 +831,95 @@
   const NODE_W = 196;
   const NODE_H = 76;
   const COLUMN_GAP = 216;
-  const ROW_GAP = 112;
+  const ROW_GAP = 140;
   const newId = () => `a${Math.random().toString(36).slice(2, 9)}`;
   const posKey = (team, member) => `pos:${team}:${member}`;
   const finished = status => ['completed', 'failed', 'cancelled'].includes(status);
 
-  function depth(member, seen = new Set()) {
-    if (seen.has(member.id)) return 0;
-    seen.add(member.id);
-    const parents = (member.depends_on || []).map(id => S.members.find(m => m.id === id)).filter(Boolean);
-    return parents.length ? 1 + Math.max(...parents.map(p => depth(p, new Set(seen)))) : 0;
+  const kindOf = member => member.kind || 'agent';
+  const isOutput = member => ['telegram', 'database'].includes(kindOf(member));
+  const memberById = id => S.members.find(m => m.id === id);
+  const parentsOf = member => (member.depends_on || []).map(memberById).filter(Boolean);
+  const defaultLead = () => (S.members.every(m => kindOf(m) === 'agent') && S.members[0] ? S.members[0].id : null);
+  const DAYS = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+  const KIND_LABEL = {
+    agent: 'Agent', delay: 'Delay', gate: 'Gate IF', switch: 'Switch', merge: 'Merge', set: 'Teks',
+    http: 'HTTP', telegram: 'Telegram', database: 'Database',
+  };
+  const isBranching = member => ['gate', 'switch'].includes(kindOf(member));
+  const branchParent = member => parentsOf(member).find(isBranching);
+  const conditionsOf = config => config.conditions || (config.mode ? [config] : []);
+  const CONDITION_LABEL = {
+    contains: 'Berisi kata kunci', not_contains: 'Tidak berisi kata kunci', equals: 'Sama persis dengan',
+    regex: 'Cocok dengan regex', empty: 'Kosong', time: 'Jam tertentu', ai: 'Ditanyakan ke AI',
+  };
+
+  /* Mirrors _after_answer on the server: nodes that run once the answer exists. */
+  function afterAnswer() {
+    const after = new Set(S.members.filter(m => isOutput(m) && !(m.depends_on || []).length).map(m => m.id));
+    const anchors = new Set([S.lead, S.reviewer].filter(Boolean));
+    let changed = true;
+    while (changed) {
+      changed = false;
+      S.members.forEach(member => {
+        if (after.has(member.id) || anchors.has(member.id)) return;
+        if ((member.depends_on || []).some(id => after.has(id) || anchors.has(id))) { after.add(member.id); changed = true; }
+      });
+    }
+    return after;
+  }
+
+  /* The row each node runs in. The order on screen is the order it runs in. */
+  function flowRows() {
+    const after = afterAnswer();
+    const rows = new Map();
+    const below = (member, seen) => {
+      const parents = parentsOf(member).filter(p => !seen.has(p.id));
+      return parents.length ? 1 + Math.max(...parents.map(p => rowOf(p, new Set([...seen, member.id])))) : 0;
+    };
+    let answerRow = -1;
+    function rowOf(member, seen = new Set()) {
+      if (rows.has(member.id)) return rows.get(member.id);
+      let row = below(member, seen);
+      if (member.id === S.lead) row = Math.max(row, answerRow + 1);
+      else if (member.id === S.reviewer) row = rowOf(memberById(S.lead) || member, seen) + 1;
+      else if (isOutput(member) && !(member.depends_on || []).length) row = answerRow + 1;
+      rows.set(member.id, row);
+      return row;
+    }
+    const before = S.members.filter(m => m.id !== S.lead && m.id !== S.reviewer && !after.has(m.id));
+    before.forEach(m => { answerRow = Math.max(answerRow, rowOf(m)); });
+    [memberById(S.lead), memberById(S.reviewer)].filter(Boolean).forEach(m => { answerRow = Math.max(answerRow, rowOf(m)); });
+    S.members.forEach(m => rowOf(m));
+    return rows;
+  }
+
+  /* 1, 2, 3 down the flow. Each way out of an OR gate gets a letter: 5A, 5B, then 6A. */
+  function flowSteps() {
+    const rows = flowRows();
+    const numbers = [...new Set(rows.values())].sort((a, b) => a - b);
+    const letters = new Map();
+    const letterOf = (member, seen = new Set()) => {
+      if (letters.has(member.id)) return letters.get(member.id);
+      if (seen.has(member.id)) return '';
+      const parents = parentsOf(member);
+      let letter = '';
+      if (member.branch && parents.some(isBranching)) letter = member.branch;
+      else if (parents.length === 1) letter = letterOf(parents[0], new Set([...seen, member.id]));
+      letters.set(member.id, letter);
+      return letter;
+    };
+    const steps = new Map();
+    S.members.forEach(member => steps.set(member.id, `${numbers.indexOf(rows.get(member.id)) + 1}${letterOf(member)}`));
+    return { steps, first: numbers[0], rows };
   }
 
   function autoLayout(teamId) {
+    const { rows: rowMap } = flowSteps();
     const rows = {};
-    const workers = S.members.filter(m => m.id !== S.lead && m.id !== S.reviewer);
-    const lastWorker = workers.length ? Math.max(...workers.map(m => depth(m))) : -1;
-    const rowOf = member => {
-      if (member.id === S.lead) return lastWorker + 1;
-      if (member.id === S.reviewer) return lastWorker + 2;
-      return depth(member);
-    };
-    S.members.forEach(member => { (rows[rowOf(member)] ||= []).push(member); });
+    S.members.forEach(member => { (rows[rowMap.get(member.id)] ||= []).push(member); });
     const widest = Math.max(...Object.values(rows).map(list => list.length));
+    const rowNumbers = Object.keys(rows).map(Number).sort((a, b) => a - b);
     S.members.forEach(member => {
       const saved = teamId && store.get(posKey(teamId, member.id));
       if (saved) {
@@ -863,52 +929,90 @@
         return;
       }
       if (member.x !== undefined) return;
-      const row = rowOf(member);
+      const row = rowMap.get(member.id);
       const list = rows[row];
       // Centre each row over the widest one, so the flow reads straight down.
       const offset = ((widest - list.length) * COLUMN_GAP) / 2;
       member.x = 28 + offset + list.indexOf(member) * COLUMN_GAP;
-      member.y = 28 + row * ROW_GAP;
+      member.y = 28 + rowNumbers.indexOf(row) * ROW_GAP;
     });
   }
 
   function edges() {
     const lines = [];
     const statusOf = member => (S.run && S.run.agents && S.run.agents[member.id] ? S.run.agents[member.id].status : '');
-    const add = (from, to, cls = '') => {
+    const add = (from, to, cls = '', label = '') => {
       if (!from || !to) return;
+      // A node grows while it runs, so the line leaves from its real bottom edge.
+      const fromEl = document.querySelector(`.node[data-id="${CSS.escape(from.id)}"]`);
       const x1 = from.x + NODE_W / 2;
-      const y1 = from.y + NODE_H;
+      const y1 = from.y + (fromEl ? fromEl.offsetHeight : NODE_H);
       const x2 = to.x + NODE_W / 2;
       const y2 = to.y;
       const bend = Math.max(18, Math.abs(y2 - y1) / 2);
       const active = statusOf(to) === 'running' ? ' active' : '';
-      lines.push(`<path class="edge ${cls}${active}" d="M${x1} ${y1}C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}" marker-end="url(#arrow)"/>`);
+      const skipped = statusOf(to) === 'skipped' ? ' skipped' : '';
+      lines.push(`<path class="edge ${cls}${active}${skipped}" d="M${x1} ${y1}C${x1} ${y1 + bend} ${x2} ${y2 - bend} ${x2} ${y2}" marker-end="url(#arrow)"/>`);
+      if (label) lines.push(`<text class="edge-label" x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 + 4}">${label}</text>`);
     };
-    const lead = S.members.find(m => m.id === S.lead);
-    const reviewer = S.members.find(m => m.id === S.reviewer);
-    const workers = S.members.filter(m => m !== lead && m !== reviewer);
-    const dependedOn = new Set(workers.flatMap(m => m.depends_on || []));
-    workers.forEach(member => {
-      (member.depends_on || []).forEach(id => add(S.members.find(m => m.id === id), member));
-      if (!dependedOn.has(member.id)) add(member, lead);
+    const lead = memberById(S.lead);
+    const reviewer = memberById(S.reviewer);
+    const after = afterAnswer();
+    const dependedOn = new Set(S.members.flatMap(m => m.depends_on || []));
+    S.members.filter(m => m !== reviewer).forEach(member => {
+      parentsOf(member).forEach(parent => {
+        const label = isBranching(parent) && member.branch ? member.branch : '';
+        add(parent, member, isBranching(parent) ? 'branch' : '', label);
+      });
+      if (member === lead || after.has(member.id) || dependedOn.has(member.id)) return;
+      add(member, lead);
     });
     if (reviewer) add(lead, reviewer, 'review');
+    // An unconnected output delivers the answer, so it hangs off whatever writes it.
+    const writer = reviewer || lead;
+    const ends = writer ? [writer] : S.members.filter(m => !after.has(m.id) && !dependedOn.has(m.id));
+    S.members.filter(m => isOutput(m) && !(m.depends_on || []).length).forEach(output => ends.forEach(end => add(end, output)));
     $('edge-lines').innerHTML = lines.join('');
   }
 
   function roleLabel(member) {
     if (member.id === S.lead) return 'Lead';
     if (member.id === S.reviewer) return 'Reviewer';
-    return 'Agent';
+    return KIND_LABEL[kindOf(member)];
+  }
+
+  function nodeDetail(member) {
+    const config = member.config || {};
+    switch (kindOf(member)) {
+      case 'delay': return `Tunggu ${config.seconds || 0} detik`;
+      case 'gate': {
+        const list = conditionsOf(config);
+        if (list.length > 1) return `${list.length} syarat, ${(config.combine || 'and').toUpperCase()}`;
+        const only = list[0] || {};
+        if (only.mode === 'time') return `Jam ${only.start || '--:--'} sampai ${only.end || '--:--'}`;
+        return `${CONDITION_LABEL[only.mode] || 'Syarat'}${only.value ? `: ${only.value}` : ''}`;
+      }
+      case 'switch': return `${(config.rules || []).length} aturan, lainnya ke D`;
+      case 'merge': return config.mode === 'all' ? 'Tunggu semua jalur' : 'Lanjut saat salah satu tiba';
+      case 'set': return (config.text || 'belum diisi').split('\n')[0].slice(0, 40);
+      case 'http': return `${config.method || 'GET'} ${(config.url || '').replace(/^https?:\/\//, '').slice(0, 30)}`;
+      case 'telegram': return config.chat_id || 'Chat bawaan';
+      case 'database': return `${config.database || 'sqlite'} · ${config.table || 'hasil_tim'}`;
+      default: return shortModel(member.model_id);
+    }
   }
 
   function renderBoard() {
+    const { steps, rows, first } = flowSteps();
     $('nodes').innerHTML = S.members.map(member => `
-      <div class="node ${member.id === S.selected ? 'selected' : ''}" data-id="${esc(member.id)}" style="left:${member.x}px;top:${member.y}px" tabindex="0">
-        <div class="node-role">${roleLabel(member)}</div>
+      <div class="node ${member.id === S.selected ? 'selected' : ''}" data-id="${esc(member.id)}" data-kind="${kindOf(member)}" style="left:${member.x}px;top:${member.y}px" tabindex="0">
+        <div class="node-head">
+          <span class="node-step">${esc(steps.get(member.id))}</span>
+          <span class="node-role">${roleLabel(member)}</span>
+          ${rows.get(member.id) === first ? '<span class="node-start">Mulai</span>' : ''}
+        </div>
         <div class="node-name">${esc(member.name || 'Tanpa nama')}</div>
-        <div class="node-model">${esc(shortModel(member.model_id))}</div>
+        <div class="node-model">${esc(nodeDetail(member))}</div>
         <div class="node-state"></div>
       </div>`).join('');
     document.querySelectorAll('.node').forEach(el => { el.onpointerdown = e => startDrag(e, el); });
@@ -922,13 +1026,14 @@
     const offsetY = event.clientY - member.y;
     if (S.selected !== member.id) {
       S.selected = member.id;
+      S.panel = null;
       document.querySelectorAll('.node').forEach(n => n.classList.toggle('selected', n === el));
       renderMember();
     }
     el.setPointerCapture(event.pointerId);
     el.onpointermove = e => {
       member.x = Math.max(0, Math.min(1600 - NODE_W, e.clientX - offsetX));
-      member.y = Math.max(0, Math.min(1400 - NODE_H, e.clientY - offsetY));
+      member.y = Math.max(0, Math.min(2000 - NODE_H, e.clientY - offsetY));
       el.style.left = `${member.x}px`;
       el.style.top = `${member.y}px`;
       edges();
@@ -940,48 +1045,237 @@
     };
   }
 
+  function dayChecks(selected, attribute) {
+    const chosen = selected && selected.length ? selected : [0, 1, 2, 3, 4, 5, 6];
+    return `<div class="day-row">${DAYS.map((day, index) =>
+      `<label class="check"><input type="checkbox" ${attribute}="${index}" ${chosen.includes(index) ? 'checked' : ''}>${day}</label>`).join('')}</div>`;
+  }
+
+  function readDays(box, attribute) {
+    return [...box.querySelectorAll(`[${attribute}]`)].filter(c => c.checked).map(c => Number(c.getAttribute(attribute)));
+  }
+
+  /* One condition of a gate, or one rule of a switch. */
+  function conditionFields(condition, index, listKey) {
+    const mode = condition.mode || 'contains';
+    const attr = `data-cond="${listKey}" data-index="${index}"`;
+    const options = Object.entries(CONDITION_LABEL).map(([value, label]) =>
+      `<option value="${value}" ${mode === value ? 'selected' : ''}>${label}</option>`).join('');
+    const prefix = listKey === 'rules' ? `Aturan ${'ABC'[index]}` : `Syarat ${index + 1}`;
+    let body = '';
+    if (mode === 'time') {
+      body = `<div class="field-row">
+          <label class="field"><span>Dari</span><input ${attr} data-key="start" type="time" value="${esc(condition.start || '07:00')}"></label>
+          <label class="field"><span>Sampai</span><input ${attr} data-key="end" type="time" value="${esc(condition.end || '22:00')}"></label>
+        </div>
+        <div class="field" data-cond-days="${listKey}:${index}"><span>Hari</span>${dayChecks(condition.days, 'data-cday')}</div>`;
+    } else if (mode !== 'empty') {
+      const hint = { ai: 'Pertanyaan ya atau tidak', regex: 'Pola, misalnya ^/jadwal\\b', equals: 'Teks' }[mode] || 'Kata kunci, pisahkan dengan koma';
+      body = `<label class="field"><span>${hint}</span><textarea ${attr} data-key="value" rows="2" maxlength="1000">${esc(condition.value || '')}</textarea></label>`;
+    }
+    return `<div class="condition">
+        <div class="condition-head"><span>${prefix}</span>
+          <button class="btn btn-ghost btn-small" type="button" data-cond-remove="${listKey}" data-index="${index}">Hapus</button></div>
+        <label class="field"><select ${attr} data-key="mode">${options}</select></label>
+        ${body}
+      </div>`;
+  }
+
+  function nodeFields(member) {
+    const config = member.config || {};
+    switch (kindOf(member)) {
+      case 'delay':
+        return `<label class="field"><span>Tunggu (detik, maksimal 3600)</span><input data-config="seconds" type="number" min="1" max="3600" value="${esc(config.seconds || 30)}"></label>
+          <p class="hint">Jeda ini tidak dihitung dalam batas waktu tim.</p>`;
+      case 'gate': {
+        const list = conditionsOf(config);
+        const combine = config.combine || 'and';
+        const needsModel = list.some(c => c.mode === 'ai');
+        return `<label class="field"><span>Gabungkan syarat</span><select data-config="combine">
+            <option value="and" ${combine === 'and' ? 'selected' : ''}>AND, semua harus terpenuhi</option>
+            <option value="or" ${combine === 'or' ? 'selected' : ''}>OR, salah satu cukup</option>
+          </select></label>
+          ${list.map((c, i) => conditionFields(c, i, 'conditions')).join('')}
+          ${list.length < 5 ? '<button class="btn btn-ghost btn-small btn-block" type="button" data-cond-add="conditions">+ Syarat</button>' : ''}
+          ${needsModel ? '<label class="field"><span>Model untuk syarat AI</span><select data-field="model_id"></select></label>' : ''}
+          <p class="hint">Terpenuhi ke jalur A, tidak terpenuhi ke jalur B. Syarat tanpa AI dicek dulu, jadi AI sering tidak perlu ditanya.</p>`;
+      }
+      case 'switch': {
+        const rules = config.rules || [];
+        const needsModel = rules.some(c => c.mode === 'ai');
+        return `${rules.map((c, i) => conditionFields(c, i, 'rules')).join('')}
+          ${rules.length < 3 ? '<button class="btn btn-ghost btn-small btn-block" type="button" data-cond-add="rules">+ Aturan</button>' : ''}
+          ${needsModel ? '<label class="field"><span>Model untuk aturan AI</span><select data-field="model_id"></select></label>' : ''}
+          <p class="hint">Aturan pertama yang cocok memilih jalurnya (A, B, C). Selain itu ke jalur D.</p>`;
+      }
+      case 'merge': {
+        const mode = config.mode || 'any';
+        return `<label class="field"><span>Lanjut ketika</span><select data-config="mode">
+            <option value="any" ${mode === 'any' ? 'selected' : ''}>Salah satu jalur tiba</option>
+            <option value="all" ${mode === 'all' ? 'selected' : ''}>Semua jalur tiba</option>
+          </select></label>
+          <p class="hint">Isi dari semua jalur yang tiba digabung jadi satu.</p>`;
+      }
+      case 'set':
+        return `<label class="field"><span>Isi teks</span><textarea data-config="text" rows="8" maxlength="8000">${esc(config.text || '')}</textarea></label>
+          <p class="hint">Bisa memakai {{input}}, {{task}}, {{date}}, {{time}}, {{day}}, {{team}}, dan {{node.ID}} untuk isi node lain.</p>`;
+      case 'http': {
+        const method = config.method || 'GET';
+        return `<div class="field-row">
+            <label class="field"><span>Metode</span><select data-config="method">
+              <option ${method === 'GET' ? 'selected' : ''}>GET</option><option ${method === 'POST' ? 'selected' : ''}>POST</option>
+            </select></label>
+          </div>
+          <label class="field"><span>URL</span><input data-config="url" value="${esc(config.url || '')}" placeholder="https://..." maxlength="2000"></label>
+          ${method === 'POST' ? `<label class="field"><span>Isi (JSON atau teks)</span><textarea data-config="body" rows="4" maxlength="8000">${esc(config.body || '')}</textarea></label>` : ''}
+          <p class="hint">Hanya alamat publik. Balasannya diteruskan ke node berikutnya. Isi bisa memakai {{input}} dan {{task}}.</p>`;
+      }
+      case 'telegram': {
+        const telegram = (S.integrations || {}).telegram || {};
+        return `<label class="field"><span>Chat ID</span><input data-config="chat_id" value="${esc(config.chat_id || '')}" placeholder="${telegram.default_chat ? 'Memakai TELEGRAM_CHAT_ID' : 'Angka atau @nama_channel'}" maxlength="70"></label>
+          <p class="hint">${telegram.ready ? 'Bot sudah tersambung.' : 'Isi TELEGRAM_BOT_TOKEN di .env dulu, lalu jalankan ulang server.'}</p>
+          <button id="test-telegram" class="btn btn-ghost btn-small btn-block" type="button" ${telegram.ready ? '' : 'disabled'}>Kirim pesan tes</button>`;
+      }
+      case 'database': {
+        const options = (S.integrations || {}).databases || [{ id: 'sqlite', label: 'SQLite (file lokal)', ready: true }];
+        const chosen = options.find(o => o.id === (config.database || 'sqlite')) || options[0];
+        return `<label class="field"><span>Database</span><select data-config="database">${options.map(o =>
+            `<option value="${esc(o.id)}" ${o.id === chosen.id ? 'selected' : ''}>${esc(o.label)}${o.ready ? '' : ' (belum siap)'}</option>`).join('')}</select></label>
+          ${chosen.reason ? `<p class="hint hint-warn">${esc(chosen.reason)}</p>` : ''}
+          <label class="field"><span>Nama tabel</span><input data-config="table" value="${esc(config.table || 'hasil_tim')}" maxlength="63"></label>`;
+      }
+      default: return '';
+    }
+  }
+
   function renderMember() {
     const box = $('member-panel');
-    const member = S.members.find(m => m.id === S.selected);
+    if (S.panel === 'schedule') { renderSchedule(); return; }
+    const member = memberById(S.selected);
     if (!member) {
-      box.innerHTML = '<p class="hint">Pilih agent di kanvas untuk mengaturnya.</p>';
+      box.innerHTML = '<p class="hint">Pilih node di kanvas untuk mengaturnya, atau tambahkan dari menu Tambah.</p>';
       return;
     }
-    const others = S.members.filter(m => m.id !== member.id && m.id !== S.lead && m.id !== S.reviewer);
+    const isAgent = kindOf(member) === 'agent';
     const isWorker = member.id !== S.lead && member.id !== S.reviewer;
+    const others = S.members.filter(m => m.id !== member.id && m.id !== S.reviewer);
+    const fork = branchParent(member);
     box.innerHTML = `
       <label class="field"><span>Nama</span><input data-field="name" value="${esc(member.name)}" maxlength="60"></label>
-      <label class="field"><span>Peran</span><input data-field="role" value="${esc(member.role)}" maxlength="120"></label>
-      <label class="field"><span>Model</span><select data-field="model_id"></select></label>
-      <label class="field"><span>Instruksi tambahan</span><textarea data-field="instructions" rows="4" maxlength="4000">${esc(member.instructions)}</textarea></label>
-      <div class="field">
-        <label class="check"><input type="radio" name="position" value="worker" ${isWorker ? 'checked' : ''}>Agent biasa</label>
-        <label class="check"><input type="radio" name="position" value="lead" ${member.id === S.lead ? 'checked' : ''}>Lead, menulis jawaban akhir</label>
-        <label class="check"><input type="radio" name="position" value="reviewer" ${member.id === S.reviewer ? 'checked' : ''}>Reviewer, memeriksa dan meminta revisi</label>
-      </div>
-      ${isWorker && others.length ? `<div class="field"><span>Berjalan setelah</span>
+      ${isAgent ? `
+        <label class="field"><span>Peran</span><input data-field="role" value="${esc(member.role)}" maxlength="120"></label>
+        <label class="field"><span>Model</span><select data-field="model_id"></select></label>
+        <label class="field"><span>Instruksi tambahan</span><textarea data-field="instructions" rows="4" maxlength="4000">${esc(member.instructions)}</textarea></label>
+        <div class="field">
+          <label class="check"><input type="radio" name="position" value="worker" ${isWorker ? 'checked' : ''}>Agent biasa</label>
+          <label class="check"><input type="radio" name="position" value="lead" ${member.id === S.lead ? 'checked' : ''}>Lead, menulis jawaban akhir</label>
+          <label class="check"><input type="radio" name="position" value="reviewer" ${member.id === S.reviewer ? 'checked' : ''}>Reviewer, memeriksa dan meminta revisi</label>
+        </div>` : nodeFields(member)}
+      ${member.id !== S.reviewer && others.length ? `<div class="field"><span>Berjalan setelah</span>
         ${others.map(o => `<label class="check"><input type="checkbox" data-after="${esc(o.id)}" ${(member.depends_on || []).includes(o.id) ? 'checked' : ''}>${esc(o.name)}</label>`).join('')}
       </div>` : ''}
-      <button id="remove-node" class="btn btn-ghost btn-danger btn-block" type="button">Hapus agent</button>`;
+      ${fork ? `<div class="field"><span>Jalur dari ${esc(fork.name)}</span>
+        ${(kindOf(fork) === 'switch'
+          ? [['A', 'Aturan A cocok'], ['B', 'Aturan B cocok'], ['C', 'Aturan C cocok'], ['D', 'Tidak ada yang cocok']]
+          : [['A', 'Syarat terpenuhi'], ['B', 'Syarat tidak terpenuhi']]
+        ).map(([value, label]) => `<label class="check"><input type="radio" name="branch" value="${value}" ${member.branch === value ? 'checked' : ''}>Jalur ${value}, ${label.toLowerCase()}</label>`).join('')}
+        <label class="check"><input type="radio" name="branch" value="" ${!member.branch ? 'checked' : ''}>Semua jalur</label>
+      </div>` : ''}
+      <button id="remove-node" class="btn btn-ghost btn-danger btn-block" type="button">Hapus node</button>`;
 
-    fillModelOptions(box.querySelector('[data-field="model_id"]'), member.model_id, false);
+    const modelSelect = box.querySelector('[data-field="model_id"]');
+    if (modelSelect) fillModelOptions(modelSelect, member.model_id, false);
     box.querySelectorAll('[data-field]').forEach(input => {
       input.oninput = () => {
         member[input.dataset.field] = input.value;
+        if (input.dataset.field === 'name' && kindOf(member) !== 'agent') member.role = input.value;
         const node = document.querySelector(`.node[data-id="${CSS.escape(member.id)}"]`);
         if (node) {
           node.querySelector('.node-name').textContent = member.name || 'Tanpa nama';
-          node.querySelector('.node-model').textContent = shortModel(member.model_id);
+          node.querySelector('.node-model').textContent = nodeDetail(member);
         }
       };
     });
+    box.querySelectorAll('[data-config]').forEach(input => {
+      const rerenders = ['mode', 'database', 'combine', 'method'].includes(input.dataset.config);
+      input[rerenders ? 'onchange' : 'oninput'] = () => {
+        member.config = { ...(member.config || {}), [input.dataset.config]: input.type === 'number' ? Number(input.value) : input.value };
+        if (input.dataset.config === 'mode' && input.value === 'time') member.config = { start: '07:00', end: '22:00', ...member.config };
+        const node = document.querySelector(`.node[data-id="${CSS.escape(member.id)}"]`);
+        if (node) node.querySelector('.node-model').textContent = nodeDetail(member);
+        if (rerenders) renderMember();
+      };
+    });
+    const refreshNode = () => {
+      const node = document.querySelector(`.node[data-id="${CSS.escape(member.id)}"]`);
+      if (node) node.querySelector('.node-model').textContent = nodeDetail(member);
+    };
+    /* Conditions are edited in place, and old single-condition gates become a list on first edit. */
+    const listOf = key => {
+      const config = member.config || {};
+      const list = key === 'conditions' ? conditionsOf(config).map(c => ({ ...c })) : (config.rules || []).map(c => ({ ...c }));
+      if (key === 'conditions') { delete config.mode; delete config.value; delete config.start; delete config.end; delete config.days; }
+      return list;
+    };
+    const saveList = (key, list) => { member.config = { ...(member.config || {}), [key]: list }; refreshNode(); };
+    box.querySelectorAll('[data-cond]').forEach(input => {
+      const rerenders = input.dataset.key === 'mode';
+      input[rerenders ? 'onchange' : 'oninput'] = () => {
+        const key = input.dataset.cond;
+        const list = listOf(key);
+        const index = Number(input.dataset.index);
+        list[index] = { ...list[index], [input.dataset.key]: input.value };
+        if (rerenders && input.value === 'time') list[index] = { start: '07:00', end: '22:00', ...list[index] };
+        saveList(key, list);
+        if (rerenders) renderMember();
+      };
+    });
+    box.querySelectorAll('[data-cond-days]').forEach(wrap => {
+      const [key, index] = wrap.dataset.condDays.split(':');
+      wrap.querySelectorAll('[data-cday]').forEach(check => {
+        check.onchange = () => {
+          const list = listOf(key);
+          list[Number(index)].days = readDays(wrap, 'data-cday');
+          saveList(key, list);
+        };
+      });
+    });
+    box.querySelectorAll('[data-cond-add]').forEach(button => {
+      button.onclick = () => {
+        const key = button.dataset.condAdd;
+        saveList(key, [...listOf(key), { mode: 'contains', value: '' }]);
+        renderMember();
+      };
+    });
+    box.querySelectorAll('[data-cond-remove]').forEach(button => {
+      button.onclick = () => {
+        const key = button.dataset.condRemove;
+        const list = listOf(key);
+        if (list.length <= 1) { toast('Minimal satu syarat.'); return; }
+        list.splice(Number(button.dataset.index), 1);
+        saveList(key, list);
+        renderMember();
+      };
+    });
+    const testButton = $('test-telegram');
+    if (testButton) {
+      testButton.onclick = async () => {
+        testButton.disabled = true;
+        try {
+          await post('/api/teams/telegram/test', { chat_id: (member.config || {}).chat_id || '' });
+          toast('Pesan tes terkirim.');
+        } catch (e) { toast(e.message); }
+        testButton.disabled = false;
+      };
+    }
     box.querySelectorAll('input[name="position"]').forEach(radio => {
       radio.onchange = () => {
         if (S.lead === member.id) S.lead = null;
         if (S.reviewer === member.id) S.reviewer = null;
-        if (radio.value === 'lead') { S.lead = member.id; member.depends_on = []; }
+        if (radio.value === 'lead') S.lead = member.id;
         if (radio.value === 'reviewer') { S.reviewer = member.id; member.depends_on = []; }
-        if (!S.lead) S.lead = (S.members.find(m => m.id !== S.reviewer) || member).id;
+        if (!S.lead) S.lead = defaultLead();
+        if (S.lead === S.reviewer) S.lead = S.members.find(m => m.id !== S.reviewer && kindOf(m) === 'agent')?.id || null;
         renderBoard();
         renderMember();
       };
@@ -991,20 +1285,101 @@
         const set = new Set(member.depends_on || []);
         if (check.checked) set.add(check.dataset.after); else set.delete(check.dataset.after);
         member.depends_on = [...set];
-        edges();
+        if (!branchParent(member)) member.branch = '';
+        renderBoard();
+        renderMember();
       };
     });
+    box.querySelectorAll('input[name="branch"]').forEach(radio => {
+      radio.onchange = () => { member.branch = radio.value; renderBoard(); };
+    });
     $('remove-node').onclick = () => {
-      if (S.members.length <= 2) { toast('Tim butuh minimal 2 agent.'); return; }
+      if (S.members.length <= 2) { toast('Tim butuh minimal 2 node.'); return; }
       S.members = S.members.filter(m => m.id !== member.id);
-      S.members.forEach(m => { m.depends_on = (m.depends_on || []).filter(id => id !== member.id); });
+      S.members.forEach(m => {
+        m.depends_on = (m.depends_on || []).filter(id => id !== member.id);
+        if (!branchParent(m)) m.branch = '';
+      });
       if (S.reviewer === member.id) S.reviewer = null;
-      if (S.lead === member.id) S.lead = S.members[0].id;
+      if (S.lead === member.id) S.lead = defaultLead();
       S.selected = null;
       renderBoard();
       renderMember();
     };
   }
+
+  function scheduleLabel() {
+    const schedule = S.schedule || { mode: 'off' };
+    if (schedule.mode === 'interval') return `Jadwal: tiap ${schedule.minutes || '?'} menit`;
+    if (schedule.mode === 'daily') return `Jadwal: ${(schedule.times || [schedule.time || '--:--']).join(', ')}`;
+    if (schedule.mode === 'cron') return `Cron: ${schedule.cron || '?'}`;
+    if (schedule.mode === 'once') return `Sekali: ${(schedule.at || '').replace('T', ' ')}`;
+    if (schedule.mode === 'telegram') return `Pesan Telegram${schedule.keyword ? ` ${schedule.keyword}` : ''}`;
+    return 'Jadwal';
+  }
+
+  function renderSchedule() {
+    const box = $('member-panel');
+    const schedule = S.schedule || { mode: 'off' };
+    const mode = schedule.mode || 'off';
+    const telegram = (S.integrations || {}).telegram || {};
+    const option = (value, label) => `<option value="${value}" ${mode === value ? 'selected' : ''}>${label}</option>`;
+    const times = (schedule.times || [schedule.time || '07:00']).join(', ');
+    box.innerHTML = `
+      <h3 class="panel-title">Kapan alur ini berjalan</h3>
+      <label class="field"><span>Pemicu</span><select id="schedule-mode">
+        ${option('off', 'Manual, saat tombol Jalankan ditekan')}${option('interval', 'Berulang tiap beberapa menit')}
+        ${option('daily', 'Jam tertentu, bisa beberapa kali sehari')}${option('cron', 'Cron, untuk pola rumit')}
+        ${option('once', 'Sekali, pada tanggal dan jam tertentu')}${option('telegram', 'Saat ada pesan Telegram')}
+      </select></label>
+      ${mode === 'interval' ? `<label class="field"><span>Tiap (menit, minimal 5)</span><input id="schedule-minutes" type="number" min="5" value="${esc(schedule.minutes || 60)}"></label>` : ''}
+      ${mode === 'daily' ? `<label class="field"><span>Jam, pisahkan dengan koma</span><input id="schedule-time" value="${esc(times)}" placeholder="05:00, 12:00, 17:00"></label>
+        <div class="field"><span>Hari</span>${dayChecks(schedule.days, 'data-schedule-day')}</div>` : ''}
+      ${mode === 'cron' ? `<label class="field"><span>Ekspresi cron (menit jam tanggal bulan hari)</span><input id="schedule-cron" value="${esc(schedule.cron || '0 7 * * 1-5')}" maxlength="100"></label>
+        <p class="hint">Contoh: <code>0 7 * * 1-5</code> jam 07:00 Senin sampai Jumat, <code>*/30 8-17 * * *</code> tiap 30 menit di jam kerja. Hari 0 dan 7 = Minggu.</p>` : ''}
+      ${mode === 'once' ? `<label class="field"><span>Tanggal dan jam</span><input id="schedule-at" type="datetime-local" value="${esc((schedule.at || '').slice(0, 16))}"></label>` : ''}
+      ${mode === 'telegram' ? `<label class="field"><span>Kata pemicu (kosongkan untuk semua pesan)</span><input id="schedule-keyword" value="${esc(schedule.keyword || '')}" placeholder="/jadwal" maxlength="33"></label>
+        <p class="hint ${telegram.ready && telegram.default_chat ? '' : 'hint-warn'}">${telegram.ready && telegram.default_chat
+          ? 'Hanya pesan dari TELEGRAM_CHAT_ID yang menjalankan alur. Isi pesan menjadi tugasnya, dan node Telegram tanpa Chat ID membalas ke chat itu.'
+          : 'Isi TELEGRAM_BOT_TOKEN dan TELEGRAM_CHAT_ID di .env dulu. Tanpa chat yang diizinkan, pesan diabaikan.'}</p>` : ''}
+      ${mode !== 'off' ? `<label class="field"><span>${mode === 'telegram' ? 'Konteks tambahan (boleh kosong)' : 'Tugas yang dijalankan'}</span><textarea id="schedule-task" rows="4" maxlength="4000" placeholder="Misalnya: apa yang penting hari ini di Jakarta?">${esc(schedule.task || '')}</textarea></label>
+        <p class="hint">Hanya berjalan selama server SquidWings menyala. Jam mengikuti waktu mesin ini. Tekan Simpan agar berlaku.</p>` : ''}
+      <button id="schedule-close" class="btn btn-ghost btn-block" type="button">Selesai</button>`;
+    const value = id => ($(id) ? $(id).value : undefined);
+    const update = () => {
+      const timeText = value('schedule-time');
+      S.schedule = {
+        mode: $('schedule-mode').value,
+        minutes: $('schedule-minutes') ? Number($('schedule-minutes').value) : S.schedule.minutes,
+        times: timeText !== undefined ? timeText.split(',').map(t => t.trim()).filter(Boolean) : S.schedule.times,
+        days: box.querySelector('[data-schedule-day]') ? readDays(box, 'data-schedule-day') : S.schedule.days,
+        cron: value('schedule-cron') ?? S.schedule.cron,
+        at: value('schedule-at') ?? S.schedule.at,
+        keyword: value('schedule-keyword') ?? S.schedule.keyword,
+        task: value('schedule-task') ?? S.schedule.task,
+      };
+      if (S.schedule.times) S.schedule.time = S.schedule.times[0];
+      $('flow-schedule').textContent = scheduleLabel();
+    };
+    $('schedule-mode').onchange = () => { update(); renderSchedule(); };
+    box.querySelectorAll('input, textarea').forEach(input => { input.oninput = update; input.onchange = update; });
+    $('schedule-close').onclick = () => { update(); S.panel = null; renderMember(); };
+  }
+  $('flow-schedule').onclick = () => {
+    S.panel = 'schedule';
+    S.selected = null;
+    document.querySelectorAll('.node.selected').forEach(n => n.classList.remove('selected'));
+    renderMember();
+  };
+  $('tidy-board').onclick = () => {
+    S.members.forEach(member => {
+      delete member.x;
+      delete member.y;
+      if (S.team) store.set(posKey(S.team, member.id), '');
+    });
+    autoLayout(S.team);
+    renderBoard();
+  };
 
   function renderTeamOptions() {
     $('team-select').innerHTML = `<option value="">Tim baru</option>${S.teams.map(t =>
@@ -1023,6 +1398,9 @@
     ];
     S.lead = S.members[0].id;
     S.selected = null;
+    S.panel = null;
+    S.schedule = { mode: 'off' };
+    $('flow-schedule').textContent = scheduleLabel();
     $('team-name').value = '';
     resetRunView();
     autoLayout(null);
@@ -1037,9 +1415,12 @@
     stopEvents();
     S.run = null;
     S.team = team.id;
-    S.lead = team.lead_id;
+    S.lead = team.lead_id || null;
     S.reviewer = team.reviewer_id || null;
     S.selected = null;
+    S.panel = null;
+    S.schedule = team.schedule || { mode: 'off' };
+    $('flow-schedule').textContent = scheduleLabel();
     S.members = team.members.map(m => ({ ...m, depends_on: m.depends_on || [] }));
     $('team-name').value = team.name;
     resetRunView();
@@ -1047,6 +1428,18 @@
     renderTeamOptions();
     renderBoard();
     renderMember();
+    showLatestRun(team.id);
+  }
+
+  /* A scheduled run starts with nobody watching, so opening the team shows it. */
+  async function showLatestRun(teamId) {
+    try {
+      const { runs } = await api(`/api/teams/${teamId}/runs`);
+      if (S.team !== teamId || !runs.length) return;
+      const latest = runs.reduce((a, b) => (b.created_at > a.created_at ? b : a));
+      showRun(latest);
+      if (!finished(latest.status)) watchRun(latest);
+    } catch { /* the board still works without run history */ }
   }
 
   function useTemplate(key) {
@@ -1055,9 +1448,12 @@
     stopEvents();
     S.run = null;
     S.team = null;
-    S.lead = template.lead_id;
+    S.lead = template.lead_id || null;
     S.reviewer = template.reviewer_id || null;
     S.selected = null;
+    S.panel = null;
+    S.schedule = template.schedule || { mode: 'off' };
+    $('flow-schedule').textContent = scheduleLabel();
     S.members = template.members.map(m => ({ ...m, depends_on: m.depends_on || [] }));
     $('team-name').value = template.name;
     resetRunView();
@@ -1071,9 +1467,10 @@
   async function loadTeams() {
     if (S.features.teams === false) return;
     try {
-      const [teams, templates] = await Promise.all([api('/api/teams'), api('/api/teams/templates')]);
+      const [teams, templates, integrations] = await Promise.all([api('/api/teams'), api('/api/teams/templates'), api('/api/teams/integrations')]);
       S.teams = teams.teams;
       S.templates = templates.templates;
+      S.integrations = integrations;
       $('template-select').innerHTML = `<option value="">Template</option>${S.templates.map(t =>
         `<option value="${esc(t.key)}">${esc(t.name)}</option>`).join('')}`;
       renderTeamOptions();
@@ -1082,12 +1479,35 @@
   }
   $('team-select').onchange = e => openTeam(e.target.value);
   $('template-select').onchange = e => { useTemplate(e.target.value); e.target.value = ''; };
-  $('add-node').onclick = () => {
-    if (S.members.length >= 6) { toast('Maksimal 6 agent.'); return; }
-    const model = S.members[0] ? S.members[0].model_id : '';
-    const member = { id: newId(), name: `Agent ${S.members.length + 1}`, role: 'Spesialis', model_id: model, instructions: '', depends_on: [] };
+  const NODE_DEFAULTS = {
+    agent: { name: 'Agent', role: 'Spesialis', config: {} },
+    delay: { name: 'Jeda', config: { seconds: 30 } },
+    gate: { name: 'Cek syarat', config: { combine: 'and', conditions: [{ mode: 'contains', value: '' }] } },
+    switch: { name: 'Pilah jalur', config: { rules: [{ mode: 'contains', value: '' }, { mode: 'contains', value: '' }] } },
+    merge: { name: 'Gabung jalur', config: { mode: 'any' } },
+    set: { name: 'Teks', config: { text: 'Hari ini {{day}}, {{date}} jam {{time}}.\n\n{{input}}' } },
+    http: { name: 'Permintaan HTTP', config: { method: 'GET', url: '', body: '' } },
+    telegram: { name: 'Kirim ke Telegram', config: { chat_id: '' } },
+    database: { name: 'Simpan ke database', config: { database: 'sqlite', table: 'hasil_tim' } },
+  };
+  $('add-node').onchange = e => {
+    const kind = e.target.value;
+    e.target.value = '';
+    if (!kind) return;
+    if (S.members.length >= 12) { toast('Maksimal 12 node.'); return; }
+    if (kind === 'agent' && S.members.filter(m => kindOf(m) === 'agent').length >= 6) { toast('Maksimal 6 agent.'); return; }
+    const preset = NODE_DEFAULTS[kind];
+    const model = (S.members.find(m => m.model_id) || {}).model_id || (S.models[0] && S.models[0].id) || '';
+    // Connected to the selected node, because a new node is usually the next step.
+    const parent = memberById(S.selected);
+    const member = {
+      id: newId(), kind, name: kind === 'agent' ? `Agent ${S.members.length + 1}` : preset.name, role: preset.role || preset.name,
+      model_id: model, instructions: '', branch: '', config: { ...preset.config },
+      depends_on: parent && parent.id !== S.reviewer ? [parent.id] : [],
+    };
     S.members.push(member);
     S.selected = member.id;
+    S.panel = null;
     autoLayout(S.team);
     renderBoard();
     renderMember();
@@ -1099,10 +1519,11 @@
     const body = {
       name,
       description: '',
-      members: S.members.map(({ id, name: memberName, role, model_id, instructions, depends_on }) =>
-        ({ id, name: memberName, role, model_id, instructions: instructions || '', depends_on: depends_on || [] })),
+      members: S.members.map(({ id, name: memberName, role, model_id, instructions, depends_on, kind, branch, config }) =>
+        ({ id, name: memberName, role: role || memberName, model_id: model_id || '', instructions: instructions || '', depends_on: depends_on || [], kind: kind || 'agent', branch: branch || '', config: config || {} })),
       lead_id: S.lead,
       reviewer_id: S.reviewer || null,
+      schedule: S.schedule || { mode: 'off' },
     };
     const saved = S.team
       ? await api(`/api/teams/${S.team}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -1135,9 +1556,20 @@
     document.querySelectorAll('.node').forEach(node => {
       const agent = S.run && S.run.agents ? S.run.agents[node.dataset.id] : null;
       node.dataset.status = agent ? agent.status : '';
-      const labels = { queued: 'Menunggu', running: 'Berjalan', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan' };
+      const labels = { queued: 'Menunggu', running: 'Berjalan', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan', skipped: 'Dilewati' };
       const state = node.querySelector('.node-state');
-      state.textContent = agent ? (labels[agent.status] || agent.status) + (agent.error ? `: ${agent.error}` : '') : '';
+      if (!agent) { state.textContent = ''; return; }
+      const bits = [labels[agent.status] || agent.status];
+      if (agent.status === 'running' && agent.activity) {
+        const { verb, target } = describeTool(agent.activity.name, agent.activity.detail);
+        bits[0] = `${verb} ${target}`.trim();
+      }
+      if (agent.branch && agent.status === 'completed') bits.push(`Jalur ${agent.branch}`);
+      if (agent.note && agent.status === 'completed' && !agent.branch) bits[0] = agent.note;
+      node.title = agent.note || '';
+      if (agent.completed_at && agent.started_at && agent.status !== 'running') bits.push(formatSeconds((agent.completed_at - agent.started_at) * 1000));
+      if (agent.tokens) bits.push(`${formatTokens(agent.tokens)} token`);
+      state.textContent = bits.join(' · ') + (agent.error ? `: ${agent.error}` : '');
     });
     if ($('edge-lines').childElementCount) edges();
   }
@@ -1146,9 +1578,10 @@
     S.run = run;
     paintRun();
     const active = !finished(run.status);
-    const labels = { queued: 'Menunggu', running: 'Berjalan', synthesizing: 'Lead menyusun jawaban', reviewing: 'Reviewer memeriksa', revising: 'Lead merevisi', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan' };
+    const labels = { queued: 'Menunggu', running: 'Berjalan', synthesizing: 'Lead menyusun jawaban', reviewing: 'Reviewer memeriksa', revising: 'Lead merevisi', delivering: 'Mengirim hasil', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan' };
     const reviews = (run.reviews || []).map(r => r.verdict).join(', ');
-    $('run-info').textContent = `${labels[run.status] || run.status} · ${formatTokens(run.total_tokens || 0)} token${reviews ? ` · review: ${reviews}` : ''}`;
+    const elapsed = run.started_at ? ` · ${formatSeconds(((run.completed_at || Date.now() / 1000) - run.started_at) * 1000)}` : '';
+    $('run-info').textContent = `${labels[run.status] || run.status}${elapsed} · ${formatTokens(run.total_tokens || 0)} token${reviews ? ` · review: ${reviews}` : ''}`;
     $('cancel').classList.toggle('hidden', !active);
     $('run').disabled = active;
     const result = $('result');
@@ -1163,6 +1596,18 @@
     if (S.events) { S.events.close(); S.events = null; }
   }
 
+  function watchRun(run) {
+    stopEvents();
+    S.events = new EventSource(`/api/teams/runs/${run.id}/events`);
+    S.events.onmessage = event => {
+      const data = JSON.parse(event.data);
+      if (!S.run || data.run.id !== S.run.id) return;
+      showRun(data.run);
+      if (data.type === 'run_finished') stopEvents();
+    };
+    S.events.onerror = () => { if (S.run && finished(S.run.status)) stopEvents(); };
+  }
+
   $('run-form').onsubmit = async e => {
     e.preventDefault();
     const task = $('task').value.trim();
@@ -1172,15 +1617,7 @@
       await saveTeam();
       const run = await post(`/api/teams/${S.team}/runs`, { task });
       showRun(run);
-      stopEvents();
-      S.events = new EventSource(`/api/teams/runs/${run.id}/events`);
-      S.events.onmessage = event => {
-        const data = JSON.parse(event.data);
-        if (!S.run || data.run.id !== S.run.id) return;
-        showRun(data.run);
-        if (data.type === 'run_finished') stopEvents();
-      };
-      S.events.onerror = () => { if (S.run && finished(S.run.status)) stopEvents(); };
+      watchRun(run);
     } catch (err) {
       toast(err.message);
       $('run').disabled = false;

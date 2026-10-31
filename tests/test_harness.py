@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import pytest
@@ -539,3 +540,43 @@ def test_topic_tools_do_not_push_out_the_ability_to_run_things() -> None:
         for s in select_tools(schemas, TaskType.CODE, "simpan ke memori pakai memory_remember", scaffold_for("x-flash"))
     }
     assert {"execute_command", "run_checks", "read_file", "file_patch", "memory_remember"} <= names
+
+
+# --- shared budgets ------------------------------------------------------
+
+
+async def test_out_of_budget_run_writes_its_result_instead_of_continuing(registry, tmp_path) -> None:
+    from agent.harness import RunLimits
+
+    client = FakeClient(
+        reply(calls=[("file_write", {"path": "a.txt", "content": "x"})]),
+        reply("hasil sejauh ini"),
+    )
+    limits = RunLimits(max_rounds=10, tokens=1, deadline=time.time() + 60)
+    harness = make_harness(registry, tmp_path, limits=limits)
+    result = await run(client, registry, harness)
+    assert result.content == "hasil sejauh ini"
+    assert harness.stats.out_of_budget
+    assert "tools" not in client.requests[-1] or not client.requests[-1]["tools"]
+    assert "Jangan panggil tool" in str(client.requests[-1]["messages"][-1]["content"])
+
+
+async def test_past_the_deadline_the_first_answer_is_final(registry, tmp_path) -> None:
+    from agent.harness import RunLimits
+
+    client = FakeClient(reply("cepat"))
+    harness = make_harness(registry, tmp_path, limits=RunLimits(10, 100_000, deadline=0.0))
+    assert (await run(client, registry, harness)).content == "cepat"
+    assert len(client.requests) == 1
+
+
+def test_limits_shrink_every_tier_and_turn_off_the_advisor() -> None:
+    from agent.harness import RunLimits
+
+    limits = RunLimits(max_rounds=10, tokens=1, deadline=0.0)
+    for model in ("x-flash", "ag/claude-sonnet-4-6", "vk/openai/gpt-6-sol"):
+        scaffold = limits.apply(scaffold_for(model))
+        assert scaffold.max_iterations == 10
+        assert scaffold.context_chars <= 24_000
+        assert scaffold.max_tools == 10
+        assert scaffold.advisor_calls == 0

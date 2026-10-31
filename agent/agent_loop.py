@@ -182,6 +182,19 @@ class AgentLoop:
             iteration += 1
             result.iterations = iteration
 
+            if harness and harness.limits and not force_final and harness.limits.exceeded(result.total_tokens):
+                force_final = True
+                verify_rounds_left = 0
+                harness.stats.out_of_budget = True
+                harness.emit(type="status", note=True, text="Batas agent ini tercapai, menulis hasilnya")
+                current_messages.append({
+                    "role": "user",
+                    "content": (
+                        "Batas waktu dan token untuk tugasmu sudah habis. Jangan panggil tool lagi. "
+                        "Tulis hasilmu sekarang: apa yang ditemukan atau selesai, dan apa yang belum."
+                    ),
+                })
+
             # Out of budget: without this the run ends on a tool call and the
             # user gets nothing, however much useful work was already done.
             offered_tools = harness.tools if harness and not force_final else None
@@ -836,6 +849,6 @@ class AgentLoop:
         except (TypeError, ValueError):
             text = str(content)
         if self._harness:
-            limit = max(self._harness.scaffold.tool_result_chars, _RESULT_FLOOR.get(str(tool_result.get("tool_name")), 0))
+            limit = max(self._harness.scaffold.tool_result_chars, min(_RESULT_FLOOR.get(str(tool_result.get("tool_name")), 0), self._harness.scaffold.context_chars // 3))
             return clip_text(text, limit)
         return text

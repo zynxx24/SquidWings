@@ -18,6 +18,11 @@ pillow>=10   # Document upload -> Markdown
 beautifulsoup4>=4.12   # Read web pages
 lxml>=5
 markdownify>=0.13
+markdown-it-py>=3   # Compact Markdown before it reaches a model
+# Optional, only for the database you choose in a team flow. SQLite needs nothing.
+# psycopg[binary]>=3   # PostgreSQL
+# pymysql>=1           # MySQL and MariaDB
+# pymongo>=4           # MongoDB
 
 # === CLI & Display ===
 rich>=13.0                    # Beautiful terminal output

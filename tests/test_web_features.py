@@ -15,9 +15,11 @@ from config.settings import Settings
 from web import server, team_api
 
 
-def test_teams_follow_app_env() -> None:
-    assert Settings(app_env="development").teams_enabled is False
-    assert Settings(app_env="production").teams_enabled is True
+def test_teams_follow_app_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The developer's own .env must not decide this.
+    monkeypatch.delenv("WEB_TEAMS_ENABLED", raising=False)
+    assert Settings(app_env="development", _env_file=None).teams_enabled is False
+    assert Settings(app_env="production", _env_file=None).teams_enabled is True
 
 
 def test_explicit_flag_wins() -> None:
@@ -26,7 +28,8 @@ def test_explicit_flag_wins() -> None:
 
 
 def test_config_endpoint_reports_feature(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(server, "get_settings", lambda: Settings(app_env="development"))
+    monkeypatch.delenv("WEB_TEAMS_ENABLED", raising=False)
+    monkeypatch.setattr(server, "get_settings", lambda: Settings(app_env="development", _env_file=None))
     response = TestClient(server.app).get("/api/config")
     assert response.status_code == 200
     assert response.json()["features"]["teams"] is False

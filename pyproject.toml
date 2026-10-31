@@ -10,6 +10,8 @@ exclude = [
     "__pycache__",
     "*.bak",
     "*.corrupt",
+    # Vendored skill code, kept as upstream wrote it.
+    "brain/skills/*/tools",
 ]
 
 [tool.ruff.lint]

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 PONYTAIL_MODES = ("off", "lite", "full", "ultra")
@@ -16,6 +16,8 @@ class SessionSettings:
     ponytail: str = ""
     graphify: bool = True
     aislop: bool = True
+    # Contextual skills woken in this session. They stay active until the session ends.
+    skills: list[str] = field(default_factory=list)
 
 
 def _path(workspace: str | Path) -> Path:
@@ -29,6 +31,16 @@ def load(workspace: str | Path) -> SessionSettings:
         return SessionSettings()
     known = {key: data[key] for key in SessionSettings.__dataclass_fields__ if key in data}
     return SessionSettings(**known)
+
+
+def activate_skills(workspace: str | Path, names: list[str]) -> list[str]:
+    """Remember contextual skills as active in this session. Returns all active ones."""
+    settings = load(workspace)
+    added = [name for name in names if name not in settings.skills]
+    if added:
+        settings.skills = [*settings.skills, *added]
+        save(workspace, settings)
+    return settings.skills
 
 
 def save(workspace: str | Path, settings: SessionSettings) -> None:

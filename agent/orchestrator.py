@@ -64,7 +64,7 @@ from utils.logger import get_logger
 from utils.workspace_context import get_active_workspace
 
 from .agent_loop import AgentLoop, LoopResult
-from .harness import Harness, scaffold_for
+from .harness import Harness, RunLimits, scaffold_for
 from .harness.advisor import pick_advisor
 from .harness.briefing import build_briefing, skill_guidance
 from .harness.guards import tool_trace
@@ -335,6 +335,7 @@ class Orchestrator:
         on_event: Callable[[dict[str, Any]], None] | None = None,
         task_hint: str | None = None,
         persist: bool = True,
+        limits: RunLimits | None = None,
     ) -> AgentResponse:
         """Process a user input through the full pipeline.
 
@@ -365,6 +366,7 @@ class Orchestrator:
             task_hint: The underlying task, when user_input is a role prompt for
                 one team agent. Drives intent, tool choice, and memory, which a
                 prompt like "You are a Researcher..." would otherwise mislead.
+            limits: Time and token caps, for runs that share a budget.
             persist: Keep this turn in chat history and session notes. Off for
                 team agents, whose context is passed explicitly.
 
@@ -540,7 +542,7 @@ class Orchestrator:
                 user_input, classification.task_type, difficulty
             )
             harness = await self._build_harness(
-                model, classification.task_type, intent_text, ctx.messages, on_reset, on_event
+                model, classification.task_type, intent_text, ctx.messages, on_reset, on_event, limits
             )
 
             if use_pipeline:
@@ -770,6 +772,7 @@ class Orchestrator:
                 on_event=on_event,
                 task_hint=task_hint,
                 persist=persist,
+                limits=limits,
             )
             if fallback_response:
                 fallback_response.latency_ms = latency_ms
@@ -880,9 +883,10 @@ class Orchestrator:
         messages: list[dict[str, Any]],
         on_reset: Callable[[], None] | None,
         on_event: Callable[[dict[str, Any]], None] | None,
+        limits: RunLimits | None = None,
     ) -> Harness:
         """Prepare supervision for one run and add its guidance to the prompt."""
-        scaffold = scaffold_for(model.id)
+        scaffold = limits.apply(scaffold_for(model.id)) if limits else scaffold_for(model.id)
         disabled = frozenset(
             name.strip()
             for name in os.getenv("AGENT_DISABLED_TOOLS", "").split(",")
@@ -890,7 +894,8 @@ class Orchestrator:
         )
         schemas = self._tool_registry.get_all_schemas()
         tools: list[dict[str, Any]] = []
-        if os.getenv("AGENT_TOOLS_ENABLED", "true").lower() != "false":
+        tools_on = os.getenv("AGENT_TOOLS_ENABLED", "true").lower() != "false"
+        if tools_on and (not limits or limits.max_tools > 0):
             tools = select_tools(schemas, task_type, user_input, scaffold, disabled)
         # Models without native tool calling use the same tools through their text.
         native = bool(model.supports_tools)
@@ -909,8 +914,11 @@ class Orchestrator:
             workspace=workspace,
             max_output=model.max_output or 0,
             advisor_model=(
-                pick_advisor(self._router, self._health_checker, model.id, task_type) if tools else None
+                pick_advisor(self._router, self._health_checker, model.id, task_type)
+                if tools and not limits
+                else None
             ),
+            limits=limits,
             on_event=on_event,
             on_reset=on_reset,
         )
@@ -1097,6 +1105,7 @@ class Orchestrator:
         on_event: Callable[[dict[str, Any]], None] | None = None,
         task_hint: str | None = None,
         persist: bool = True,
+        limits: RunLimits | None = None,
     ) -> AgentResponse | None:
         """Walk the entire fallback chain until a usable answer is produced.
 
@@ -1158,6 +1167,7 @@ class Orchestrator:
                     on_event=on_event,
                     task_hint=task_hint,
                     persist=persist,
+                    limits=limits,
                 )
             except Exception as e:
                 logger.error(

@@ -14,7 +14,9 @@ from config.constants import TaskType
 from tool.execute.execute_code_intel import quality_tools
 from tool.execute.execute_local_memory import project_memory_tool, vault_tool
 from tool.execute.execute_local_memory.vault import constants as C
+from utils import session_settings
 from utils.logger import get_logger
+from utils.workspace_context import get_active_workspace
 
 from . import playbooks
 
@@ -46,13 +48,28 @@ async def _ranked_files(query: str, workspace: str) -> str:
     return "[LIKELY RELEVANT FILES]\n" + "\n".join(f"- {p}" for p in paths) if paths else ""
 
 
+def _active_skills(user_input: str) -> list[str]:
+    """This session's awake contextual skills, including any this request wakes."""
+    woken = skills.woken(user_input)
+    workspace = get_active_workspace()
+    if not workspace:
+        return woken
+    return session_settings.activate_skills(workspace, woken)
+
+
 def skill_guidance(user_input: str, task_type: TaskType, max_chars: int) -> tuple[str, list[str]]:
-    """The skill index, plus the full guides this request calls for."""
+    """The skill index, plus the full guides this request calls for.
+
+    Contextual skills join the index only once woken in this session.
+    """
     try:
-        index = skills.index_text()
-        if task_type in _NO_SKILLS or not index:
+        if task_type in _NO_SKILLS:
             return "", []
-        selected = skills.select(user_input) if max_chars > 0 else []
+        active = _active_skills(user_input)
+        index = skills.index_text(active)
+        if not index:
+            return "", []
+        selected = skills.select(user_input, active=active) if max_chars > 0 else []
         chosen: list[str] = []
         parts = [index]
         room = max_chars

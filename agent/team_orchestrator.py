@@ -6,23 +6,68 @@ import asyncio
 import contextlib
 import json
 import re
+import shutil
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from agent import session_stack
-from agent.harness import Tier, tier_for
+from agent.harness import RunLimits, Tier, tier_for
 from agent.orchestrator import AgentResponse, Orchestrator
+from agent.team_flow import (
+    BRANCHES,
+    BRANCHING_KINDS,
+    NODE_KINDS,
+    check_condition,
+    clock_values,
+    next_run_after,
+    normalize_node_config,
+    normalize_schedule,
+    parse_decision,
+    render_template,
+    telegram_task,
+    uses_ai,
+)
+from agent.team_outputs import (
+    DATABASE_IDS,
+    OutputError,
+    fetch_telegram_updates,
+    http_request,
+    save_to_database,
+    send_telegram,
+)
 from config.constants import ResponseStatus
+from config.settings import get_settings
 from utils.logger import get_logger
+from utils.markdown_compact import fit_markdown
+from utils.workspace_context import SESSIONS_ROOT
 
 logger = get_logger(__name__)
-MAX_TEAM_MEMBERS = 6
-MAX_CONTEXT_CHARS = 60_000
-MAX_REVIEW_ROUNDS = 2
+MAX_TEAM_MEMBERS = 12
+MAX_AGENTS = 6
+SCHEDULE_CHECK_SECONDS = 30
+TELEGRAM_IDLE_SECONDS = 30
+# A schedule this late was missed, say the server was off. Running it now would surprise.
+SCHEDULE_LATE_SECONDS = 300
+GATE_TOKENS = 8_000
+MAX_CONTEXT_CHARS = 24_000
+MAX_DRAFT_CHARS = 40_000
+MAX_REPORT_CHARS = 8_000
+MAX_REVIEW_ROUNDS = 1
+# Workers stop here, so the lead always has time to write the answer.
+WORKER_SHARE_OF_RUN = 0.7
+MIN_FINISH_SECONDS = 120
+MIN_REVIEW_SECONDS = 90
+# A model call can hang past the soft limit, which is only checked between rounds.
+HARD_TIMEOUT_GRACE_SECONDS = 90
+FINISHING_ROUNDS = {"lead": 4, "revision": 3, "reviewer": 3}
+OUTPUT_KINDS = {"telegram", "database"}
+# A node on the branch not taken has nothing to report, not even a failure.
+REPORTABLE = {"completed", "failed"}
 _MEMBER_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
 _VERDICT_RE = re.compile(r"VERDICT:\s*(PASS|REVISE)", re.IGNORECASE)
 
@@ -35,6 +80,10 @@ class TeamMember:
     model_id: str
     instructions: str = ""
     depends_on: list[str] = field(default_factory=list)
+    kind: str = "agent"
+    # Which way out of a gate this node belongs to: "A" (condition met) or "B".
+    branch: str = ""
+    config: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -47,6 +96,8 @@ class Team:
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     reviewer_id: str | None = None
+    schedule: dict[str, Any] = field(default_factory=lambda: {"mode": "off"})
+    last_scheduled_at: float | None = None
 
 
 @dataclass
@@ -63,6 +114,10 @@ class TeamRun:
     completed_at: float | None = None
     total_tokens: int = 0
     reviews: list[dict[str, Any]] = field(default_factory=list)
+    # Time spent in delay nodes, which does not count against the run's budget.
+    waited_seconds: float = 0.0
+    # What started the run: {"source": "telegram", "chat_id": ...} or the schedule.
+    trigger: dict[str, Any] = field(default_factory=dict)
 
     @property
     def finished(self) -> bool:
@@ -233,7 +288,145 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
     def member(id_: str, name: str, role: str, model: str, *after: str) -> dict[str, Any]:
         return {"id": id_, "name": name, "role": role, "model_id": model, "instructions": "", "depends_on": list(after)}
 
+    def node(id_: str, name: str, kind: str, config: dict[str, Any], *after: str, model: str = "") -> dict[str, Any]:
+        return {"id": id_, "name": name, "role": name, "model_id": model, "kind": kind, "config": config, "depends_on": list(after)}
+
+    real_answers = (
+        "Jawab hanya dari yang benar-benar kamu cek. Pakai time_now untuk tanggal dan jam, dan web_research "
+        "untuk fakta yang bisa berubah, seperti cuaca, berita, harga, atau jadwal. Sebutkan sumbernya. "
+        "Kalau tidak bisa memastikan sesuatu, katakan begitu, jangan mengarang."
+    )
+    direct_style = "Tulis untuk dibaca di HP: singkat, langsung ke intinya, tanpa basa-basi."
+    agenda = (
+        "Sekarang {{day}}, {{date}} jam {{time}}.\n\n"
+        "Jadwal tetap (ubah sesuai jadwalmu):\n"
+        "- Senin-Jumat 05:00 bangun, 05:15 olahraga ringan 20 menit\n"
+        "- Senin-Jumat 07:00 berangkat, 08:00-16:00 kerja atau kuliah\n"
+        "- Selasa dan Kamis 19:30 belajar bahasa Inggris\n"
+        "- Rabu 18:30 futsal\n"
+        "- Sabtu 09:00 belanja mingguan, 13:00 bersih-bersih kamar\n"
+        "- Minggu 06:00 lari pagi, 19:00 rencanakan minggu depan\n"
+        "- Setiap hari 12:00 makan siang, 21:30 siapkan barang untuk besok, 22:30 tidur\n\n"
+        "Catatan hari ini: {{task}}"
+    )
+    from_agenda = (
+        "Ambil jadwal hanya dari [AGENDA] di laporan sebelumnya, jangan mengarang kegiatan. "
+        "Pakai time_now untuk memastikan hari dan jam. "
+    )
+
     return [
+        {
+            "key": "reminder",
+            "name": "Alarm bangun dan pengingat jadwal",
+            "description": (
+                "Pagi: membangunkan, lalu alarm kedua 10 menit kemudian. Siang dan sore: mengingatkan "
+                "jadwal berikutnya. Semua lewat Telegram dan tercatat di database."
+            ),
+            "members": [
+                node("agenda", "Agenda", "set", {"text": f"[AGENDA]\n{agenda}"}),
+                node(
+                    "pagi", "Pagi dan bukan hari libur?", "gate",
+                    {"combine": "and", "conditions": [
+                        {"mode": "time", "start": "04:00", "end": "09:59", "days": [0, 1, 2, 3, 4, 5, 6]},
+                        {"mode": "not_contains", "value": "libur, cuti, sakit"},
+                    ]},
+                    "agenda",
+                ),
+                {
+                    **member("bangun", "Pembangun pagi", "Membangunkan dengan semangat dan menyebut jadwal hari ini", lite, "pagi"),
+                    "branch": "A",
+                    "instructions": (
+                        f"{from_agenda}{direct_style} Buka dengan sapaan bangun yang hangat dan satu kalimat penyemangat. "
+                        "Lalu daftar kegiatan hari ini berurutan jam, tandai yang pertama. Maksimal 8 baris."
+                    ),
+                },
+                node("kirim_bangun", "Kirim alarm", "telegram", {"chat_id": ""}, "bangun"),
+                node("tunda", "Tunda 10 menit", "delay", {"seconds": 600}, "kirim_bangun"),
+                node(
+                    "alarm2", "Alarm kedua", "set",
+                    {"text": "Alarm kedua, jam {{time}}. Sudah bangun? Kegiatan pertama hari ini ada di pesan sebelumnya. Ayo mulai!"},
+                    "tunda",
+                ),
+                node("kirim_alarm2", "Kirim alarm kedua", "telegram", {"chat_id": ""}, "alarm2"),
+                {
+                    **member("ingat", "Pengingat", "Mengingatkan kegiatan yang akan datang", lite, "pagi"),
+                    "branch": "B",
+                    "instructions": (
+                        f"{from_agenda}{direct_style} Sebutkan kegiatan dalam 4 jam ke depan beserta jamnya, "
+                        "dan apa yang perlu disiapkan. Kalau tidak ada, bilang waktunya bebas dan sebut kegiatan berikutnya."
+                    ),
+                },
+                node("kirim_ingat", "Kirim pengingat", "telegram", {"chat_id": ""}, "ingat"),
+                node("gabung", "Gabung jalur", "merge", {"mode": "any"}, "bangun", "ingat"),
+                node("catat", "Catat ke database", "database", {"database": "sqlite", "table": "pengingat"}, "gabung"),
+            ],
+            "lead_id": None,
+            "reviewer_id": None,
+            "schedule": {
+                "mode": "daily", "time": "05:00", "times": ["05:00", "12:00", "17:00", "21:00"],
+                "days": [0, 1, 2, 3, 4, 5, 6], "task": "Tidak ada catatan khusus.",
+            },
+        },
+        {
+            "key": "telegram-bot",
+            "name": "Bot Telegram serba bisa",
+            "description": (
+                "Berjalan saat kamu mengirim pesan ke bot. /jadwal, /cuaca, dan /catat masing-masing punya "
+                "jalurnya, pesan lain dijawab biasa. Balasan dikirim ke chat yang sama."
+            ),
+            "members": [
+                node("pilah", "Pilah perintah", "switch", {"rules": [
+                    {"mode": "regex", "value": r"^/jadwal\b"},
+                    {"mode": "regex", "value": r"^/cuaca\b"},
+                    {"mode": "regex", "value": r"^/catat\b"},
+                ]}),
+                {
+                    **member("jadwal", "Asisten jadwal", "Menyusun jadwal dari permintaan", lite, "pilah"),
+                    "branch": "A", "instructions": f"Pakai time_now untuk tanggal dan jam. {direct_style}",
+                },
+                {
+                    **member("cuaca", "Asisten cuaca", "Mencari cuaca terkini", mid, "pilah"),
+                    "branch": "B", "instructions": f"{real_answers} {direct_style}",
+                },
+                {**node("simpan", "Simpan catatan", "database", {"database": "sqlite", "table": "catatan"}, "pilah"), "branch": "C"},
+                node("oke", "Konfirmasi catatan", "set", {"text": "Dicatat ({{date}} {{time}}):\n{{input}}"}, "simpan"),
+                {
+                    **member("ngobrol", "Asisten umum", "Menjawab pesan lain", lite, "pilah"),
+                    "branch": "D", "instructions": f"{real_answers} {direct_style}",
+                },
+                node("balas", "Balas di Telegram", "telegram", {"chat_id": ""}, "jadwal", "cuaca", "oke", "ngobrol"),
+            ],
+            "lead_id": None,
+            "reviewer_id": None,
+            "schedule": {"mode": "telegram", "keyword": "", "task": ""},
+        },
+        {
+            "key": "assistant",
+            "name": "Asisten sehari-hari",
+            "description": "Mencari fakta nyata, memilih jalur, lalu mengirim ke Telegram dan menyimpan ke database.",
+            "members": [
+                {**member("facts", "Pencari fakta", "Mencari fakta nyata untuk permintaan ini", mid), "instructions": real_answers},
+                node("wait", "Jeda", "delay", {"seconds": 5}, "facts"),
+                node(
+                    "urgent", "Ada yang mendesak?", "gate",
+                    {"mode": "ai", "value": "Apakah ada hal mendesak yang perlu ditindak hari ini?"},
+                    "wait", model=lite,
+                ),
+                {
+                    **member("alert", "Asisten: mendesak", "Menulis peringatan dan tindakan yang perlu diambil", mid, "urgent"),
+                    "branch": "A", "instructions": f"{real_answers} {direct_style} Mulai dari tindakan yang perlu diambil.",
+                },
+                {
+                    **member("brief", "Asisten: ringkasan", "Menulis ringkasan yang ringan", mid, "urgent"),
+                    "branch": "B", "instructions": f"{real_answers} {direct_style}",
+                },
+                node("send", "Kirim ke Telegram", "telegram", {"chat_id": ""}, "alert", "brief"),
+                node("store", "Simpan ke database", "database", {"database": "sqlite", "table": "asisten"}, "send"),
+            ],
+            "lead_id": None,
+            "reviewer_id": None,
+            "schedule": {"mode": "off"},
+        },
         {
             "key": "build",
             "name": "Bangun dan verifikasi",
@@ -284,6 +477,9 @@ class TeamOrchestrator:
         self.events = TeamEventHub()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
+        self._scheduler: asyncio.Task[None] | None = None
+        self._telegram: asyncio.Task[None] | None = None
+        self._telegram_offset: int | None = None
 
     @property
     def run_tasks(self) -> dict[str, asyncio.Task[None]]:
@@ -296,6 +492,7 @@ class TeamOrchestrator:
         members: list[dict[str, Any]],
         lead_id: str | None,
         reviewer_id: str | None = None,
+        schedule: dict[str, Any] | None = None,
     ) -> Team:
         parsed = self._validate_members(members, lead_id, reviewer_id)
         team = Team(
@@ -303,8 +500,9 @@ class TeamOrchestrator:
             name=name.strip(),
             description=description.strip(),
             members=parsed,
-            lead_id=lead_id or parsed[0].id,
+            lead_id=self._lead_for(parsed, lead_id),
             reviewer_id=reviewer_id or None,
+            schedule=normalize_schedule(schedule),
         )
         if not team.name:
             raise ValueError("Team name cannot be empty.")
@@ -318,7 +516,7 @@ class TeamOrchestrator:
         reviewer_id: str | None = None,
     ) -> list[TeamMember]:
         if not 2 <= len(members) <= MAX_TEAM_MEMBERS:
-            raise ValueError(f"A team needs 2–{MAX_TEAM_MEMBERS} members.")
+            raise ValueError(f"A team needs 2–{MAX_TEAM_MEMBERS} nodes.")
         seen: set[str] = set()
         parsed: list[TeamMember] = []
         for member in members:
@@ -329,26 +527,49 @@ class TeamOrchestrator:
             if member_id in seen:
                 raise ValueError("Member IDs must be unique.")
             seen.add(member_id)
-            model_id = member["model_id"]
-            if self.orchestrator.registry.get(model_id) is None:
+            kind = str(member.get("kind") or "agent")
+            if kind not in NODE_KINDS:
+                raise ValueError(f"Jenis node tidak dikenal: {kind}.")
+            config = normalize_node_config(kind, member.get("config"), DATABASE_IDS)
+            model_id = str(member.get("model_id") or "")
+            needs_model = kind == "agent" or uses_ai(config)
+            if needs_model and self.orchestrator.registry.get(model_id) is None:
                 raise ValueError(f"Unknown model: {model_id}")
+            branch = str(member.get("branch") or "")
+            if branch and branch not in BRANCHES:
+                raise ValueError("Jalur gate hanya A, B, C, atau D.")
+            name = str(member["name"]).strip()
             parsed.append(TeamMember(
                 id=member_id,
-                name=str(member["name"]).strip(),
-                role=str(member["role"]).strip(),
+                name=name,
+                role=str(member.get("role") or (name if kind != "agent" else "")).strip(),
                 model_id=model_id,
                 instructions=str(member.get("instructions", "")).strip(),
                 depends_on=[str(d) for d in member.get("depends_on") or []],
+                kind=kind,
+                branch=branch,
+                config=config,
             ))
         if any(not item.name or not item.role for item in parsed):
             raise ValueError("Every member needs a name and role.")
+        agents = {item.id for item in parsed if item.kind == "agent"}
+        if not agents:
+            raise ValueError("Alur butuh minimal satu agent.")
+        if len(agents) > MAX_AGENTS:
+            raise ValueError(f"Maksimal {MAX_AGENTS} agent dalam satu tim.")
         if lead_id and lead_id not in seen:
             raise ValueError("The lead must be a team member.")
+        if lead_id and lead_id not in agents:
+            raise ValueError("Lead harus berupa agent.")
+        if reviewer_id and reviewer_id in seen and reviewer_id not in agents:
+            raise ValueError("Reviewer harus berupa agent.")
         if reviewer_id:
             if reviewer_id not in seen:
                 raise ValueError("The reviewer must be a team member.")
-            if reviewer_id == (lead_id or parsed[0].id):
+            if reviewer_id == self._lead_for(parsed, lead_id):
                 raise ValueError("The lead cannot review its own work.")
+            if not self._lead_for(parsed, lead_id):
+                raise ValueError("Reviewer butuh lead untuk diperiksa.")
         for item in parsed:
             if item.id in item.depends_on:
                 raise ValueError(f"{item.name} cannot depend on itself.")
@@ -356,6 +577,13 @@ class TeamOrchestrator:
                 raise ValueError(f"{item.name} depends on an unknown member.")
         execution_layers(parsed)
         return parsed
+
+    @staticmethod
+    def _lead_for(members: list[TeamMember], lead_id: str | None) -> str:
+        """An all-agent team always has a lead. A flow can end without one."""
+        if lead_id:
+            return lead_id
+        return members[0].id if all(m.kind == "agent" for m in members) else ""
 
     async def update_team(
         self,
@@ -365,6 +593,7 @@ class TeamOrchestrator:
         members: list[dict[str, Any]],
         lead_id: str | None,
         reviewer_id: str | None = None,
+        schedule: dict[str, Any] | None = None,
     ) -> Team:
         if any(not run.finished for run in self.store.list_runs(team_id)):
             raise ValueError("Wait for active team runs to finish before editing.")
@@ -379,10 +608,12 @@ class TeamOrchestrator:
             name=name.strip(),
             description=description.strip(),
             members=parsed,
-            lead_id=lead_id or parsed[0].id,
+            lead_id=self._lead_for(parsed, lead_id),
             created_at=existing.created_at,
             updated_at=time.time(),
             reviewer_id=reviewer_id or None,
+            schedule=normalize_schedule(schedule),
+            last_scheduled_at=existing.last_scheduled_at,
         )
         self.store.put_team(replacement)
         return replacement
@@ -394,9 +625,10 @@ class TeamOrchestrator:
             task = self._tasks.pop(run_id, None)
             if task:
                 task.cancel()
+            shutil.rmtree(SESSIONS_ROOT / run_id, ignore_errors=True)
         return True
 
-    async def start_run(self, team_id: str, task: str) -> TeamRun:
+    async def start_run(self, team_id: str, task: str, trigger: dict[str, Any] | None = None) -> TeamRun:
         async with self._lock:
             team = self.store.get_team(team_id)
             if team is None:
@@ -412,6 +644,7 @@ class TeamOrchestrator:
                     "error": "", "tokens": 0, "latency_ms": 0,
                     "started_at": None, "completed_at": None,
                 } for member in team.members},
+                trigger=dict(trigger or {}),
             )
             run.created_at = now
             self.store.put_run(run)
@@ -433,22 +666,39 @@ class TeamOrchestrator:
         # Everyone in a run shares one folder, so one agent can read another's files.
         session_stack.enter(run.id)
         try:
-            lead = next(member for member in team.members if member.id == team.lead_id)
-            workers = [m for m in team.members if m.id not in {team.lead_id, team.reviewer_id}]
+            lead = next((member for member in team.members if member.id == team.lead_id), None)
+            after = self._after_answer(team)
+            workers = [
+                m for m in team.members
+                if m.id not in {team.lead_id, team.reviewer_id} and m.id not in after
+            ]
             for layer in execution_layers(workers):
-                await asyncio.gather(*(self._run_member(run, team, m) for m in layer))
+                if time.time() >= self._workers_until(run):
+                    for skipped in layer:
+                        run.agents[skipped.id].update(status="skipped", error="Waktu tim habis")
+                    self._checkpoint(run, "agents_skipped")
+                    continue
+                await asyncio.gather(*(self._run_node(run, team, m) for m in layer))
             if workers and not any(run.agents[m.id]["status"] == "completed" for m in workers):
                 raise RuntimeError("All team members failed. Check their individual errors.")
 
-            run.status = "synthesizing"
-            self._checkpoint(run, "synthesis_started")
-            await self._run_member(run, team, lead, mode="lead")
-            await self._review_loop(run, team, lead)
+            lead_error: Exception | None = None
+            if lead and self._is_active(run, team, lead):
+                run.status = "synthesizing"
+                self._checkpoint(run, "synthesis_started")
+                try:
+                    await self._run_member(run, team, lead, mode="lead")
+                except Exception as exc:  # noqa: BLE001 - the workers' reports must survive this
+                    lead_error = exc
+                await self._review_loop(run, team, lead)
+            elif lead:
+                run.agents[lead.id]["status"] = "skipped"
 
-            lead_agent = run.agents[lead.id]
-            if lead_agent["status"] != "completed":
-                raise RuntimeError(lead_agent["error"] or "Lead synthesis failed.")
-            run.result = lead_agent["content"]
+            run.result = self._final_answer(run, team, workers, lead_error)
+            run.status = "delivering" if after else run.status
+            for layer in execution_layers([m for m in team.members if m.id in after]):
+                await asyncio.gather(*(self._run_node(run, team, m, mode="after") for m in layer))
+            self._finish_result(run, team)
             run.status = "completed"
         except asyncio.CancelledError:
             run.status = "cancelled"
@@ -465,12 +715,230 @@ class TeamOrchestrator:
             run.completed_at = time.time()
             self._checkpoint(run, "run_finished")
 
+    @staticmethod
+    def _after_answer(team: Team) -> set[str]:
+        """Nodes that run once the answer exists.
+
+        That is anything following the lead or reviewer, plus any output node left
+        unconnected: with no input of its own, the final answer is what it delivers.
+        """
+        after = {m.id for m in team.members if m.kind in OUTPUT_KINDS and not m.depends_on}
+        anchors = {team.lead_id, team.reviewer_id} - {None, ""}
+        changed = True
+        while changed:
+            changed = False
+            for member in team.members:
+                if member.id in after or member.id in anchors:
+                    continue
+                if any(d in after or d in anchors for d in member.depends_on):
+                    after.add(member.id)
+                    changed = True
+        return after
+
+    @staticmethod
+    def _reached(run: TeamRun, kinds: dict[str, str], member: TeamMember, dependency: str) -> bool:
+        """Whether a path from one dependency arrives here. A gate sends on one branch only."""
+        state = run.agents[dependency]
+        if state["status"] == "skipped":
+            return False
+        if kinds[dependency] in BRANCHING_KINDS:
+            taken = state.get("branch")
+            return bool(taken) and (not member.branch or member.branch == taken)
+        return True
+
+    @classmethod
+    def _is_active(cls, run: TeamRun, team: Team, member: TeamMember) -> bool:
+        """Whether a path reached this node. A merge set to "all" waits for every path."""
+        if not member.depends_on:
+            return True
+        kinds = {m.id: m.kind for m in team.members}
+        reached = [cls._reached(run, kinds, member, d) for d in member.depends_on]
+        if member.kind == "merge" and member.config.get("mode") == "all":
+            return all(reached)
+        return any(reached)
+
+    @staticmethod
+    def _node_input(run: TeamRun, member: TeamMember) -> str:
+        """What arrives at a node: its dependencies' text, else the answer.
+
+        A failed Telegram still hands on what it was given, so the database after it
+        saves the result. A failed agent has no content, so nothing false passes on.
+        Only a node that starts the flow reads the task, and never an output: the task
+        must not be sent on as if it were an answer.
+        """
+        parts = [
+            run.agents[d]["content"] for d in member.depends_on
+            if run.agents[d]["status"] in REPORTABLE and run.agents[d]["content"]
+        ]
+        text = "\n\n".join(dict.fromkeys(parts)) or run.result
+        if member.kind in OUTPUT_KINDS or member.depends_on:
+            return text
+        return text or run.task
+
+    def _final_answer(
+        self, run: TeamRun, team: Team, workers: list[TeamMember], lead_error: Exception | None
+    ) -> str:
+        lead_state = run.agents.get(team.lead_id)
+        if lead_state and lead_state["status"] == "completed":
+            return str(lead_state["content"])
+        agents = [m for m in workers if m.kind == "agent" and run.agents[m.id]["status"] == "completed"]
+        if lead_state and lead_state["status"] == "failed" and agents:
+            reason = lead_state["error"] or "kehabisan waktu"
+            reports = "\n\n".join(self._report(run.agents[m.id]) for m in agents)
+            return f"Lead tidak sempat menulis jawaban akhir ({reason}). Ini laporan para agent:\n\n{reports}"
+        if lead_error:
+            raise lead_error
+        if lead_state and lead_state["status"] == "failed":
+            raise RuntimeError(lead_state["error"] or "Lead synthesis failed.")
+        # A flow without a lead ends on the last agent that ran: on an OR gate, the branch taken.
+        return str(run.agents[agents[-1].id]["content"]) if agents else ""
+
+    def _finish_result(self, run: TeamRun, team: Team) -> None:
+        """An agent placed after the answer has the last word."""
+        kinds = {m.id: m.kind for m in team.members}
+        after = [
+            m for m in team.members
+            if m.id in self._after_answer(team) and kinds[m.id] == "agent" and run.agents[m.id]["status"] == "completed"
+        ]
+        if after:
+            run.result = str(run.agents[after[-1].id]["content"])
+
+    async def _ask_model(self, run: TeamRun, member: TeamMember, question: str, text: str, tag: str) -> bool | None:
+        """Put a yes-or-no question about a text to the node's model."""
+        response = await asyncio.wait_for(
+            self.orchestrator.process(
+                user_input=(
+                    f"Pertanyaan: {question}\n"
+                    "Baca teks di konteks, lalu jawab. Kata pertama harus YA atau TIDAK, lalu alasan satu kalimat."
+                ),
+                session_id=f"{run.id}-{member.id}-{tag}",
+                override_model=member.model_id,
+                stream=False,
+                workspace_context=f"[TEKS]\n{fit_markdown(text, MAX_REPORT_CHARS)}",
+                task_hint=question,
+                persist=False,
+                limits=RunLimits(max_rounds=1, tokens=GATE_TOKENS, deadline=time.time() + MIN_FINISH_SECONDS, max_tools=0),
+            ),
+            timeout=MIN_FINISH_SECONDS + HARD_TIMEOUT_GRACE_SECONDS,
+        )
+        if response.status not in {ResponseStatus.SUCCESS, ResponseStatus.FALLBACK_USED}:
+            raise RuntimeError(response.error_message or "Model gate gagal menjawab")
+        run.total_tokens += response.total_tokens
+        run.agents[member.id]["tokens"] = run.agents[member.id].get("tokens", 0) + response.total_tokens
+        return parse_decision(response.content)
+
+    async def _holds(self, run: TeamRun, member: TeamMember, condition: dict[str, Any], text: str, tag: str) -> bool:
+        result = check_condition(condition, text, datetime.now())
+        if result is None:
+            # A vague model answer counts as "no", the safe way out of a gate.
+            result = bool(await self._ask_model(run, member, condition["value"], text, tag))
+        return result
+
+    async def _decide_gate(self, run: TeamRun, member: TeamMember, text: str) -> tuple[str, str]:
+        """Which way out of a gate to take, and why. A means the conditions held.
+
+        Conditions that need no model are checked first, so AND and OR can often
+        decide without spending a model call.
+        """
+        config = member.config
+        conditions = config.get("conditions") or [config]
+        combine = config.get("combine", "and")
+        ordered = sorted(enumerate(conditions), key=lambda item: item[1]["mode"] == "ai")
+        results: dict[int, bool] = {}
+        for index, condition in ordered:
+            results[index] = await self._holds(run, member, condition, text, f"gate{index}")
+            if combine == "and" and not results[index]:
+                break
+            if combine == "or" and results[index]:
+                break
+        met = all(results.values()) if combine == "and" else any(results.values())
+        checked = ", ".join(f"{i + 1}:{'ya' if v else 'tidak'}" for i, v in sorted(results.items()))
+        return ("A" if met else "B"), f"{combine.upper()} {'terpenuhi' if met else 'tidak terpenuhi'} ({checked})"
+
+    async def _decide_switch(self, run: TeamRun, member: TeamMember, text: str) -> tuple[str, str]:
+        """The first rule that holds picks its branch. D catches everything else."""
+        for index, rule in enumerate(member.config["rules"]):
+            if await self._holds(run, member, rule, text, f"rule{index}"):
+                return BRANCHES[index], f"Aturan {BRANCHES[index]} cocok"
+        return "D", "Tidak ada aturan yang cocok, memakai jalur D"
+
+    @staticmethod
+    def _template_values(run: TeamRun, team: Team, text: str) -> dict[str, str]:
+        values = {"input": text, "task": run.task, "team": team.name, **clock_values(datetime.now())}
+        for member_id, state in run.agents.items():
+            values[f"node.{member_id}"] = str(state.get("content") or "")
+        return values
+
+    async def _run_node(self, run: TeamRun, team: Team, member: TeamMember, mode: str = "worker") -> None:
+        """Run one node of any kind. A failed output must not cost the user the answer."""
+        state = run.agents[member.id]
+        if not self._is_active(run, team, member):
+            state["status"] = "skipped"
+            self._checkpoint(run, "agent_skipped", member.id)
+            return
+        if member.kind == "agent":
+            await self._run_member(run, team, member, mode=mode)
+            return
+        state.update(status="running", error="", started_at=time.time())
+        self._checkpoint(run, "agent_started", member.id)
+        text = self._node_input(run, member)
+        state["content"] = text
+        try:
+            # Outputs need a real answer: they must never send the task back as if it were one.
+            if member.kind in OUTPUT_KINDS and not text.strip():
+                raise OutputError("Tidak ada hasil untuk dikirim, karena agent sebelumnya gagal")
+            if member.kind == "delay":
+                seconds = int(member.config["seconds"])
+                await asyncio.sleep(seconds)
+                run.waited_seconds += seconds
+            elif member.kind == "gate":
+                state["branch"], state["note"] = await self._decide_gate(run, member, text)
+            elif member.kind == "switch":
+                state["branch"], state["note"] = await self._decide_switch(run, member, text)
+            elif member.kind == "merge":
+                state["note"] = f"{sum(1 for d in member.depends_on if run.agents[d]['status'] in REPORTABLE)} jalur bergabung"
+            elif member.kind == "set":
+                state["content"] = render_template(member.config["text"], self._template_values(run, team, text))
+            elif member.kind == "http":
+                body = render_template(member.config.get("body", ""), self._template_values(run, team, text))
+                state["content"] = await http_request(member.config["method"], member.config["url"], body)
+                state["note"] = f"{member.config['method']} berhasil"
+            elif member.kind == "telegram":
+                # A run started from a Telegram message answers in that chat.
+                chat_id = str(member.config.get("chat_id") or run.trigger.get("chat_id") or "")
+                sent = await send_telegram(text, chat_id)
+                state["note"] = f"{sent} pesan terkirim"
+            elif member.kind == "database":
+                await save_to_database(str(member.config["database"]), str(member.config["table"]), {
+                    "run_id": run.id,
+                    "team_id": team.id,
+                    "team_name": team.name,
+                    "node_id": member.id,
+                    "task": run.task,
+                    "content": text,
+                    "created_at": datetime.now().isoformat(timespec="seconds"),
+                })
+                state["note"] = f"Tersimpan di {member.config['database']}, tabel {member.config['table']}"
+            state["status"] = "completed"
+        except asyncio.CancelledError:
+            state["status"] = "cancelled"
+            raise
+        except Exception as exc:
+            logger.warning("[teams] Node %s failed in %s: %s", member.name, run.id, type(exc).__name__)
+            state.update(status="failed", error=str(exc) if isinstance(exc, OutputError) else f"{exc}"[:300])
+        finally:
+            state["completed_at"] = time.time()
+            self._checkpoint(run, "agent_finished", member.id)
+
     async def _review_loop(self, run: TeamRun, team: Team, lead: TeamMember) -> None:
         """Let the reviewer send the draft back until it passes or rounds run out."""
         reviewer = next((m for m in team.members if m.id == team.reviewer_id), None)
         if reviewer is None or run.agents[lead.id]["status"] != "completed":
             return
         for round_number in range(1, MAX_REVIEW_ROUNDS + 2):
+            if time.time() + MIN_REVIEW_SECONDS >= self._run_ends(run):
+                run.reviews.append({"round": round_number, "verdict": "skipped", "notes": "Waktu tim habis"})
+                return
             run.status = "reviewing"
             await self._run_member(run, team, reviewer, mode="reviewer", round_number=round_number)
             state = run.agents[reviewer.id]
@@ -524,7 +992,10 @@ class TeamOrchestrator:
 
     @staticmethod
     def _report(state: dict[str, Any]) -> str:
-        body = state["content"] if state["status"] == "completed" else f"FAILED: {state['error']}"
+        if state["status"] == "completed":
+            body = fit_markdown(state["content"], MAX_REPORT_CHARS)
+        else:
+            body = f"FAILED: {state['error']}"
         return f"## {state['name']} — {state['role']}\n{body}"
 
     def _member_context(
@@ -534,22 +1005,57 @@ class TeamOrchestrator:
         context = f"[TEAM TASK]\n{run.task}"
         if mode in {"lead", "revision"}:
             excluded = {team.lead_id, team.reviewer_id}
+            agents = {m.id for m in team.members if m.kind == "agent"}
             reports = "\n\n".join(
-                self._report(state) for member_id, state in run.agents.items() if member_id not in excluded
+                self._report(state) for member_id, state in run.agents.items()
+                if member_id not in excluded and member_id in agents and state["status"] in REPORTABLE
             )
             if reports:
                 context += f"\n\n[SPECIALIST REPORTS]\n{reports[-MAX_CONTEXT_CHARS:]}"
         if mode == "revision":
             draft = run.agents[team.lead_id]["content"]
-            context += f"\n\n[YOUR DRAFT]\n{draft[-MAX_CONTEXT_CHARS:]}\n\n[REVIEW]\n{feedback[-MAX_CONTEXT_CHARS:]}"
+            context += f"\n\n[YOUR DRAFT]\n{draft[-MAX_DRAFT_CHARS:]}\n\n[REVIEW]\n{feedback[-MAX_CONTEXT_CHARS:]}"
         if mode == "reviewer":
-            context += f"\n\n[DRAFT TO REVIEW]\n{run.agents[team.lead_id]['content'][-MAX_CONTEXT_CHARS:]}"
-        if mode == "worker" and member.depends_on:
+            context += f"\n\n[DRAFT TO REVIEW]\n{run.agents[team.lead_id]['content'][-MAX_DRAFT_CHARS:]}"
+        if mode in {"worker", "after"} and member.depends_on:
             reports = "\n\n".join(
-                self._report(run.agents[d]) for d in member.depends_on if d in run.agents
+                self._report(run.agents[d]) for d in member.depends_on
+                if d in run.agents and run.agents[d]["status"] in REPORTABLE
             )
             context += f"\n\n[REPORTS FROM EARLIER STEPS]\n{reports[-MAX_CONTEXT_CHARS:]}"
         return context
+
+    @staticmethod
+    def _run_ends(run: TeamRun) -> float:
+        return (run.started_at or time.time()) + get_settings().team_run_seconds + run.waited_seconds
+
+    @staticmethod
+    def _workers_until(run: TeamRun) -> float:
+        start = run.started_at or time.time()
+        return start + get_settings().team_run_seconds * WORKER_SHARE_OF_RUN + run.waited_seconds
+
+    def _limits(self, run: TeamRun, mode: str) -> RunLimits:
+        settings = get_settings()
+        now = time.time()
+        rounds = FINISHING_ROUNDS.get(mode, settings.team_member_rounds)
+        tokens = settings.team_member_tokens
+        if mode == "worker":
+            end = self._workers_until(run)
+        else:
+            # The lead writes from reports, so it needs far less than a worker.
+            tokens //= 2
+            end = max(self._run_ends(run), now + MIN_FINISH_SECONDS)
+        return RunLimits(max_rounds=rounds, tokens=tokens, deadline=min(now + settings.team_member_seconds, end))
+
+    def _track_activity(self, run: TeamRun, member_id: str) -> Callable[[dict[str, Any]], None]:
+        """Show what a member is doing right now on its node."""
+
+        def on_event(event: dict[str, Any]) -> None:
+            if event.get("type") == "tool" and event.get("phase") == "start":
+                run.agents[member_id]["activity"] = {"name": event.get("name"), "detail": event.get("detail")}
+                self.events.publish(run.id, {"type": "agent_activity", "run": asdict(run), "member_id": member_id})
+
+        return on_event
 
     async def _run_member(
         self,
@@ -566,15 +1072,21 @@ class TeamOrchestrator:
         agent["started_at"] = time.time()
         self._checkpoint(run, "agent_started", member.id)
         suffix = f"{mode}{round_number}" if round_number else mode
+        limits = self._limits(run, mode)
         try:
-            response: AgentResponse = await self.orchestrator.process(
-                user_input=self._member_prompt(member, run.task, mode),
-                session_id=f"{run.id}-{member.id}-{suffix}",
-                override_model=member.model_id,
-                stream=False,
-                workspace_context=self._member_context(run, team, member, mode, feedback),
-                task_hint=run.task,
-                persist=False,
+            response: AgentResponse = await asyncio.wait_for(
+                self.orchestrator.process(
+                    user_input=self._member_prompt(member, run.task, mode),
+                    session_id=f"{run.id}-{member.id}-{suffix}",
+                    override_model=member.model_id,
+                    stream=False,
+                    workspace_context=self._member_context(run, team, member, mode, feedback),
+                    task_hint=run.task,
+                    persist=False,
+                    limits=limits,
+                    on_event=self._track_activity(run, member.id),
+                ),
+                timeout=max(1.0, limits.deadline - time.time()) + HARD_TIMEOUT_GRACE_SECONDS,
             )
             if response.status not in {ResponseStatus.SUCCESS, ResponseStatus.FALLBACK_USED}:
                 raise RuntimeError(response.error_message or response.content or "Model request failed")
@@ -589,11 +1101,13 @@ class TeamOrchestrator:
             agent["status"] = "cancelled"
             raise
         except Exception as exc:
-            logger.warning("[teams] %s failed in %s: %s", member.name, run.id, exc)
-            agent.update(status="failed", error=str(exc))
+            reason = "Model tidak menjawab sebelum batas waktu" if isinstance(exc, TimeoutError) else str(exc)
+            logger.warning("[teams] %s failed in %s: %s", member.name, run.id, reason)
+            agent.update(status="failed", error=reason)
             if mode == "lead":
                 raise
         finally:
+            agent.pop("activity", None)
             agent["completed_at"] = time.time()
             self._checkpoint(run, "agent_finished", member.id)
 
@@ -639,7 +1153,100 @@ class TeamOrchestrator:
         finally:
             self.events.unsubscribe(run_id, queue)
 
+    def start_scheduler(self) -> None:
+        """Start firing scheduled teams and listening to Telegram. Needs a running event loop."""
+        if self._scheduler is None:
+            self._scheduler = asyncio.create_task(self._schedule_loop(), name="team-scheduler")
+        if self._telegram is None:
+            self._telegram = asyncio.create_task(self._telegram_loop(), name="team-telegram")
+
+    async def _schedule_loop(self) -> None:
+        while True:
+            await asyncio.sleep(SCHEDULE_CHECK_SECONDS)
+            try:
+                await self.run_due_schedules()
+            except Exception:
+                logger.exception("[teams] Schedule check failed")
+
+    async def run_due_schedules(self, now: float | None = None) -> list[str]:
+        """Start every team whose time has come. Returns the runs started."""
+        now = time.time() if now is None else now
+        started: list[str] = []
+        for team in self.store.list_teams():
+            due = next_run_after(team.schedule, team.last_scheduled_at or team.updated_at)
+            if due is None or now < due:
+                continue
+            team.last_scheduled_at = now
+            self.store.put_team(team)
+            if now - due > SCHEDULE_LATE_SECONDS and team.schedule.get("mode") in {"daily", "cron", "once"}:
+                logger.info("[teams] Skipped a missed schedule for %s", team.name)
+                continue
+            try:
+                run = await self.start_run(team.id, str(team.schedule["task"]), {"source": team.schedule["mode"]})
+                started.append(run.id)
+            except ValueError as exc:
+                logger.info("[teams] Schedule for %s did not start: %s", team.name, exc)
+        return started
+
+    def _telegram_teams(self) -> list[Team]:
+        return [team for team in self.store.list_teams() if team.schedule.get("mode") == "telegram"]
+
+    async def _telegram_loop(self) -> None:
+        while True:
+            if not self._telegram_teams() or not get_settings().telegram_bot_token:
+                await asyncio.sleep(TELEGRAM_IDLE_SECONDS)
+                continue
+            try:
+                await self.poll_telegram()
+            except OutputError as exc:
+                logger.warning("[teams] Telegram polling: %s", exc)
+                await asyncio.sleep(TELEGRAM_IDLE_SECONDS)
+            except Exception:
+                logger.exception("[teams] Telegram polling failed")
+                await asyncio.sleep(TELEGRAM_IDLE_SECONDS)
+
+    async def poll_telegram(self, wait: int = 25) -> list[str]:
+        """Start the teams that new Telegram messages are meant for. Returns the runs started.
+
+        Only the chat in TELEGRAM_CHAT_ID can start a flow: anyone can message a bot,
+        and a flow can spend money and reach the network. Messages that were waiting
+        before the server started are dropped rather than run all at once.
+        """
+        if self._telegram_offset is None:
+            pending = await fetch_telegram_updates(-1, wait=0)
+            self._telegram_offset = pending[-1]["update_id"] + 1 if pending else 0
+        updates = await fetch_telegram_updates(self._telegram_offset, wait=wait)
+        allowed = str(get_settings().telegram_chat_id or "")
+        started: list[str] = []
+        for update in updates:
+            self._telegram_offset = max(self._telegram_offset, int(update["update_id"]) + 1)
+            message = update.get("message") or {}
+            chat_id = str((message.get("chat") or {}).get("id") or "")
+            text = str(message.get("text") or "")
+            if not allowed or chat_id != allowed:
+                if chat_id:
+                    logger.info("[teams] Ignored a Telegram message from chat %s, not TELEGRAM_CHAT_ID", chat_id)
+                continue
+            for team in self._telegram_teams():
+                task = telegram_task(team.schedule, text)
+                if task is None:
+                    continue
+                try:
+                    run = await self.start_run(team.id, task, {"source": "telegram", "chat_id": chat_id})
+                    started.append(run.id)
+                except ValueError as exc:
+                    logger.info("[teams] Telegram message for %s did not start: %s", team.name, exc)
+                    with contextlib.suppress(OutputError):
+                        await send_telegram(f"{team.name} masih berjalan. Coba lagi sebentar lagi.", chat_id)
+        return started
+
     async def close(self) -> None:
+        for loop_task in (self._scheduler, self._telegram):
+            if loop_task:
+                loop_task.cancel()
+                await asyncio.gather(loop_task, return_exceptions=True)
+        self._scheduler = None
+        self._telegram = None
         tasks = list(self._tasks.values())
         for task in tasks:
             task.cancel()

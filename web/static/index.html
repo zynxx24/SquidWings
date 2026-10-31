@@ -81,14 +81,33 @@
           <input id="team-name" placeholder="Nama tim" aria-label="Nama tim">
         </div>
         <div class="team-bar-group">
-          <button id="add-node" class="btn btn-ghost"><span data-icon="plus"></span>Agent</button>
+          <select id="add-node" aria-label="Tambah node">
+            <option value="">+ Tambah</option>
+            <option value="agent">Agent</option>
+            <optgroup label="Logika">
+              <option value="gate">Gate IF (AND/OR)</option>
+              <option value="switch">Switch</option>
+              <option value="merge">Merge</option>
+              <option value="delay">Delay</option>
+            </optgroup>
+            <optgroup label="Data">
+              <option value="set">Teks / template</option>
+              <option value="http">HTTP request</option>
+            </optgroup>
+            <optgroup label="Keluaran">
+              <option value="telegram">Telegram</option>
+              <option value="database">Database</option>
+            </optgroup>
+          </select>
+          <button id="flow-schedule" class="btn btn-ghost" type="button">Jadwal</button>
+          <button id="tidy-board" class="btn btn-ghost" type="button">Rapikan</button>
           <button id="save-team" class="btn btn-ghost">Simpan</button>
           <button id="delete-team" class="icon-btn btn-danger" aria-label="Hapus tim" title="Hapus tim" data-icon="trash"></button>
         </div>
       </div>
       <div class="team-body">
         <div id="board" class="board">
-          <svg id="edges" class="edges" width="1600" height="1400" aria-hidden="true">
+          <svg id="edges" class="edges" width="1600" height="2000" aria-hidden="true">
             <defs>
               <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M0 0 10 5 0 10z" class="edge-head"></path>

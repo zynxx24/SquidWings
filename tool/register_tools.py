@@ -754,9 +754,15 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
     reg.register(
         ToolSchema(
             name="load_skill",
-            description="Load a step-by-step guide by name, such as fix-bug, add-feature, clean-code, web-research, design-ui, build-web, or build-backend.",
+            description=(
+                "Load a step-by-step guide by name, such as fix-bug, add-feature, clean-code, web-research, design-ui, "
+                "build-web, or build-backend, plus any other skill listed in the prompt. Some list more guides to load with file, and some ship "
+                "code: install_files copies it into this session's own folder and returns the path in installed_at."
+            ),
             parameters=[
                 ToolParameter(name="name", param_type=ParamType.STRING, description="Skill name.", required=True),
+                ToolParameter(name="file", param_type=ParamType.STRING, description="A companion guide listed in more_guides, such as craft.md.", required=False),
+                ToolParameter(name="install_files", param_type=ParamType.BOOLEAN, description="Copy the skill's code into the project.", required=False),
             ],
         ),
         load_skill,

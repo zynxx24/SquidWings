@@ -6,7 +6,8 @@ success without checking. Everything here runs in code and costs no tokens,
 except the advisor, which is only called once a run is demonstrably stuck.
 """
 
-from .runtime import Harness, HarnessStats
+from .runtime import Harness, HarnessStats, RunLimits
 from .tiers import Scaffold, Tier, scaffold_for, tier_for
 
-__all__ = ["Harness", "HarnessStats", "Scaffold", "Tier", "scaffold_for", "tier_for"]
+__all__ = ["Harness", "HarnessStats",
+    "RunLimits", "Scaffold", "Tier", "scaffold_for", "tier_for"]

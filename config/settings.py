@@ -24,11 +24,11 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # --- API keys ---
-    openai_api_key: str = ""
-    anthropic_api_key: str = ""
-    google_api_key: str = ""
-    deepseek_api_key: str = ""
-    graphify_api_key: str = ""
+    openai_api_key: str = Field(default="", repr=False)
+    anthropic_api_key: str = Field(default="", repr=False)
+    google_api_key: str = Field(default="", repr=False)
+    deepseek_api_key: str = Field(default="", repr=False)
+    graphify_api_key: str = Field(default="", repr=False)
 
     # --- Base URLs ---
     openai_base_url: str = "https://api.openai.com/v1"
@@ -42,6 +42,18 @@ class Settings(BaseSettings):
     # environments keep the team canvas. Set WEB_TEAMS_ENABLED explicitly to
     # force the behaviour either way.
     web_teams_enabled: bool | None = None
+    # A team shares one budget. Without these, one request can run for most of an hour.
+    team_run_seconds: int = 600
+    team_member_seconds: int = 240
+    team_member_rounds: int = 10
+    team_member_tokens: int = 120_000
+    # Where a flow can send results. Secrets stay here, never in a team's settings.
+    telegram_bot_token: str = Field(default="", repr=False)
+    telegram_chat_id: str = ""
+    team_db_sqlite_path: str = "web/data/teams/flow.sqlite3"
+    team_db_postgres_url: str = Field(default="", repr=False)
+    team_db_mysql_url: str = Field(default="", repr=False)
+    team_db_mongodb_url: str = Field(default="", repr=False)
 
     # --- Web public access ---
     web_host: str = "127.0.0.1"
@@ -67,7 +79,7 @@ class Settings(BaseSettings):
     web_search_enabled: bool = True
     # Search APIs, tried before the public result pages. Much better results.
     searxng_url: str = ""
-    brave_search_api_key: str = ""
+    brave_search_api_key: str = Field(default="", repr=False)
     # Render JavaScript-only pages in a local headless Chrome or Chromium.
     web_browser_enabled: bool = True
     web_search_timeout_seconds: float = 15.0

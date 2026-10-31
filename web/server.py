@@ -39,6 +39,7 @@ from security.web_access import WebSecurityMiddleware, is_loopback_host, set_pub
 from tool.execute.execute_code_intel import quality_tools
 from utils.helpers import format_tokens, generate_session_id, is_valid_session_id
 from utils.logger import get_logger
+from utils.markdown_compact import compact_markdown
 from utils.workspace_context import SESSIONS_ROOT, session_workspace
 from web.team_api import router as team_router
 
@@ -75,6 +76,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Teams validate models against the registry, which is empty until the first
     # sync. In the background: a slow provider must not delay startup.
     sync_task = asyncio.create_task(ensure_models())
+    if app.state.team_orchestrator:
+        app.state.team_orchestrator.start_scheduler()
     yield
     sync_task.cancel()
     await shutdown_event()
@@ -416,7 +419,7 @@ def _convert_to_markdown(name: str, data: bytes) -> str:
     if _markitdown is None:
         _markitdown = MarkItDown(enable_plugins=False)
     result = _markitdown.convert_stream(io.BytesIO(data), stream_info=StreamInfo(extension=ext))
-    return str(result.markdown)
+    return compact_markdown(str(result.markdown))
 
 
 @app.post("/api/upload")
