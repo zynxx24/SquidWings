@@ -46,6 +46,8 @@ _SYSTEM_FILES = (
 _USER_TOOLS = ("node", "npm", "npx", "pnpm", "yarn", "uv", "go", "cargo", "rustc", "aislop", "graphify")
 # Where uv keeps the Python that uv-installed tools such as graphify run on.
 _USER_TOOL_DIRS = ("~/.local/share/uv/tools", "~/.local/share/uv/python")
+# Browsers Playwright downloaded. HOME is /tmp/home inside, so the path is passed explicitly.
+_PLAYWRIGHT_BROWSERS = Path("~/.cache/ms-playwright").expanduser()
 # Commands can read these but not rewrite them: edited memory would plant
 # instructions in every later prompt.
 _READ_ONLY_STATE = (".agent_memory", ".vault")
@@ -77,7 +79,7 @@ class SandboxPolicy:
     mode: str = "auto"
     network: bool = False
     memory_mb: int = 0
-    cpu_seconds: int = 300
+    cpu_seconds: int = 900
     file_size_mb: int = 1024
     image: str = "python:3.12-slim"
     ro_paths: tuple[str, ...] = ()
@@ -343,6 +345,9 @@ def _build_bwrap(policy: SandboxPolicy, scope: Scope, command: list[str]) -> tup
     project_venv = scope.root / ".venv" / "bin"
     path_entries = [str(project_venv)] if project_venv.is_dir() else []
     env = _clean_env(":".join([*path_entries, *tool_bins, _SYSTEM_PATH]), "/tmp/home")
+    if _PLAYWRIGHT_BROWSERS.is_dir():
+        argv += ["--ro-bind", str(_PLAYWRIGHT_BROWSERS), str(_PLAYWRIGHT_BROWSERS)]
+        env["PLAYWRIGHT_BROWSERS_PATH"] = str(_PLAYWRIGHT_BROWSERS)
     argv += ["--clearenv"]
     for key, value in env.items():
         argv += ["--setenv", key, value]

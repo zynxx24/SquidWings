@@ -87,7 +87,7 @@ _TOOL_VERBS = {
     "web_research": "Mencari dan membaca web", "web_search": "Mencari di web", "web_read": "Membuka",
     "git_status": "Melihat status git", "git_diff": "Melihat perubahan", "code_graph": "Menelusuri graph kode",
     "aislop_scan": "Memeriksa kualitas kode", "project_overview": "Mempelajari proyek",
-    "load_skill": "Membuka panduan", "vault_search": "Mencari catatan", "vault_read": "Membaca catatan",
+    "load_skill": "Membuka panduan", "share_file": "Mengirim file", "vault_search": "Mencari catatan", "vault_read": "Membaca catatan",
     "vault_write": "Menulis catatan", "vault_recall": "Mengingat catatan", "memory_recall": "Mengingat",
     "memory_remember": "Menyimpan ke memori", "memory_forget": "Menghapus dari memori", "time_now": "Melihat waktu",
 }

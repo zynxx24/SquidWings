@@ -58,6 +58,7 @@ from tool.execute.execute_local_ops.local_ops_tool import (
     text_transform,
     time_now,
 )
+from tool.execute.execute_share_file.share_tool import share_file
 from tool.execute.execute_skills.skill_tool import load_skill
 from tool.execute.execute_upload_file.read_file_tool import list_directory, read_file
 from tool.execute.execute_web_search.web_reader import web_read, web_research
@@ -165,7 +166,7 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
             ToolParameter(
                 name="timeout",
                 param_type=ParamType.INTEGER,
-                description="Timeout in seconds (default: 30).",
+                description="Timeout in seconds (default 30, at most 900). Renders and builds need 300 to 900.",
                 required=False,
                 default=30,
             ),
@@ -766,6 +767,21 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
             ],
         ),
         load_skill,
+    )
+
+    reg.register(
+        ToolSchema(
+            name="share_file",
+            description=(
+                "Give the user a file you made in this session: a video or image plays in the chat, anything "
+                "else becomes a download. Use it for finished results such as renders/share.mp4."
+            ),
+            parameters=[
+                ToolParameter(name="path", param_type=ParamType.STRING, description="File path inside the session folder.", required=True),
+                ToolParameter(name="caption", param_type=ParamType.STRING, description="Short label shown with it.", required=False),
+            ],
+        ),
+        share_file,
     )
 
     # --- vault memory: vault_graph_build ---

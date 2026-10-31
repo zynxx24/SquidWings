@@ -278,7 +278,49 @@
     $('thread').appendChild(row);
   }
 
+  /* Files the agent shared come as Markdown images or links. Videos and audio need their own players. */
+  const SHARED_FILE = /^\/api\/session\/[^/]+\/files\//;
+  function enhanceMedia(container) {
+    container.querySelectorAll('img').forEach(img => {
+      const src = img.getAttribute('src') || '';
+      if (!SHARED_FILE.test(src)) return;
+      const ext = (src.split('?')[0].match(/\.(\w+)$/) || [])[1]?.toLowerCase();
+      const label = img.getAttribute('alt') || '';
+      let player = null;
+      if (['mp4', 'webm', 'mov'].includes(ext)) {
+        player = document.createElement('video');
+        player.controls = true;
+        player.playsInline = true;
+        player.preload = 'metadata';
+      } else if (['mp3', 'wav', 'ogg', 'm4a'].includes(ext)) {
+        player = document.createElement('audio');
+        player.controls = true;
+      }
+      const figure = document.createElement('figure');
+      figure.className = 'shared-file';
+      if (player) {
+        player.src = src;
+        figure.appendChild(player);
+      } else {
+        img.loading = 'lazy';
+        figure.appendChild(img.cloneNode());
+      }
+      const caption = document.createElement('figcaption');
+      const download = document.createElement('a');
+      download.href = src;
+      download.download = '';
+      download.textContent = 'Unduh';
+      caption.append(label ? `${label} · ` : '', download);
+      figure.appendChild(caption);
+      (img.closest('p') && img.closest('p').childNodes.length === 1 ? img.closest('p') : img).replaceWith(figure);
+    });
+    container.querySelectorAll('a[href]').forEach(link => {
+      if (SHARED_FILE.test(link.getAttribute('href'))) { link.setAttribute('download', ''); link.removeAttribute('target'); }
+    });
+  }
+
   function enhanceCode(container) {
+    enhanceMedia(container);
     container.querySelectorAll('pre > code').forEach(code => {
       const pre = code.parentElement;
       if (pre.parentElement.classList.contains('code')) return;
@@ -314,7 +356,7 @@
     web_research: ['Mencari dan membaca web', 'web', 'quote'], web_search: ['Mencari di web', 'web', 'quote'],
     web_read: ['Membuka', 'web', 'url'], git_status: ['Melihat status git', 'read', 'plain'],
     git_diff: ['Melihat perubahan', 'read', 'path'], code_graph: ['Menelusuri graph kode', 'search', 'quote'],
-    load_skill: ['Membuka panduan', 'read', 'plain'], vault_search: ['Mencari catatan', 'search', 'quote'],
+    load_skill: ['Membuka panduan', 'read', 'plain'], share_file: ['Mengirim file', 'write', 'plain'], vault_search: ['Mencari catatan', 'search', 'quote'],
     vault_read: ['Membaca catatan', 'read', 'path'], vault_write: ['Menulis catatan', 'edit', 'path'],
     vault_recall: ['Mengingat catatan', 'read', 'quote'], memory_recall: ['Mengingat', 'read', 'quote'],
     memory_remember: ['Menyimpan ke memori', 'edit', 'plain'], memory_forget: ['Menghapus dari memori', 'edit', 'plain'],
@@ -1400,6 +1442,7 @@
     S.selected = null;
     S.panel = null;
     S.schedule = { mode: 'off' };
+    $('team-video').checked = false;
     $('flow-schedule').textContent = scheduleLabel();
     $('team-name').value = '';
     resetRunView();
@@ -1420,6 +1463,7 @@
     S.selected = null;
     S.panel = null;
     S.schedule = team.schedule || { mode: 'off' };
+    $('team-video').checked = team.mode === 'video';
     $('flow-schedule').textContent = scheduleLabel();
     S.members = team.members.map(m => ({ ...m, depends_on: m.depends_on || [] }));
     $('team-name').value = team.name;
@@ -1453,6 +1497,7 @@
     S.selected = null;
     S.panel = null;
     S.schedule = template.schedule || { mode: 'off' };
+    $('team-video').checked = template.mode === 'video';
     $('flow-schedule').textContent = scheduleLabel();
     S.members = template.members.map(m => ({ ...m, depends_on: m.depends_on || [] }));
     $('team-name').value = template.name;
@@ -1524,6 +1569,7 @@
       lead_id: S.lead,
       reviewer_id: S.reviewer || null,
       schedule: S.schedule || { mode: 'off' },
+      mode: $('team-video').checked ? 'video' : 'standard',
     };
     const saved = S.team
       ? await api(`/api/teams/${S.team}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })

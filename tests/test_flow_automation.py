@@ -434,3 +434,45 @@ async def test_loading_a_dormant_skill_by_name_wakes_it(tmp_path: Path, monkeypa
     monkeypatch.setattr(skill_tool, "get_active_workspace", lambda: str(tmp_path))
     assert (await skill_tool.load_skill("animate"))["ok"]
     assert session_settings.load(tmp_path).skills == ["animate"]
+
+
+# --- video mode ----------------------------------------------------------
+
+
+async def test_video_mode_gives_long_limits_and_wakes_animate(tmp_path: Path, settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from utils import session_settings
+
+    monkeypatch.setattr(team_orchestrator.session_stack, "session_workspace", lambda run_id, create=True: tmp_path / run_id)
+    manager, fake = make(tmp_path)
+    standard = manager.create_team("biasa", "", [agent("a"), agent("b")], "a")
+    video = manager.create_team("video", "", [agent("a"), agent("b")], "a", mode="video")
+    assert standard.mode == "standard" and video.mode == "video"
+
+    run = await finish(manager, video.id)
+    assert run.budget["run_seconds"] == settings.team_video_run_seconds
+    limits = manager._limits(run, "lead")
+    # The lead keeps every round and its full tokens: it still reviews and renders.
+    assert limits.max_rounds == settings.team_video_member_rounds
+    assert limits.tokens == settings.team_video_member_tokens
+    assert session_settings.load(tmp_path / run.id).skills == ["animate"]
+
+    plain = await finish(manager, standard.id)
+    assert plain.budget["run_seconds"] == settings.team_run_seconds
+    assert manager._limits(plain, "lead").max_rounds == team_orchestrator.FINISHING_ROUNDS["lead"]
+    assert session_settings.load(tmp_path / plain.id).skills == []
+    assert len(fake.calls) == 4
+
+
+def test_unknown_team_modes_are_refused(tmp_path: Path, settings: Any) -> None:
+    manager, _ = make(tmp_path)
+    with pytest.raises(ValueError):
+        manager.create_team("t", "", [agent("a"), agent("b")], "a", mode="turbo")
+
+
+def test_video_studio_template_is_valid(tmp_path: Path, settings: Any) -> None:
+    manager, _ = make(tmp_path)
+    template = next(t for t in team_templates(["m"]) if t["key"] == "video-studio")
+    team = manager.create_team(
+        template["name"], "", template["members"], template["lead_id"], template["reviewer_id"], mode=template["mode"],
+    )
+    assert team.mode == "video" and team.lead_id == "editor"

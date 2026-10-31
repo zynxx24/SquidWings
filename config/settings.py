@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     team_member_seconds: int = 240
     team_member_rounds: int = 10
     team_member_tokens: int = 120_000
+    # Teams in video mode build and render, which takes far longer than writing.
+    team_video_run_seconds: int = 3600
+    team_video_member_seconds: int = 1800
+    team_video_member_rounds: int = 40
+    team_video_member_tokens: int = 400_000
     # Where a flow can send results. Secrets stay here, never in a team's settings.
     telegram_bot_token: str = Field(default="", repr=False)
     telegram_chat_id: str = ""
@@ -70,7 +75,7 @@ class Settings(BaseSettings):
     sandbox_enabled: bool = True
     sandbox_network: bool = False
     sandbox_memory_mb: int = 0
-    sandbox_cpu_seconds: int = 300
+    sandbox_cpu_seconds: int = 900
     sandbox_file_size_mb: int = 1024
     sandbox_image: str = "python:3.12-slim"
     sandbox_ro_paths: str = ""

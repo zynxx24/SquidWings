@@ -42,12 +42,15 @@ from agent.team_outputs import (
 )
 from config.constants import ResponseStatus
 from config.settings import get_settings
+from utils import session_settings
 from utils.logger import get_logger
 from utils.markdown_compact import fit_markdown
 from utils.workspace_context import SESSIONS_ROOT
 
 logger = get_logger(__name__)
 MAX_TEAM_MEMBERS = 12
+TEAM_MODES = ("standard", "video")
+VIDEO_SKILL = "animate"
 MAX_AGENTS = 6
 SCHEDULE_CHECK_SECONDS = 30
 TELEGRAM_IDLE_SECONDS = 30
@@ -98,6 +101,8 @@ class Team:
     reviewer_id: str | None = None
     schedule: dict[str, Any] = field(default_factory=lambda: {"mode": "off"})
     last_scheduled_at: float | None = None
+    # "video" gives every agent the time to build and render, and wakes the animate skill.
+    mode: str = "standard"
 
 
 @dataclass
@@ -118,6 +123,8 @@ class TeamRun:
     waited_seconds: float = 0.0
     # What started the run: {"source": "telegram", "chat_id": ...} or the schedule.
     trigger: dict[str, Any] = field(default_factory=dict)
+    # The time and size limits this run started with. Empty means the standard ones.
+    budget: dict[str, Any] = field(default_factory=dict)
 
     @property
     def finished(self) -> bool:
@@ -428,6 +435,44 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
             "schedule": {"mode": "off"},
         },
         {
+            "key": "video-studio",
+            "name": "Studio video animasi",
+            "description": (
+                "Mode video: penulis naskah menyusun cerita dan memeriksa fakta, animator membangun dan merender "
+                "dengan skill animate, editor meninjau lalu mengirim videonya. Waktu tiap agent sampai 30 menit."
+            ),
+            "members": [
+                {
+                    **member("script", "Penulis naskah", "Menyusun ide, format, dan tabel beat dari permintaan", mid),
+                    "instructions": (
+                        "Muat load_skill animate, lalu baca grammar/FORMATS.md dan grammar/STORY.md. Ini kerja tim tanpa "
+                        "tanya jawab: pilih sendiri default yang paling cocok dan tulis alasannya. Cek setiap fakta dengan "
+                        "web_research. Tulis pieces/<nama>/brief.md: ide satu kalimat, format, gaya, durasi, BPM, tabel beat "
+                        "bernomor dengan jembatan antar beat dan peran suaranya, serta klaim beserta sumbernya."
+                    ),
+                },
+                {
+                    **member("animator", "Animator", "Membangun adegan dan merender video", top, "script"),
+                    "instructions": (
+                        "Muat load_skill animate dengan install_files=true dan pakai path installed_at. Baca craft.md dan "
+                        "STYLE.md gaya yang dipilih di brief.md. Bangun semua beat di pieces/<nama>/src/, lalu jalankan "
+                        "build.mjs dan export.mjs --share dengan timeout 900. Laporkan path video dan apa yang belum beres."
+                    ),
+                },
+                {
+                    **member("editor", "Editor", "Meninjau hasil render, memperbaiki, dan mengirim video", top, "animator"),
+                    "instructions": (
+                        "Jalankan review.mjs dengan timeout 900 dan lihat contact sheet-nya. Perbaiki yang gagal, render "
+                        "ulang bila perlu. Lalu panggil share_file untuk renders/share.mp4. Jawaban akhir: apa videonya, "
+                        "angka review, apa yang diperbaiki, shot terlemah, dan yang tidak bisa dicek (musiknya belum didengar)."
+                    ),
+                },
+            ],
+            "lead_id": "editor",
+            "reviewer_id": None,
+            "mode": "video",
+        },
+        {
             "key": "build",
             "name": "Bangun dan verifikasi",
             "description": "Model murah merencanakan, membangun, dan menguji. Model kuat menilai hasilnya.",
@@ -493,6 +538,7 @@ class TeamOrchestrator:
         lead_id: str | None,
         reviewer_id: str | None = None,
         schedule: dict[str, Any] | None = None,
+        mode: str = "standard",
     ) -> Team:
         parsed = self._validate_members(members, lead_id, reviewer_id)
         team = Team(
@@ -503,6 +549,7 @@ class TeamOrchestrator:
             lead_id=self._lead_for(parsed, lead_id),
             reviewer_id=reviewer_id or None,
             schedule=normalize_schedule(schedule),
+            mode=self._mode(mode),
         )
         if not team.name:
             raise ValueError("Team name cannot be empty.")
@@ -579,6 +626,32 @@ class TeamOrchestrator:
         return parsed
 
     @staticmethod
+    def _mode(mode: str | None) -> str:
+        mode = mode or "standard"
+        if mode not in TEAM_MODES:
+            raise ValueError(f"Mode tim tidak dikenal: {mode}.")
+        return mode
+
+    @staticmethod
+    def _budget(team: Team) -> dict[str, Any]:
+        settings = get_settings()
+        if team.mode == "video":
+            return {
+                "mode": "video",
+                "run_seconds": settings.team_video_run_seconds,
+                "member_seconds": settings.team_video_member_seconds,
+                "rounds": settings.team_video_member_rounds,
+                "tokens": settings.team_video_member_tokens,
+            }
+        return {
+            "mode": "standard",
+            "run_seconds": settings.team_run_seconds,
+            "member_seconds": settings.team_member_seconds,
+            "rounds": settings.team_member_rounds,
+            "tokens": settings.team_member_tokens,
+        }
+
+    @staticmethod
     def _lead_for(members: list[TeamMember], lead_id: str | None) -> str:
         """An all-agent team always has a lead. A flow can end without one."""
         if lead_id:
@@ -594,6 +667,7 @@ class TeamOrchestrator:
         lead_id: str | None,
         reviewer_id: str | None = None,
         schedule: dict[str, Any] | None = None,
+        mode: str = "standard",
     ) -> Team:
         if any(not run.finished for run in self.store.list_runs(team_id)):
             raise ValueError("Wait for active team runs to finish before editing.")
@@ -614,6 +688,7 @@ class TeamOrchestrator:
             reviewer_id=reviewer_id or None,
             schedule=normalize_schedule(schedule),
             last_scheduled_at=existing.last_scheduled_at,
+            mode=self._mode(mode),
         )
         self.store.put_team(replacement)
         return replacement
@@ -645,6 +720,7 @@ class TeamOrchestrator:
                     "started_at": None, "completed_at": None,
                 } for member in team.members},
                 trigger=dict(trigger or {}),
+                budget=self._budget(team),
             )
             run.created_at = now
             self.store.put_run(run)
@@ -664,7 +740,9 @@ class TeamOrchestrator:
         run.started_at = time.time()
         self._checkpoint(run, "run_started")
         # Everyone in a run shares one folder, so one agent can read another's files.
-        session_stack.enter(run.id)
+        stack = session_stack.enter(run.id)
+        if team.mode == "video":
+            session_settings.activate_skills(stack.workspace, [VIDEO_SKILL])
         try:
             lead = next((member for member in team.members if member.id == team.lead_id), None)
             after = self._after_answer(team)
@@ -1026,26 +1104,39 @@ class TeamOrchestrator:
         return context
 
     @staticmethod
-    def _run_ends(run: TeamRun) -> float:
-        return (run.started_at or time.time()) + get_settings().team_run_seconds + run.waited_seconds
+    def _run_budget(run: TeamRun) -> dict[str, Any]:
+        settings = get_settings()
+        return {
+            "run_seconds": settings.team_run_seconds,
+            "member_seconds": settings.team_member_seconds,
+            "rounds": settings.team_member_rounds,
+            "tokens": settings.team_member_tokens,
+            **run.budget,
+        }
 
-    @staticmethod
-    def _workers_until(run: TeamRun) -> float:
+    @classmethod
+    def _run_ends(cls, run: TeamRun) -> float:
+        return (run.started_at or time.time()) + float(cls._run_budget(run)["run_seconds"]) + run.waited_seconds
+
+    @classmethod
+    def _workers_until(cls, run: TeamRun) -> float:
         start = run.started_at or time.time()
-        return start + get_settings().team_run_seconds * WORKER_SHARE_OF_RUN + run.waited_seconds
+        return start + float(cls._run_budget(run)["run_seconds"]) * WORKER_SHARE_OF_RUN + run.waited_seconds
 
     def _limits(self, run: TeamRun, mode: str) -> RunLimits:
-        settings = get_settings()
+        budget = self._run_budget(run)
         now = time.time()
-        rounds = FINISHING_ROUNDS.get(mode, settings.team_member_rounds)
-        tokens = settings.team_member_tokens
+        # A video lead still runs the review and the render, so it keeps its full rounds.
+        video = budget.get("mode") == "video"
+        rounds = budget["rounds"] if video else FINISHING_ROUNDS.get(mode, budget["rounds"])
+        tokens = budget["tokens"]
         if mode == "worker":
             end = self._workers_until(run)
         else:
             # The lead writes from reports, so it needs far less than a worker.
-            tokens //= 2
+            tokens = tokens if video else tokens // 2
             end = max(self._run_ends(run), now + MIN_FINISH_SECONDS)
-        return RunLimits(max_rounds=rounds, tokens=tokens, deadline=min(now + settings.team_member_seconds, end))
+        return RunLimits(max_rounds=rounds, tokens=tokens, deadline=min(now + budget["member_seconds"], end))
 
     def _track_activity(self, run: TeamRun, member_id: str) -> Callable[[dict[str, Any]], None]:
         """Show what a member is doing right now on its node."""
