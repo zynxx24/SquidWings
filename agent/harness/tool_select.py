@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from brain import skills
 from config.constants import TaskType
 from tool.registry.tool_registry import WORKSPACE_TOOLS
+from utils import session_settings
+from utils.workspace_context import get_active_workspace
 
 from .tiers import Scaffold
 
@@ -45,6 +48,7 @@ _ON_DEMAND: dict[tuple[str, ...], list[str]] = {
         "file_move", "file_delete", "dir_create",
     ],
     ("json",): ["json_query"],
+    ("kirim file", "kirimkan file", "bagikan", "share", "download", "unduh", "mp4", "render"): ["share_file"],
 }
 
 
@@ -59,6 +63,13 @@ def _for_model(schema: dict[str, Any]) -> dict[str, Any]:
         return schema
     trimmed = {k: v for k, v in properties.items() if k != hidden}
     return {**schema, "function": {**function, "parameters": {**parameters, "properties": trimmed}}}
+
+
+def _skill_tools(user_input: str) -> list[str]:
+    """Tools an awake contextual skill needs, in this session or woken by this request."""
+    workspace = get_active_workspace()
+    active = session_settings.load(workspace).skills if workspace else []
+    return skills.tools_for([*active, *skills.woken(user_input)])
 
 
 def select_tools(
@@ -82,6 +93,7 @@ def select_tools(
     # A tool the user names is always offered, then the task's core tools, then
     # whatever the request's topic pulls in, then the task's remaining tools.
     wanted = [name for name in by_name if name in lowered]
+    wanted.extend(_skill_tools(user_input))
     wanted.extend(base[:_CORE_TOOLS])
     for keywords, names in _ON_DEMAND.items():
         if any(k in lowered for k in keywords):

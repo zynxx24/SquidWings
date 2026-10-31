@@ -17,7 +17,8 @@ the index, and its guide is added when a trigger matches. ``scope: contextual``
 is for skills only some work needs, such as animation. It stays dormant, out of
 the index and out of the prompt, until a request names one of its triggers. An
 optional ``context:`` list must match as well, so "animasi hover di tombol" (CSS)
-does not wake a video skill but "video animasi" does.
+does not wake a video skill but "video animasi" does. ``tools:`` names the tools
+an awake contextual skill must be offered, even on a small model's short list.
 From then on it stays active for that session only, so "lanjutkan" does not
 lose it halfway, and other chats never see it.
 
@@ -53,6 +54,7 @@ class Skill:
     requires: tuple[str, ...] = ()
     scope: str = "core"
     context: tuple[str, ...] = ()
+    tools: tuple[str, ...] = ()
     # Set for folder skills: where the companion files live, and which guides there are.
     root: Path | None = None
     guides: tuple[str, ...] = field(default=())
@@ -96,6 +98,7 @@ def _parse(path: Path) -> Skill | None:
         requires=tuple(r.strip() for r in fields.get("requires", "").split(",") if r.strip()),
         scope="contextual" if fields.get("scope", "").lower() == "contextual" else "core",
         context=tuple(c.strip().lower() for c in fields.get("context", "").split(",") if c.strip()),
+        tools=tuple(t.strip() for t in fields.get("tools", "").split(",") if t.strip()),
         root=path.parent if folder else None,
         guides=_guides(path.parent) if folder else (),
     )
@@ -156,6 +159,12 @@ def select(user_input: str, limit: int = 2, active: tuple[str, ...] | list[str] 
     return [skill for _, skill in scored[:limit]]
 
 
+def tools_for(active: tuple[str, ...] | list[str]) -> list[str]:
+    """Tools the awake contextual skills need."""
+    found = load_all()
+    return [tool for name in active if name in found for tool in found[name].tools]
+
+
 def index_text(active: tuple[str, ...] | list[str] = ()) -> str:
     """One line per skill, so the model knows what it can ask for. Dormant skills are left out."""
     skills = [s for s in load_all().values() if s.scope == "core" or s.name in active]
@@ -187,4 +196,4 @@ def install(skill: Skill, workspace: Path, session_id: str) -> Path:
     return target
 
 
-__all__ = ["Skill", "index_text", "install", "load_all", "select", "woken"]
+__all__ = ["Skill", "index_text", "install", "load_all", "select", "tools_for", "woken"]

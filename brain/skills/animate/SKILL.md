@@ -5,6 +5,7 @@ triggers: animasi, animasikan, animate, animation, animated, video animasi, moti
 scope: contextual
 context: video, mp4, film, klip, clip, reel, reels, shorts, tiktok, explainer, storyboard, render, youtube, durasi, detik
 requires: node, ffmpeg
+tools: execute_command, load_skill, share_file, read_file, file_write, file_patch, web_research
 ---
 # Animating in code
 
@@ -46,22 +47,22 @@ Then ask: approve, change beats, or a different angle.
 node $KIT/tools/still.mjs pieces/<name> 2.25,9.75,16.5 look.png --scale 0.5
 ```
 
-Show `look.png`. Ask for a thumbs up per frame.
+Show it with `share_file(path="look.png")`, so the user sees the frames in the chat. Ask for a thumbs up per frame.
 
-**3. Storyboard check (every beat).** Fill `TIMELINE.board` with one key time per beat (`{ t, title, sound, next }`), render with `tools/storyboard.mjs`, and ask for thumbs up or down by panel number. The panels are the real scene functions, so nothing gets redrawn later.
+**3. Storyboard check (every beat).** Fill `TIMELINE.board` with one key time per beat (`{ t, title, sound, next }`), render with `tools/storyboard.mjs`, show the board with `share_file`, and ask for thumbs up or down by panel number. The panels are the real scene functions, so nothing gets redrawn later.
 
 **4. Build.**
 
 ```bash
 node $KIT/tools/build.mjs pieces/<name>                     # → index.html
 node $KIT/tools/tile.mjs pieces/<name> tile.png 0 48 96 144 # look at it, across every cut
-node $KIT/tools/export.mjs pieces/<name> --share             # → renders/share.mp4
+node $KIT/tools/export.mjs pieces/<name> --share             # → renders/share.mp4 (timeout 600)
 node $KIT/tools/review.mjs pieces/<name>                     # the measured checks
 ```
 
-Write `brief.md` (spec, beats, sound plan, claims with sources) and keep `LOG.md`. Edit the parts in `src/`, never the built `index.html`. Write big scene files in parts of about 200 lines. Iterate the mix with `export.mjs --only-audio`, which is about 4 times faster.
+Rendering takes time: pass `timeout: 600` to `execute_command` for export and review (about 50 seconds per 8 seconds of video). Write `brief.md` (spec, beats, sound plan, claims with sources) and keep `LOG.md`. Edit the parts in `src/`, never the built `index.html`. Write big scene files in parts of about 200 lines. Iterate the mix with `export.mjs --only-audio`, which is about 4 times faster.
 
-**5. Deliver.** Send `renders/share.mp4` and say in a few lines: what it is, the review numbers, what the review caught and you fixed, the weakest shot, and what you could not verify. You can't hear the score, so say so and ask the user to listen.
+**5. Deliver.** Call `share_file(path="pieces/<name>/renders/share.mp4", caption="<judul>")`. The video then plays right in the user's chat, on the web too, so don't paste paths or links yourself. Then say in a few lines: what it is, the review numbers, what the review caught and you fixed, the weakest shot, and what you could not verify. You can't hear the score, so say so and ask the user to listen.
 
 ## When it goes wrong
 

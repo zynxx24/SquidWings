@@ -616,6 +616,12 @@ class Orchestrator:
                 final_content = f"{final_content}{loop_result.notes}"
                 if on_content_chunk:
                     on_content_chunk(loop_result.notes)
+            # Shared files go in the saved answer too, so they are still there when the chat is reopened.
+            attachments = "".join(f"\n\n{item}" for item in loop_result.shared if item not in final_content)
+            if attachments:
+                final_content = f"{final_content}{attachments}"
+                if on_content_chunk:
+                    on_content_chunk(attachments)
 
             # 9b. A blank answer is a failure, not a success. Bansos mode must
             # keep advancing through the chain instead of returning nothing.

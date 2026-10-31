@@ -26,7 +26,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent import session_stack
@@ -37,6 +37,7 @@ from config.settings import get_settings
 from security import sandbox
 from security.web_access import WebSecurityMiddleware, is_loopback_host, set_public_mode
 from tool.execute.execute_code_intel import quality_tools
+from utils import shared_files
 from utils.helpers import format_tokens, generate_session_id, is_valid_session_id
 from utils.logger import get_logger
 from utils.markdown_compact import compact_markdown
@@ -585,6 +586,20 @@ def _stack(session_id: str) -> session_stack.SessionStack:
         raise HTTPException(status_code=400, detail="Invalid session id")
     # Just looking at a chat must not leave an empty folder behind.
     return session_stack.SessionStack(session_id, session_workspace(session_id, create=False))
+
+
+@app.get("/api/session/{session_id}/files/{relative:path}")
+async def session_file(session_id: str, relative: str) -> FileResponse:
+    """A file the agent shared in this chat. Nothing else in the session can be read here."""
+    if not is_valid_session_id(session_id):
+        raise HTTPException(status_code=404, detail="File not shared in this chat")
+    path = shared_files.resolve(session_workspace(session_id, create=False), relative)
+    if path is None:
+        raise HTTPException(status_code=404, detail="File not shared in this chat")
+    kind = shared_files.kind_of(path.name)
+    # Media plays inline. Anything else downloads, so an HTML file cannot run on this origin.
+    disposition = "inline" if kind != "file" else "attachment"
+    return FileResponse(path, filename=path.name, content_disposition_type=disposition)
 
 
 @app.get("/api/session/{session_id}/stack")

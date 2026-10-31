@@ -63,6 +63,8 @@ Menu tim agent di web aktif dengan `WEB_TEAMS_ENABLED=true`.
 
 Satu permintaan tim dibatasi 10 menit, dan tiap agent 4 menit serta 120 ribu token. Agent yang kehabisan batas menulis hasilnya, sedangkan laporan yang sudah selesai tetap dipakai. Ubah lewat `TEAM_RUN_SECONDS`, `TEAM_MEMBER_SECONDS`, `TEAM_MEMBER_ROUNDS`, dan `TEAM_MEMBER_TOKENS`.
 
+Centang **Mode video** pada tim yang membangun dan merender video. Tim itu dapat 60 menit per permintaan, dan tiap agent 30 menit, 40 putaran, serta 400 ribu token. Skill `animate` juga langsung aktif di sesinya. Ubah lewat `TEAM_VIDEO_RUN_SECONDS`, `TEAM_VIDEO_MEMBER_SECONDS`, `TEAM_VIDEO_MEMBER_ROUNDS`, dan `TEAM_VIDEO_MEMBER_TOKENS`. Template **Studio video animasi** sudah memakai mode ini: penulis naskah, animator, lalu editor yang meninjau dan mengirim videonya ke hasil tim.
+
 ### Alur tim
 
 Kanvas tim bekerja seperti alur di n8n. Urutannya ditandai 1, 2, 3 mengikuti sambungan antar-node, dan node pertama diberi tanda **Mulai**. Jalur keluar dari gate dan switch diberi huruf, misalnya 5A dan 5B, dan hanya jalur yang terpilih yang berjalan.
@@ -98,6 +100,7 @@ Template yang tersedia:
 
 - **Alarm bangun dan pengingat jadwal**: berjalan jam 05:00, 12:00, 17:00, dan 21:00. Pagi hari, gate AND (jam 04:00 sampai 10:00 dan catatan tidak berisi "libur") membangunkan lewat Telegram, lalu alarm kedua 10 menit kemudian. Di jam lain, agent mengingatkan kegiatan 4 jam ke depan. Ubah daftar kegiatan di node **Agenda**.
 - **Bot Telegram serba bisa**: berjalan saat kamu mengirim pesan ke bot. Switch memilah `/jadwal`, `/cuaca`, dan `/catat`, pesan lain dijawab agent umum, lalu balasan dikirim ke chat yang sama.
+- **Studio video animasi**: mode video, dari naskah sampai video yang bisa diputar di hasil tim.
 - **Asisten sehari-hari**: mencari fakta nyata, jeda, gate, menulis jawaban, lalu mengirim ke Telegram dan menyimpan ke database.
 
 Telegram butuh `TELEGRAM_BOT_TOKEN` dan `TELEGRAM_CHAT_ID` di `.env`. Untuk tahu chat ID-mu, kirim pesan ke bot lalu buka `https://api.telegram.org/bot<TOKEN>/getUpdates`. Database selain SQLite butuh alamatnya di `.env` dan drivernya:
@@ -181,7 +184,15 @@ Saat agent membaca isi workspace, PDF dan file Office diubah ke Markdown lewat M
 
 Panduan kerja ada di `brain/skills/`: `fix-bug`, `add-feature`, `clean-code`, `web-research`, `design-ui`, `build-web`, `build-backend`, dan `animate`.
 
-Skill besar berupa folder dengan `SKILL.md` dan file pendamping. `animate` (diadaptasi dari [cth9191/animate](https://github.com/cth9191/animate), MIT) membuat video animasi pendek sepenuhnya dari kode, dengan gaya cut paper, crosshatch, riso, sketchbook, math, pixel, atau isometric. Agent memasang kit-nya ke `.skills/<sesi>/animate/`, satu salinan per sesi supaya dua chat di proyek yang sama tidak saling campur, lalu bertanya soal cerita, tampilan, dan storyboard sebelum merender. Butuh Node 18+, ffmpeg, dan Chromium untuk Playwright (`npx playwright install chromium`).
+Skill besar berupa folder dengan `SKILL.md` dan file pendamping. `animate` (diadaptasi dari [cth9191/animate](https://github.com/cth9191/animate), MIT) membuat video animasi pendek sepenuhnya dari kode, dengan gaya cut paper, crosshatch, riso, sketchbook, math, pixel, atau isometric. Agent memasang kit-nya ke `.skills/<sesi>/animate/`, satu salinan per sesi supaya dua chat di proyek yang sama tidak saling campur, lalu bertanya soal cerita, tampilan, dan storyboard sebelum merender. Hasilnya dikirim lewat tool `share_file`, sehingga video, gambar, dan audio langsung terputar di chat web, dan file lain muncul sebagai tombol unduh. Server hanya melayani file yang dibagikan agent di sesi itu. Render video 8 detik butuh sekitar 50 detik, dan perintah agent boleh berjalan sampai 15 menit.
+
+Butuh Node 18+, ffmpeg, paket Playwright, dan browser Chromium-nya:
+
+```bash
+sudo apt install ffmpeg
+npm i -g playwright
+npx playwright install chromium
+```
 
 Skill punya dua jenis:
 
