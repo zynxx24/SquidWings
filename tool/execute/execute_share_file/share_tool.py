@@ -20,18 +20,18 @@ async def share_file(path: str, caption: str = "") -> dict[str, Any]:
     if not target.is_relative_to(root):
         return {"ok": False, "error": "Only files inside this session's folder can be shared."}
     relative = target.relative_to(root)
-    if relative.parts and relative.parts[0] in {".agent_memory", ".vault"}:
+    if relative.parts and relative.parts[0] in shared_files.PRIVATE_DIRS:
         return {"ok": False, "error": "Session memory cannot be shared."}
     if not target.is_file():
         return {"ok": False, "error": f"File not found: {path}"}
     size = target.stat().st_size
     if size > shared_files.MAX_SHARE_BYTES:
-        return {"ok": False, "error": f"File is {size // (1024 * 1024)} MB; the limit is 500 MB."}
+        limit = shared_files.MAX_SHARE_BYTES // (1024 * 1024)
+        return {"ok": False, "error": f"File is {size // (1024 * 1024)} MB; the limit is {limit} MB."}
     shared_files.add(root, relative.as_posix())
     kind = shared_files.kind_of(target.name)
     url = shared_files.url_for(session, relative.as_posix())
-    label = caption.strip()[:200] or target.name
-    markdown = f"![{label}]({url})" if kind != "file" else f"[Unduh {label}]({url})"
+    markdown = shared_files.markdown(session, relative.as_posix(), caption.strip() or target.name)
     return {
         "ok": True, "name": target.name, "kind": kind, "size": size, "url": url, "markdown": markdown,
         "note": "The file is shown to the user under your answer. Do not paste the link again.",

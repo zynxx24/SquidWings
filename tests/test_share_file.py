@@ -56,6 +56,7 @@ def test_the_route_serves_only_what_was_shared(session: Path, monkeypatch: pytes
     video = client.get("/api/session/chat-a/files/pieces/demo/renders/share.mp4")
     assert video.status_code == 200 and video.headers["content-type"] == "video/mp4"
     assert video.headers["content-disposition"].startswith("inline")
+    assert video.headers["content-security-policy"] == "sandbox"
     # Seeking in a video needs byte ranges.
     assert client.get("/api/session/chat-a/files/pieces/demo/renders/share.mp4", headers={"Range": "bytes=0-3"}).status_code == 206
     # Shared HTML is downloaded, never rendered on this origin.
@@ -120,3 +121,25 @@ async def test_the_loop_puts_shared_files_under_the_answer(session: Path) -> Non
     loop._call_model = call_model  # type: ignore[method-assign]
     result = await loop.run("mock", [{"role": "user", "content": "kirim videonya"}], stream=False)
     assert result.shared == ["![Demo](/api/session/chat-a/files/pieces/demo/renders/share.mp4)"]
+
+
+async def test_a_caption_cannot_break_the_markdown(session: Path) -> None:
+    result = await share_tool.share_file("pieces/demo/renders/share.mp4", caption="Bab [1]\n](http://x)")
+    assert result["markdown"] == f"![Bab \\[1\\] \\](http://x)]({result['url']})"
+
+
+def test_a_shared_file_swapped_for_a_link_into_memory_is_not_served(session: Path) -> None:
+    (session / ".agent_memory").mkdir(exist_ok=True)
+    (session / ".agent_memory/notes.md").write_text("pribadi")
+    shared_files.add(session, "pieces/demo/renders/share.mp4")
+    target = session / "pieces/demo/renders/share.mp4"
+    target.unlink()
+    target.symlink_to(session / ".agent_memory/notes.md")
+    assert shared_files.resolve(session, "pieces/demo/renders/share.mp4") is None
+
+
+def test_files_missing_from_an_answer_are_appended(session: Path) -> None:
+    shared_files.add(session, "pieces/demo/renders/share.mp4")
+    url = shared_files.url_for("chat-a", "pieces/demo/renders/share.mp4")
+    assert shared_files.missing_from(session, "chat-a", "Revisi tanpa video") == f"\n\n![share.mp4]({url})"
+    assert shared_files.missing_from(session, "chat-a", f"Sudah ada ![v]({url})") == ""

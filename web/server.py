@@ -599,7 +599,11 @@ async def session_file(session_id: str, relative: str) -> FileResponse:
     kind = shared_files.kind_of(path.name)
     # Media plays inline. Anything else downloads, so an HTML file cannot run on this origin.
     disposition = "inline" if kind != "file" else "attachment"
-    return FileResponse(path, filename=path.name, content_disposition_type=disposition)
+    # Opened directly in a tab, the file still gets no script, forms, or same-origin access.
+    return FileResponse(
+        path, filename=path.name, content_disposition_type=disposition,
+        headers={"Content-Security-Policy": "sandbox"},
+    )
 
 
 @app.get("/api/session/{session_id}/stack")

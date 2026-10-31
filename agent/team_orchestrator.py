@@ -42,7 +42,7 @@ from agent.team_outputs import (
 )
 from config.constants import ResponseStatus
 from config.settings import get_settings
-from utils import session_settings
+from utils import session_settings, shared_files
 from utils.logger import get_logger
 from utils.markdown_compact import fit_markdown
 from utils.workspace_context import SESSIONS_ROOT
@@ -777,6 +777,8 @@ class TeamOrchestrator:
             for layer in execution_layers([m for m in team.members if m.id in after]):
                 await asyncio.gather(*(self._run_node(run, team, m, mode="after") for m in layer))
             self._finish_result(run, team)
+            # A revision or a fallback answer can drop the video an agent shared earlier in the run.
+            run.result = f"{run.result}{shared_files.missing_from(stack.workspace, run.id, run.result)}".strip()
             run.status = "completed"
         except asyncio.CancelledError:
             run.status = "cancelled"

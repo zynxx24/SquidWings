@@ -476,3 +476,29 @@ def test_video_studio_template_is_valid(tmp_path: Path, settings: Any) -> None:
         template["name"], "", template["members"], template["lead_id"], template["reviewer_id"], mode=template["mode"],
     )
     assert team.mode == "video" and team.lead_id == "editor"
+
+
+async def test_a_video_shared_mid_run_survives_a_lead_that_leaves_it_out(
+    tmp_path: Path, settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from utils import shared_files
+    from utils.workspace_context import get_active_workspace
+
+    monkeypatch.setattr(team_orchestrator.session_stack, "session_workspace", lambda run_id, create=True: tmp_path / run_id)
+    manager, fake = make(tmp_path)
+    original = fake.process
+
+    async def process(**kwargs: Any) -> Any:
+        # The animator renders and shares; the lead's answer then forgets the link.
+        if "-b-" in kwargs["session_id"]:
+            workspace = Path(get_active_workspace())
+            (workspace / "renders").mkdir(exist_ok=True)
+            (workspace / "renders/share.mp4").write_bytes(b"video")
+            shared_files.add(workspace, "renders/share.mp4")
+        return await original(**kwargs)
+
+    fake.process = process  # type: ignore[method-assign]
+    team = manager.create_team("video", "", [agent("a"), agent("b")], "a", mode="video")
+    run = await finish(manager, team.id)
+    url = shared_files.url_for(run.id, "renders/share.mp4")
+    assert run.result.count(url) == 1

@@ -13,6 +13,8 @@ from pathlib import Path
 from urllib.parse import quote
 
 MAX_SHARE_BYTES = 500 * 1024 * 1024
+# Agent state in the session folder. Never served, even through a symlink.
+PRIVATE_DIRS = {".agent_memory", ".vault"}
 # Shown in the chat. Everything else is offered as a download, never opened inline,
 # because an HTML or SVG file served from this origin could run script.
 INLINE_KINDS = {
@@ -53,6 +55,25 @@ def url_for(session_id: str, relative: str) -> str:
     return f"/api/session/{quote(session_id, safe='')}/files/{quote(relative)}"
 
 
+def markdown(session_id: str, relative: str, label: str = "") -> str:
+    """The Markdown that shows a shared file in the chat: media inline, anything else as a link."""
+    url = url_for(session_id, relative)
+    # Brackets or a line break in the label would end the Markdown link early.
+    text = " ".join((label or Path(relative).name).split())[:200]
+    text = text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+    return f"![{text}]({url})" if kind_of(relative) != "file" else f"[Unduh {text}]({url})"
+
+
+def missing_from(workspace: str | Path, session_id: str, text: str) -> str:
+    """Markdown for every shared file the text does not show yet, ready to append to it."""
+    links = [
+        markdown(session_id, relative)
+        for relative in shared(workspace)
+        if url_for(session_id, relative) not in text and resolve(workspace, relative)
+    ]
+    return "".join(f"\n\n{link}" for link in links)
+
+
 def resolve(workspace: str | Path, relative: str) -> Path | None:
     """The file behind a shared path, or None if it was not shared or has gone."""
     if relative not in shared(workspace):
@@ -60,5 +81,8 @@ def resolve(workspace: str | Path, relative: str) -> Path | None:
     root = Path(workspace).resolve()
     path = (root / relative).resolve()
     if not path.is_relative_to(root) or not path.is_file():
+        return None
+    # The file may have been swapped for a symlink into the agent's memory since it was shared.
+    if path.relative_to(root).parts[0] in PRIVATE_DIRS:
         return None
     return path
