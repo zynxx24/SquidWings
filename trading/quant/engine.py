@@ -77,9 +77,11 @@ def _spread_of(backend: Any, symbol: str) -> float | None:
 
 
 def _risk_state(equity: float, now: dt.datetime) -> R.State:
-    if _state["risk"] is None:
-        _state["risk"] = R.State(equity=equity, day=now.date(), day_start_equity=equity, start_equity=equity)
-    return _state["risk"]
+    state: R.State | None = _state["risk"]
+    if state is None:
+        state = R.State(equity=equity, day=now.date(), day_start_equity=equity, start_equity=equity)
+        _state["risk"] = state
+    return state
 
 
 def reset_state() -> None:

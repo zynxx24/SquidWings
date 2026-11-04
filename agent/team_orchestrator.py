@@ -792,6 +792,10 @@ class TeamOrchestrator:
             # A revision or a fallback answer can drop the video an agent shared earlier in the run.
             run.result = f"{run.result}{shared_files.missing_from(stack.workspace, run.id, run.result)}".strip()
             run.status = "completed"
+            if team.mode == "video" and not self._has_video(stack.workspace):
+                # Agents can finish with a report and no file. That is not a finished video.
+                run.status = "failed"
+                run.error = "Tim selesai tanpa video: tidak ada file video yang dibagikan dengan share_file."
         except asyncio.CancelledError:
             run.status = "cancelled"
             run.error = "Run cancelled by user."
@@ -806,6 +810,10 @@ class TeamOrchestrator:
         finally:
             run.completed_at = time.time()
             self._checkpoint(run, "run_finished")
+
+    @staticmethod
+    def _has_video(workspace: Any) -> bool:
+        return any(shared_files.kind_of(name) == "video" for name in shared_files.shared(workspace))
 
     @staticmethod
     def _after_answer(team: Team) -> set[str]:

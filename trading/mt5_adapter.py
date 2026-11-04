@@ -120,10 +120,10 @@ class Mt5Backend:
         info = mt5.symbol_info(symbol)
         mask = int(getattr(info, "filling_mode", 0) or 0) if info is not None else 0
         if mask & 2:          # SYMBOL_FILLING_IOC
-            return mt5.ORDER_FILLING_IOC
+            return int(mt5.ORDER_FILLING_IOC)
         if mask & 1:          # SYMBOL_FILLING_FOK
-            return mt5.ORDER_FILLING_FOK
-        return mt5.ORDER_FILLING_RETURN
+            return int(mt5.ORDER_FILLING_FOK)
+        return int(mt5.ORDER_FILLING_RETURN)
 
     def tick(self, symbol: str) -> dict[str, Any]:
         t = self._need().symbol_info_tick(symbol)
@@ -218,7 +218,7 @@ class Mt5Backend:
         profit = mt5.order_calc_profit(otype, symbol, 1.0, entry, sl)
         if profit is None:
             raise TradingError(f"order_calc_profit failed for {symbol}: {mt5.last_error()}")
-        return abs(profit)
+        return float(abs(profit))
 
     def close(self, ticket: int, volume: float) -> dict[str, Any]:
         mt5 = self._need()
@@ -342,7 +342,7 @@ class SimBackend:
         now = self.tick(p["symbol"])
         price = now["bid"] if p["side"] == "buy" else now["ask"]
         direction = 1 if p["side"] == "buy" else -1
-        return (price - p["open_price"]) * direction * p["volume"] * spec["contract_size"]
+        return float((price - p["open_price"]) * direction * p["volume"] * spec["contract_size"])
 
     def positions(self) -> list[dict[str, Any]]:
         out = []
@@ -381,7 +381,7 @@ class SimBackend:
 
     def risk_per_lot(self, symbol: str, side: str, entry: float, sl: float) -> float:
         # Approximation for the simulator: quote currency taken as the account currency.
-        return self.symbol_spec(symbol)["contract_size"] * abs(entry - sl)
+        return float(self.symbol_spec(symbol)["contract_size"]) * abs(entry - sl)
 
     def modify(self, ticket: int, sl: float | None, tp: float | None) -> dict[str, Any]:
         pos = next((p for p in self._positions if p["ticket"] == ticket), None)

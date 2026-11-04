@@ -21,6 +21,7 @@ import hmac
 import os
 import secrets
 import time
+from collections.abc import Callable
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -70,13 +71,13 @@ def guard(request: Request, x_mt5_token: str | None = Header(default=None)) -> N
 
 
 def _backend() -> Backend:
-    backend = _state["backend"]
+    backend: Backend | None = _state["backend"]
     if backend is None:
         raise HTTPException(409, "Not connected. Log in first.")
     return backend
 
 
-def _run(fn, *args: Any) -> Any:
+def _run(fn: Callable[..., Any], *args: Any) -> Any:
     """Turn a broker or connection failure into a readable error, not a 500."""
     try:
         return fn(*args)
@@ -171,7 +172,8 @@ def disconnect() -> dict[str, Any]:
 
 @router.get("/account", dependencies=[Depends(guard)])
 def account() -> dict[str, Any]:
-    return _run(_backend().account)
+    result: dict[str, Any] = _run(_backend().account)
+    return result
 
 
 @router.get("/symbols", dependencies=[Depends(guard)])
@@ -209,7 +211,7 @@ def history(days: int = Query(7, ge=1, le=365)) -> dict[str, Any]:
 
 
 def _entry_price(tick: dict[str, Any], side: str) -> float:
-    return tick["ask"] if side == "buy" else tick["bid"]
+    return float(tick["ask"] if side == "buy" else tick["bid"])
 
 
 def _risk(b: Backend, symbol: str, side: str, volume: float, sl: float | None, equity: float) -> dict[str, Any] | None:
@@ -314,7 +316,7 @@ def confirm_close(body: ConfirmIn) -> dict[str, Any]:
     item = _take(body.preview_id, "close")
     b = _backend()
     # The position's profit just before closing; the close result does not always carry it.
-    pos = next((p for p in _run(b.positions) if p["ticket"] == item["ticket"]), {})
+    pos: dict[str, Any] = next((p for p in _run(b.positions) if p["ticket"] == item["ticket"]), {})
     result = _run(b.close, item["ticket"], item["volume"])
     logger.info(f"[mt5] close ticket={item['ticket']} volume={item['volume']} ok={result.get('ok')} comment={result.get('comment')}")
     if result.get("ok"):

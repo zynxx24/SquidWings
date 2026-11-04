@@ -267,3 +267,14 @@ def test_one_damaged_team_does_not_hide_the_others(tmp_path):
     (tmp_path / "teams.json").write_text(json.dumps([{"id": "rusak"}, _saved_team("team-baik")]), encoding="utf-8")
     assert list(TeamStore(tmp_path)._teams) == ["team-baik"]
 
+
+def test_a_video_run_needs_a_shared_video_file(tmp_path):
+    from agent.team_orchestrator import TeamOrchestrator
+    from utils import shared_files
+
+    assert TeamOrchestrator._has_video(tmp_path) is False
+    shared_files.add(tmp_path, "catatan.md")
+    assert TeamOrchestrator._has_video(tmp_path) is False, "a report is not a video"
+    shared_files.add(tmp_path, "renders/share.mp4")
+    assert TeamOrchestrator._has_video(tmp_path) is True
+

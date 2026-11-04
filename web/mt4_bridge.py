@@ -102,7 +102,7 @@ class Store:
 
     def pop_commands(self, limit: int = 20) -> list[dict[str, Any]]:
         with self.lock:
-            out = []
+            out: list[dict[str, Any]] = []
             while self.commands and len(out) < limit:
                 out.append(self.commands.popleft())
             return out

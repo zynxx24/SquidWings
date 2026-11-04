@@ -148,7 +148,7 @@ def states_for(model: GaussianHMM) -> dict[str, int]:
 
 def sanity(p: Proposal) -> list[str]:
     """Reasons a proposal is not even well formed (used by tests and the risk engine)."""
-    out = []
+    out: list[str] = []
     if p.side is None:
         return out
     if p.sl is None or p.tp is None or not (math.isfinite(p.sl) and math.isfinite(p.tp)):

@@ -123,7 +123,7 @@ class Mt4BridgeBackend:
         self._live_or_fail()
         cid = store.enqueue({"action": "order", "symbol": order["symbol"], "side": order["side"],
                              "volume": order["volume"], "sl": order.get("sl") or "", "tp": order.get("tp") or "",
-                             "comment": _clean(order.get("comment")), "ticket": ""})
+                             "comment": _clean(str(order.get("comment") or "")), "ticket": ""})
         return self._outcome(cid)
 
     def close(self, ticket: int, volume: float) -> dict[str, Any]:
@@ -139,7 +139,7 @@ class Mt4BridgeBackend:
         if tick_value > 0 and tick_size > 0:      # already in the account currency, so USDCHF is right too
             return abs(entry - sl) / tick_size * tick_value
         # An older EA sends no tick value: this assumes the quote currency is the account currency.
-        return self.symbol_spec(symbol)["contract_size"] * abs(entry - sl)
+        return float(self.symbol_spec(symbol)["contract_size"]) * abs(entry - sl)
 
     def modify(self, ticket: int, sl: float | None, tp: float | None) -> dict[str, Any]:
         self._live_or_fail()

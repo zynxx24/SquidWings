@@ -57,7 +57,7 @@ def run(bars: list[dict[str, float]], *, symbol: str = "XXXYYY", train: int = 20
         valid_idx = [k for k, (_, u) in enumerate(window_rows) if u is not None]
         post_all: dict[int, list[float]] = {}
         if valid_idx:
-            seq = [window_rows[k][1] for k in valid_idx]
+            seq = [u for _, u in window_rows if u is not None]
             post = hmm.filter(seq)
             for pos, k in enumerate(valid_idx):
                 post_all[window_rows[k][0]] = post[pos]
@@ -67,7 +67,7 @@ def run(bars: list[dict[str, float]], *, symbol: str = "XXXYYY", train: int = 20
             prop = M.decide(symbol, bars, f, post_all.get(t), states, t, spread=spread)
             if prop.regime in regime_counts:
                 regime_counts[prop.regime] += 1
-            if prop.side is None or M.sanity(prop):
+            if prop.side is None or prop.sl is None or M.sanity(prop):
                 continue
             fill = bars[t + 1]["o"] + (spread / 2 if prop.side == "buy" else -spread / 2)
             risk = abs(prop.entry - prop.sl)

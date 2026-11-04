@@ -203,6 +203,9 @@ def backtest(bars: list[dict[str, float]], max_hold: int = 48, news: list[NewsEv
             i += 1
             continue
         entry = bars[i + 1]["o"]
+        if p.sl is None:
+            i += 1
+            continue
         risk = abs(p.entry - p.sl)
         if risk <= 0:
             i += 1

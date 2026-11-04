@@ -21,6 +21,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 
 from config.settings import get_settings
@@ -45,10 +46,12 @@ app.include_router(quant_router)
 # The same bridge at the root, so the EA's BridgeUrl can be a bare http://127.0.0.1. MT4 rejects
 # a URL with a port as invalid (error 5200), and this keeps its address as short as possible.
 for _route in mt4_router.routes:
+    if not isinstance(_route, APIRoute):
+        continue
     app.add_api_route(
         _route.path.removeprefix(mt4_router.prefix),
         _route.endpoint,
-        methods=list(_route.methods),
+        methods=list(_route.methods or ()),
         response_class=_route.response_class,
         include_in_schema=False,
     )

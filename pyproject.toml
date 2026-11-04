@@ -47,6 +47,8 @@ markers = [
 ]
 
 [tool.mypy]
+# Vendored skill code, kept as upstream wrote it.
+exclude = ["brain/skills/.*/tools/"]
 python_version = "3.12"
 files = [
     "agent",
