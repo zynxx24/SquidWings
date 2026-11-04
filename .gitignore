@@ -93,3 +93,6 @@ Thumbs.db
 
 # === Stale lock file. requirements.lock is the real one ===
 uv.lock
+
+# MT5/MT4 trade journal (user data)
+trading/data/

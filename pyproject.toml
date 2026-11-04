@@ -25,6 +25,11 @@ ignore = ["E501"]
 "agent/harness/**" = ["N812"]
 "agent/session_stack.py" = ["N812"]
 "tests/test_vault_memory.py" = ["N812"]
+# The quant model uses the notation of the Kalman and HMM papers (P, H, S, K, F, Q, R, A, B, ...).
+# Renaming them would make the code harder to check against the formulas.
+"trading/quant/**" = ["N806", "N803", "N812"]
+"tests/test_quant_model.py" = ["N806", "N803", "N812"]
+"web/quant_api.py" = ["N812"]
 
 [tool.pytest.ini_options]
 # Without this section pytest walks up to the parent folder and uses
