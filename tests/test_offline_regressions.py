@@ -215,13 +215,22 @@ async def test_fallback_moves_past_failing_models_to_one_that_answers(tmp_path) 
     store = ConversationStore(storage_dir=tmp_path)
     orch._conversation_store = store
     orch._context_assembler._store = store
-    for model_id in ("ag/first", "ag/second", "ag/third"):
-        orch.registry.register(ModelInfo(id=model_id, display_name=model_id, provider="ag"))
+    # The registry is a process-wide singleton, and the YAML pins ~24 models into it. Those would
+    # be tried first by the fallback and use up MAX_FALLBACK_ATTEMPTS, so run this test on the
+    # three test models only and restore the registry afterwards.
+    saved_models = dict(orch.registry._models)
+    orch.registry._models.clear()
+    try:
+        for model_id in ("ag/first", "ag/second", "ag/third"):
+            orch.registry.register(ModelInfo(id=model_id, display_name=model_id, provider="ag"))
 
-    response = await orch.process(user_input="halo", session_id="s", override_model="ag/first", stream=False)
+        response = await orch.process(user_input="halo", session_id="s", override_model="ag/first", stream=False)
 
-    assert response.content == "Berhasil"
-    assert response.status == ResponseStatus.FALLBACK_USED
+        assert response.content == "Berhasil"
+        assert response.status == ResponseStatus.FALLBACK_USED
+    finally:
+        orch.registry._models.clear()
+        orch.registry._models.update(saved_models)
     assert calls[0] == "ag/first" and calls[-1] == "ag/third"
 
 

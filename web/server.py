@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning(f"[web] eager orchestrator init failed: {exc}")
     # Teams validate models against the registry, which is empty until the first
     # sync. In the background: a slow provider must not delay startup.
-    sync_task = asyncio.create_task(ensure_models())
+    sync_task = asyncio.create_task(_startup_sync())
     if app.state.team_orchestrator:
         app.state.team_orchestrator.start_scheduler()
     yield
@@ -97,6 +97,17 @@ app.state.team_orchestrator = None
 _TEAMS_ENABLED = get_settings().teams_enabled
 if _TEAMS_ENABLED:
     app.include_router(team_router)
+
+# MT5 trading panel. Its order endpoints stay closed unless MT5_TRADE_TOKEN is set.
+from web.mt5_api import router as mt5_router  # noqa: E402
+
+app.include_router(mt5_router)
+from web.mt4_bridge import router as mt4_router  # noqa: E402
+
+app.include_router(mt4_router)
+from web.quant_api import router as quant_router  # noqa: E402
+
+app.include_router(quant_router)
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -181,6 +192,17 @@ async def serve_index() -> HTMLResponse:
     return resp
 
 
+@app.get("/trading", response_class=HTMLResponse)
+async def serve_trading() -> HTMLResponse:
+    """The MT5 trading panel: login, chart, order ticket, positions and history."""
+    page = STATIC_DIR / "trading" / "index.html"
+    if not page.exists():
+        raise HTTPException(status_code=404, detail="trading page not found")
+    resp = HTMLResponse(content=page.read_text(encoding="utf-8"))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+
 # Mount static files (CSS, JS, assets)
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -194,8 +216,37 @@ _FALLBACK_DEFAULT = "ag/gemini-3.8-flash-high"
 AUTO_MODEL = "auto"
 
 
+def _registry_size() -> int:
+    """Number of registered models; 0 if the registry is unavailable or not countable."""
+    try:
+        n = get_orchestrator().registry.count
+    except Exception:  # noqa: BLE001
+        return 0
+    return n if isinstance(n, int) else 0
+
+
+async def _startup_sync() -> None:
+    """Startup model sync with retries for unreachable providers."""
+    for attempt in range(1, 4):
+        counts = await ensure_models()
+        total = sum(counts.values()) if counts else 0
+        if total > 0 or _registry_size() > 0:
+            return
+        delay = attempt * 5
+        logger.warning(
+            f"[web] Startup sync attempt {attempt}/3 got 0 models; "
+            f"retrying in {delay}s..."
+        )
+        await asyncio.sleep(delay)
+    logger.error("[web] All startup sync attempts failed; models may be incomplete")
+
+
 async def ensure_models(force: bool = False) -> dict[str, int]:
-    """Fetch /models from every endpoint once, then reuse the registry."""
+    """Fetch /models from every endpoint once, then reuse the registry.
+
+    Only marks as synced when at least one provider returned models.
+    If every provider fails the flag stays False so the next request retries.
+    """
     global _models_synced
     orch = get_orchestrator()
     async with _models_lock:
@@ -213,8 +264,17 @@ async def ensure_models(force: bool = False) -> dict[str, int]:
         except Exception as exc:  # offline / mocked client must not break the UI
             logger.warning(f"[web] Model sync failed: {exc}")
             counts = {}
-        _models_synced = True
-        logger.info(f"[web] Models synced: {counts}")
+        total_fetched = sum(counts.values()) if counts else 0
+        # Only mark synced when at least one provider returned models.
+        # This lets the next /api/models request retry automatically.
+        if total_fetched > 0 or _registry_size() > 0:
+            _models_synced = True
+            logger.info(f"[web] Models synced: {counts}")
+        else:
+            logger.warning(
+                f"[web] Model sync returned 0 models from all providers; "
+                f"will retry on next request. Counts: {counts}"
+            )
         return counts
 
 

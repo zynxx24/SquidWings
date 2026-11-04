@@ -530,25 +530,47 @@ class APIClient(BaseClient):
         provider no longer lists are removed, unless it returned an empty list,
         which is an upstream hiccup rather than "every model was removed".
 
+        Providers are fetched concurrently so a slow endpoint does not delay
+        the others.
+
         Returns:
             Mapping of provider id to number of models registered.
         """
         counts: dict[str, int] = {}
         fetchers: list[tuple[Provider, Any]] = [(self._main_provider, self.list_models)]
         fetchers += [(p, lambda p=p: self.list_provider_models(p)) for p in self._providers]
-        for provider, fetch in fetchers:
+
+        async def _fetch_one(provider: Provider, fetch: Any) -> tuple[Provider, list[dict[str, Any]]]:
             try:
                 items = [m for m in await fetch() if m.get("id")]
-                if items and hasattr(registry, "model_ids") and hasattr(registry, "unregister"):
-                    current_ids = {m["id"] for m in items}
-                    for mid in list(registry.model_ids):
-                        if mid not in current_ids and self._route(mid)[0].id == provider.id:
-                            registry.unregister(mid)
-                registry.register_from_api_models(items)
-                counts[provider.id] = len(items)
+                return provider, items
             except Exception as e:  # noqa: BLE001
-                logger.warning(f"[api] Auto-sync '{provider.id}' failed: {e}")
-                counts[provider.id] = 0
+                logger.warning(
+                    f"[api] Auto-sync '{provider.id}' failed: {e!r}  "
+                    f"(url={provider.url})"
+                )
+                return provider, []
+
+        results = await asyncio.gather(
+            *(_fetch_one(p, f) for p, f in fetchers),
+            return_exceptions=False,
+        )
+
+        for provider, items in results:
+            if items and hasattr(registry, "model_ids") and hasattr(registry, "unregister"):
+                current_ids = {m["id"] for m in items}
+                pinned = getattr(registry, "_static_ids", set())
+                for mid in list(registry.model_ids):
+                    if mid in pinned or mid in current_ids:
+                        continue
+                    if self._route(mid)[0].id == provider.id:
+                        registry.unregister(mid)
+            if items:
+                registry.register_from_api_models(items)
+            counts[provider.id] = len(items)
+
+        total = sum(counts.values())
+        logger.info(f"[api] sync_all_models done: {counts}  total={total}")
         return counts
 
     async def list_gemini_models(self, provider: str | None = None) -> list[dict[str, Any]]:

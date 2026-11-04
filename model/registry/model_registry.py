@@ -40,12 +40,14 @@ class ModelRegistry:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._models = {}
+            cls._instance._static_ids = set()
             cls._instance._initialized = False
         return cls._instance
 
     def __init__(self) -> None:
         if not self._initialized:
             self._models: dict[str, ModelInfo] = {}
+            self._static_ids: set[str] = set()
             self._initialized = True
 
     # --- Registration ---
@@ -89,6 +91,9 @@ class ModelRegistry:
         for model_id, model_data in models_config.items():
             model = ModelInfo.from_config(model_id, model_data)
             self.register(model)
+            # Pinned in YAML: an API sync that does not list the id must not remove it
+            # (e.g. the ag/ models the router does not expose on /models).
+            self._static_ids.add(model_id)
 
         logger.info(f"[registry] Loaded {len(models_config)} models from {path.name}")
 
