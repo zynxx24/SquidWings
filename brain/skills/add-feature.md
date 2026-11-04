@@ -16,3 +16,9 @@ triggers: fitur, feature, tambah, tambahkan, implement, implementasi, implementa
 9. **Report** the files changed, how you verified it, and anything you decided or left out.
 
 Do not add configuration, abstractions, or extension points that nobody asked for. Three similar lines are better than a framework for one use.
+
+## How to think this through
+
+Before you open a file, say the feature as one sentence from the user's side: "when X happens, the user gets Y". If you cannot, ask. Then find the nearest existing feature that works the same way and copy its shape, including where its tests live. New code that looks like old code is easier to trust.
+
+Walk the path of one real request from input to output and name each place the feature must touch. Decide what happens at the edges: empty input, a failed call, a second click. Build the thinnest version that works end to end first, run it, and only then fill in the rest. Keep to what was asked, and mention anything extra you noticed instead of doing it.

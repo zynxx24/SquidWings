@@ -27,62 +27,8 @@ DEFAULT_MAX_OUTPUT: dict[str, int] = {
     TaskType.MULTIMODAL.value: 8192,
 }
 
-# Model max output limits (from models_config.yaml)
-MODEL_MAX_OUTPUT: dict[str, int] = {
-    # AG provider
-    "ag/gemini-3.8-flash-high": 65536,
-    "ag/claude-sonnet-4-6": 128000,
-    "ag/claude-opus-4-6-thinking": 64000,
-    # GEMINI provider (Direct from 9Router)
-    "gemini/gemini-4-argon": 32768,
-    "gemini/gemini-3.8-flash": 65536,
-    "gemini/gemma-4-31b-it": 32768,
-    # KG provider — DeepSeek
-    "kg/deepseek-4-1-flash": 64000,
-    "kg/dp4.1ftest": 64000,
-    "kg/deepseek-v4-flash": 384000,
-    "kg/deepseek-v4-pro": 384000,
-    "kg/deepseek-v4.1-flash-1017": 128000,
-    "kg/deepseek-v4.1-flash-expires-on-0910": 128000,
-    # KG provider — Gemini
-    "kg/gemini-3-8-flash": 65536,
-    "kg/gemini-3.6-flash": 65536,
-    "kg/gemini-3.7-flash": 65536,
-    # KG provider — GLM (Zhipu AI)
-    "kg/glm-5-3-flash": 128000,
-    "kg/glm5-2": 64000,
-    "kg/glm5-3": 64000,
-    # KG provider — OpenAI GPT & Poolside
-    "kg/gpt-5-6-luna": 128000,
-    "kg/gpt-5-6-sol": 128000,
-    "kg/gpt-6-astra": 128000,
-    "kg/gpt-6-luna": 128000,
-    "kg/gpt-6-sol": 128000,
-    "kg/laguna-s-2.1": 32000,
-    # KG provider — Moonshot Kimi
-    "kg/kimi-k2-7-code": 262144,
-    "kg/kimi-k3": 131072,
-    "kg/kimi-k3.1-pro": 131072,
-    # KG provider — Alibaba Qwen
-    "kg/qwen3.8-plus": 65536,
-    "kg/qwen3.8-max": 65536,
-    "kg/qwen3.8-abliterated-cyber": 65536,
-    "kg/qwen3.8-uncensored": 65536,
-    # KG provider — MiniMax & MiMo
-    "kg/minimax-m2.7": 131072,
-    "kg/mimo-v2.6-flash": 131072,
-    # KG provider — Muse & LongCat
-    "kg/muse-spark-1.2-contributor": 131072,
-    "kg/muse-spark-1.3-contributor": 131072,
-    "kg/muse-wonder-1.0": 64000,
-    "kg/longcat-2.5-preview": 64000,
-    # KG provider — Claude
-    "kg/claude-haiku-5-5": 64000,
-    "kg/claude-sonnet-4-6": 128000,
-    "kg/kagiro": 64000,
-    # Bansos provider (direct Kagiro API)
-    "bansos/deepseek-v4.1-flash-1017": 128000,
-}
+# Limits for models the endpoint does not report. Filled from models_config.yaml.
+MODEL_MAX_OUTPUT: dict[str, int] = {}
 
 
 class MaxTokenConfig:

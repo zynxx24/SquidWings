@@ -36,7 +36,7 @@ class SummaryCompressor:
     def __init__(
         self,
         api_client: Any = None,
-        summary_model: str = "ag/gemini-3.8-flash-high",
+        summary_model: str = "",
     ) -> None:
         """Initialize the compressor.
 

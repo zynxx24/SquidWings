@@ -20,3 +20,9 @@ triggers: backend, api, rest, endpoint, database, server, auth, login, sql, migr
 **Secrets and config.** Read them from the environment, keep them out of git and logs, and provide an `.env.example`. Default to the safe option: CORS allowlist rather than `*`, debug mode off.
 
 **Verify.** Run `run_checks`, then call the endpoint for real: the success case, invalid input, no auth, and someone else's record. Test the data layer against a real database when you can, because mocks hide query bugs.
+
+## How to think this through
+
+Start from the contract: who calls this, with what, and what they get back, including every way it fails. Write that down before the handler. Then follow the data: where it enters, where it is validated, where it is stored, and who may read it. Validate at the boundary and trust it inside.
+
+Ask what happens if this runs twice, runs at the same time as itself, or stops halfway. Those three questions find most backend bugs. Never let a failure disappear silently: return it, log it, or both. Test through the real entry point, not only the inner function.

@@ -69,6 +69,13 @@ _MAX_FILE_BYTES = 4_000
 _MAX_TOTAL_BYTES = 12_000
 _MAX_LISTED_FILES = 60
 _SUMMARY_TOKENS = 400
+# The turn log. Recent turns are still in the chat history word for word, so for those only the
+# actions are repeated; older turns get one line each. A cap keeps the cost flat in a long chat.
+_TURNS_KEPT = 200
+_TURNS_IN_HISTORY = 10
+_TURN_LOG_CHARS = 1_600
+_ASK_CHARS = 90
+_GIST_CHARS = 110
 _MAX_FILE_EDITS = 50
 _HALF_LIFE_SECONDS = 3 * 24 * 3600
 _ERROR_HALF_LIFE_SECONDS = 12 * 3600
@@ -153,6 +160,21 @@ def _last_scope(lines: list[str]) -> str:
             if match:
                 return f"{kind} {match.group(1)}"
     return ""
+
+
+def _one_line(text: str, limit: int) -> str:
+    """The first sentence of a text, in one short line, without markdown marks."""
+    flat = " ".join(re.sub(r"[#*_`>|]", " ", text).split())
+    first = re.split(r"(?<=[.!?])\s", flat, maxsplit=1)[0]
+    return first if len(first) <= limit else first[: limit - 1].rstrip() + "…"
+
+
+def _turn_actions(turn: dict[str, Any]) -> str:
+    parts = [f"changed {', '.join(turn['files'])}"] if turn.get("files") else []
+    used = [f"{name} x{count}" if count > 1 else name for name, count in (turn.get("tools") or {}).items()]
+    if used:
+        parts.append("used " + ", ".join(used))
+    return "; ".join(parts)
 
 
 class ProjectMemory:
@@ -362,6 +384,45 @@ class ProjectMemory:
             lines.pop()
         return "\n".join(["[MEMORY]", *lines, "[/MEMORY]"])
 
+    def _turn_entry(self, request: str, answer: str, files: list[Path], tools: list[str], now: float) -> dict[str, Any]:
+        counts = {name: tools.count(name) for name in dict.fromkeys(tools)}
+        return {"ask": _one_line(request, _ASK_CHARS), "gist": _one_line(answer, _GIST_CHARS),
+                "tools": counts, "files": [self._relative(path) for path in files][:6], "ts": now}
+
+    def turn_log(self, query: str = "", max_chars: int = _TURN_LOG_CHARS) -> str:
+        """What happened earlier in this chat, in as few words as it takes.
+
+        Turns about the current question come first when older ones must be left out, then the
+        most recent. No model call: this runs on every message.
+        """
+        turns = list(self.state.get("turns") or [])
+        if not turns:
+            return ""
+        split = max(0, len(turns) - _TURNS_IN_HISTORY)
+        wanted = _tokenize(query)
+        lines: dict[int, str] = {}
+        for index, turn in enumerate(turns):
+            actions = _turn_actions(turn)
+            if index < split:
+                lines[index] = f"- {turn.get('ask', '')} -> {actions or turn.get('gist', '')}"
+            elif actions:
+                lines[index] = f"- {turn.get('ask', '')} -> {actions}"
+
+        def priority(index: int) -> tuple[int, int]:
+            return (len(wanted & _tokenize(lines[index])), index)
+
+        kept: list[int] = []
+        used = 0
+        for index in sorted(lines, key=priority, reverse=True):
+            if used + len(lines[index]) > max_chars:
+                continue
+            kept.append(index)
+            used += len(lines[index]) + 1
+        if not kept:
+            return ""
+        body = "\n".join(lines[index] for index in sorted(kept))
+        return f"[EARLIER IN THIS CHAT: {len(turns)} turns so far. Use this, and do not ask again for what is here]\n{body}\n[/EARLIER]"
+
     def _workspace_context(self, user_input: str) -> str:
         """Files in the project, with the contents of those likely to matter."""
         files = {r: i for r, i in self.scan_files().items() if i["status"] != "deleted"}
@@ -419,7 +480,8 @@ class ProjectMemory:
             self._update(lambda state: state.update(turn_count=state.get("turn_count", 0) + 1))
             if is_continue:
                 return self._continue_input(user_input)
-            parts = [part for part in (self.summary(query=user_input), self._workspace_context(user_input)) if part]
+            sources = (self.turn_log(query=user_input), self.summary(query=user_input), self._workspace_context(user_input))
+            parts = [part for part in sources if part]
             if not parts:
                 return user_input
             return "\n\n".join([*parts, f"[USER REQUEST]\n{user_input}"])
@@ -471,6 +533,8 @@ class ProjectMemory:
         model_id: str,
         changed_files: list[Path],
         truncated: bool,
+        request: str = "",
+        tools: list[str] | None = None,
     ) -> None:
         """Record a completed turn."""
         try:
@@ -486,6 +550,10 @@ class ProjectMemory:
                     self._merge(state, "decisions", "what", what)
                 for fact in facts:
                     self._merge(state, "facts", "fact", fact)
+                if request.strip():
+                    turns = state.setdefault("turns", [])
+                    turns.append(self._turn_entry(request, answer, changed_files, tools or [], now))
+                    del turns[:-_TURNS_KEPT]
 
             self._update(change)
             if answer.strip():

@@ -41,3 +41,9 @@ These are the habits that make generated code recognisable. Call `aislop_scan` w
 - No `eval`, no SQL built by concatenating strings, no user input in shell commands, and no unsanitised `innerHTML`.
 
 If a finding is a false positive, suppress that one line with `aislop-ignore-next-line <rule> -- reason`, and say why.
+
+## How to think this through
+
+Ask who reads this next and what they need to know in the first ten seconds. Good code says what it does through its names and shape, so a comment is only needed for why. Before removing anything, find out why it is there: a strange line may be guarding a real case.
+
+Clean only what the task touches. A wide cleanup mixed into a fix makes both hard to review. Change behaviour or structure in one step, never both. After each change, run the checks, so a mistake points at one small step.

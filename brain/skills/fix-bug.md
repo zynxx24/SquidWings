@@ -18,3 +18,9 @@ Work in this order. Do not skip to the edit.
 If two attempts fail, stop and re-read the error. Your assumption is probably wrong: check the path, the argument names, the version, and whether the code you are reading is the code that runs.
 
 Common causes worth checking first: `None` or empty input, an off-by-one, a wrong import or path, a missing `await`, a mutated shared value, stale state or cache, and a type or format mismatch at a boundary (JSON, database, API).
+
+## How to think this through
+
+Hold three things in your head at once: what should happen, what happens instead, and where the two split. Write the split point down before you read more code. Every step should shrink the area where the bug can live. If a step does not shrink it, you are browsing, not debugging.
+
+Treat your first theory as a suspect, not a conclusion. Before you act on it, ask what you would expect to see if it were false, and go and look. A fix that passes once proves little if you never saw the failure. Check earlier in this chat too: if a similar change was made in a recent turn, that change is the first suspect.

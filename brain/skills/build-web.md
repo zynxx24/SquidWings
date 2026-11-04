@@ -22,3 +22,9 @@ triggers: web, website, frontend, html, react, next, nextjs, vue, svelte, tailwi
 **Performance.** Compress and size images, use `loading="lazy"` below the fold, split large bundles, and avoid a dependency for what one line can do. Debounce search input. Virtualise very long lists.
 
 **Verify.** Run the build and the linter. Then load the page and check the browser console for errors, narrow the window to 360px, and tab through the page with the keyboard.
+
+## How to think this through
+
+Picture the first thirty seconds of a visitor, then build in that order: what loads, what they read, what they click, what happens next. Get one complete path working in the browser before polishing anything.
+
+Decide where each piece of state lives before you write it, because most web bugs come from two places disagreeing. Treat every server response as something that can be slow, empty or failed, and show the user which one it is. Test in a real browser and read the console, since a passing build says nothing about what the page does.
