@@ -36,17 +36,17 @@ def test_check_is_skipped_within_a_day(tmp_path, monkeypatch):
     state = tmp_path / "tool_updates.json"
     state.write_text(json.dumps({"checked_at": 1_000.0, "results": []}), encoding="utf-8")
     called = []
-    monkeypatch.setattr(U, "latest_pypi", lambda *_: called.append("pypi") or "9.9")
+    monkeypatch.setattr(tool_updates, "latest_pypi", lambda *_: called.append("pypi") or "9.9")
     out = tool_updates.run_check(state, now=1_000.0 + 3600)
     assert out["skipped"] is True and called == []
 
 
 def test_upgrades_only_the_tool_that_is_behind(tmp_path, monkeypatch):
     state = tmp_path / "tool_updates.json"
-    monkeypatch.setattr(U, "latest_pypi", lambda *_: "0.9.99")
-    monkeypatch.setattr(U, "latest_npm", lambda *_: "0.19.1")
+    monkeypatch.setattr(tool_updates, "latest_pypi", lambda *_: "0.9.99")
+    monkeypatch.setattr(tool_updates, "latest_npm", lambda *_: "0.19.1")
     versions = {"graphify": "0.9.91", "aislop": "0.19.1"}
-    monkeypatch.setattr(U, "installed_version", lambda cmd: versions[cmd])
+    monkeypatch.setattr(tool_updates, "installed_version", lambda cmd: versions[cmd])
     monkeypatch.setattr(tool_updates.shutil, "which", lambda name: f"/usr/bin/{name}")
     ran = []
 
@@ -55,7 +55,7 @@ def test_upgrades_only_the_tool_that_is_behind(tmp_path, monkeypatch):
         versions["graphify"] = "0.9.99"
         return True, ""
 
-    monkeypatch.setattr(U, "_run_upgrade", fake_upgrade)
+    monkeypatch.setattr(tool_updates, "_run_upgrade", fake_upgrade)
     out = tool_updates.run_check(state, force=True, now=5.0)
     actions = {r["tool"]: r["action"] for r in out["results"]}
     assert actions == {"graphify": "upgraded", "aislop": "none"}
@@ -64,7 +64,7 @@ def test_upgrades_only_the_tool_that_is_behind(tmp_path, monkeypatch):
 
 
 def test_missing_upgrader_is_reported_not_guessed(tmp_path, monkeypatch):
-    monkeypatch.setattr(U, "installed_version", lambda cmd: "0.1.0")
+    monkeypatch.setattr(tool_updates, "installed_version", lambda cmd: "0.1.0")
     monkeypatch.setattr(tool_updates.shutil, "which", lambda name: None)
     result = tool_updates._update_one("aislop", "aislop", "0.2.0", ["npm", "install", "-g", "aislop@latest"])
     assert result["action"].startswith("newer version available")

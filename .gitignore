@@ -38,10 +38,11 @@ audit.jsonl
 *.sqlite3
 *.log
 
-# === Docs: only README.md is public, plus the skills the agent loads ===
+# === Docs: README.md and docs/ are public, plus the skills the agent loads ===
 .internal/
 *.md
 !README.md
+!docs/*.md
 !brain/skills/*.md
 !brain/skills/*/**/*.md
 !brain/skills/*/*.md
