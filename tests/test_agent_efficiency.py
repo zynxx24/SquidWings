@@ -129,7 +129,7 @@ def assembled(store: ConversationStore, text: str = "pertanyaan baru") -> Any:
     assembler = ContextAssembler(conversation_store=store)
     return assembler.assemble(
         handler=ActivityHandler(), user_input=text, session_id="s",
-        model_id="ag/x", context_window=1_000_000, model_max_output=8192,
+        model_id="prov/x", context_window=1_000_000, model_max_output=8192,
     )
 
 
@@ -270,7 +270,7 @@ def client_with_providers(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> API
 
 def test_models_route_to_their_provider(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     client = client_with_providers(monkeypatch, tmp_path)
-    assert client.provider_of("ag/x") == "router"
+    assert client.provider_of("prov/x") == "router"
     assert client.provider_of("fast/x") == "fast"
     assert client._route("fast/llama")[1] == "llama"       # prefix stripped
     assert client._route("keep/llama")[1] == "keep/llama"  # prefix kept
@@ -325,7 +325,7 @@ async def test_sync_only_removes_models_of_the_provider_that_answered(monkeypatc
 
     class Registry:
         def __init__(self) -> None:
-            self.ids = {"ag/old", "ag/new", "fast/kept", "keep/kept"}
+            self.ids = {"prov/old", "prov/new", "fast/kept", "keep/kept"}
 
         @property
         def model_ids(self) -> list[str]:
@@ -338,7 +338,7 @@ async def test_sync_only_removes_models_of_the_provider_that_answered(monkeypatc
             self.ids.update(m["id"] for m in items)
 
     async def router_models() -> list[dict[str, Any]]:
-        return [{"id": "ag/new"}]
+        return [{"id": "prov/new"}]
 
     async def down(_provider: Provider) -> list[dict[str, Any]]:
         raise RuntimeError("down")
@@ -347,7 +347,7 @@ async def test_sync_only_removes_models_of_the_provider_that_answered(monkeypatc
     client.list_provider_models = down  # type: ignore[method-assign]
     registry = Registry()
     counts = await client.sync_all_models(registry)
-    assert registry.ids == {"ag/new", "fast/kept", "keep/kept"}
+    assert registry.ids == {"prov/new", "fast/kept", "keep/kept"}
     assert counts == {"router": 1, "fast": 0, "keep": 0}
 
 

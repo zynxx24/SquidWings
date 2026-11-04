@@ -72,16 +72,6 @@ from utils.workspace_context import PROJECTS_ROOT, set_active_ponytail
 logger = get_logger(__name__)
 console = Console()
 
-# Provider colors and icons for pretty display
-PROVIDER_THEME: dict[str, dict[str, str]] = {
-    "ag": {"color": "bright_cyan", "icon": "🔷", "label": "Agent"},
-    "kg": {"color": "bright_magenta", "icon": "🟣", "label": "Kagiro Market"},
-    "TH": {"color": "bright_yellow", "icon": "🟡", "label": "TH"},
-    "gemini": {"color": "bright_blue", "icon": "♊", "label": "Google Gemini"},
-    "bansos": {"color": "bright_green", "icon": "🆓", "label": "Bansos (Free)"},
-    "vk": {"color": "bright_red", "icon": "🔺", "label": "Vikey Router"},
-}
-
 # File extension → syntax language mapping
 EXT_LANG_MAP: dict[str, str] = {
     ".py": "python", ".js": "javascript", ".ts": "typescript",
@@ -176,7 +166,7 @@ def _read_user_input(prompt: str) -> str:
 
 def _get_provider_theme(provider: str) -> dict[str, str]:
     """Get color theme and icon for a provider prefix."""
-    return PROVIDER_THEME.get(provider, {"color": "white", "icon": "⚡", "label": provider.upper()})
+    return {"color": "white", "icon": "⚡", "label": provider.upper()}
 
 
 def _build_project_tree(
@@ -842,56 +832,6 @@ def _handle_ide_command(
             handle_format_command(f"md {arg}".strip(), console, cfg, cfg_path)
         return True, None, active_workspace
 
-    elif command in ("bansos", "bs", "mode-bansos"):
-        # Load latest from .env so user edits take effect immediately
-        from dotenv import load_dotenv
-        load_dotenv(override=True)
-        b_url = os.getenv("BANSOS_API_BASE_URL", "https://api.kagiro.net/v1")
-        b_key = os.getenv("BANSOS_API_KEY", "")
-        b_model = os.getenv("BANSOS_MODEL", "deepseek-v4.1-flash-1017")
-        model_id = f"bansos/{b_model}" if not b_model.startswith("bansos/") else b_model
-
-        subcmd = arg.lower().strip()
-
-        if subcmd in ("off", "disable", "stop", "exit"):
-            console.print("\n[bold yellow]🎁 Mode Bansos Dinonaktifkan.[/bold yellow] [dim]Kembali ke model default auto-router.[/dim]\n")
-            return True, "ag/gemini-3.8-flash-high", active_workspace
-
-        if subcmd in ("status", "info"):
-            masked_key = (b_key[:8] + "..." + b_key[-4:]) if len(b_key) > 12 else (b_key[:4] + "..." if b_key else "[red]Belum diset[/red]")
-            info_panel = Panel(
-                f"[bold bright_yellow]🎁 Status Mode Bansos[/bold bright_yellow]\n\n"
-                f"[bold white]Status:[/bold white]          {'[bright_green]AKTIF[/bright_green]' if current_model == model_id else '[dim]Non-aktif[/dim]'}\n"
-                f"[bold white]Model:[/bold white]           [bold bright_cyan]{model_id}[/bold bright_cyan]\n"
-                f"[bold white]API Base URL:[/bold white]    [cyan]{b_url}[/cyan]\n"
-                f"[bold white]API Key:[/bold white]         [dim]{masked_key}[/dim]\n"
-                f"[bold white]Auto-Generate:[/bold white]   [bright_green]Tersedia (Tool pembuat aplikasi canggih)[/bright_green]\n"
-                f"[bold white]Fallback:[/bold white]        [bright_green]Retry otomatis, lalu pindah ke model berikutnya[/bright_green]\n\n"
-                f"[dim]💡 Edit BANSOS_API_BASE_URL & BANSOS_API_KEY di file .env kapan saja.[/dim]",
-                title="🎁 Bansos Configuration",
-                border_style="bright_yellow",
-            )
-            console.print()
-            console.print(info_panel)
-            console.print()
-            return True, None, active_workspace
-
-        # Default action: Toggle / activate bansos mode
-        masked_key = (b_key[:8] + "..." + b_key[-4:]) if len(b_key) > 12 else (b_key[:4] + "..." if b_key else "[red]Belum diset[/red]")
-        banner_content = (
-            f"[bold bright_yellow]🎁 Mode Bansos Berhasil Diaktifkan![/bold bright_yellow]\n\n"
-            f"[bold white]Model:[/bold white]          [bold bright_cyan]{model_id}[/bold bright_cyan] (DeepSeek V4.1 Flash)\n"
-            f"[bold white]Endpoint:[/bold white]       [cyan]{b_url}[/cyan]\n"
-            f"[bold white]API Key:[/bold white]        [dim]{masked_key}[/dim]\n"
-            f"[bold white]Auto-Generate:[/bold white]  [bold bright_green]AKTIF[/bold bright_green] (Memperkaya prompt rancangan aplikasi)\n"
-            f"[bold white]Fallback:[/bold white]       [bold bright_green]NON-STOP / TANPA HENTI[/bold bright_green] (Auto-retry tiada henti)\n\n"
-            f"[dim]💡 Tip: API Key dan Base URL dapat diedit langsung di file [bold cyan].env[/bold cyan][/dim]"
-        )
-        console.print()
-        console.print(Panel(banner_content, title="🎁 MODE BANSOS ACTIVE", border_style="bright_yellow"))
-        console.print()
-        return True, model_id, active_workspace
-
     return False, None, active_workspace
 
 
@@ -909,7 +849,6 @@ def _display_help() -> None:
         ]),
         ("Model", [
             ("/model, /m", "Pilih model"),
-            ("/bansos [on|off|status]", "Mode bansos (model gratis lewat Kagiro)"),
             ("/status, /info, /i", "Model, proyek, sandbox, dan provider aktif"),
         ]),
         ("Memori", [
@@ -1561,89 +1500,33 @@ async def health_cmd() -> None:
 
 
 async def fetch_models_cmd() -> None:
-    """Fetch and sync models from API, highlighting Kagiro Marketplace models."""
+    """List what the configured endpoint offers."""
     settings = get_settings()
     secrets = get_secrets()
-
     console.print()
-    console.print(Rule("[bold bright_magenta]🟣 Kagiro & API Model Fetcher[/bold bright_magenta]", style="bright_magenta"))
+    console.print(Rule(f"[bold]Model dari {settings.api_base_url}[/bold]"))
     console.print()
-
     async with APIClient(settings.api_base_url, secrets.api_key) as client:
         try:
-            raw_models = await client.list_models()
-            kg_models = await client.list_kg_models()
-            claude_models = await client.list_claude_models()
+            models = await client.list_models()
         except Exception as e:
             console.print(f"[bold red]❌ Failed to connect to API:[/bold red] {e}")
             return
 
-    table = Table(
-        title=f"🟣 Kagiro Marketplace Models ({len(kg_models)} Available from API)",
-        title_style="bold bright_magenta",
-        border_style="bright_magenta",
-        box=box.ROUNDED,
-    )
+    table = Table(title=f"{len(models)} model", box=box.ROUNDED)
     table.add_column("Model ID", style="bold")
     table.add_column("Owned By")
     table.add_column("Vision", width=6, justify="center")
     table.add_column("Tools", width=6, justify="center")
-    table.add_column("Thinking", width=16)
     table.add_column("Context", justify="right")
     table.add_column("Max Out", justify="right")
-
-    for m in sorted(kg_models, key=lambda x: x.get("id", "")):
+    for m in sorted(models, key=lambda x: x.get("id", "")):
         caps = m.get("capabilities", {})
         ctx = m.get("context_length") or caps.get("contextWindow", 0)
         max_out = m.get("max_completion_tokens") or caps.get("maxOutput", 0)
-        th_fmt = caps.get("thinkingFormat") or "—"
-        table.add_row(
-            f"[bright_cyan]{m.get('id')}[/bright_cyan]",
-            str(m.get("owned_by", "")),
-            "✅" if caps.get("vision") else "❌",
-            "✅" if caps.get("tools") else "❌",
-            str(th_fmt),
-            format_tokens(ctx),
-            format_tokens(max_out),
-        )
-
+        table.add_row(str(m.get("id")), str(m.get("owned_by", "")), "✅" if caps.get("vision") else "—",
+                      "✅" if caps.get("tools") else "—", format_tokens(ctx), format_tokens(max_out))
     console.print(table)
-
-    claude_table = Table(
-        title=f"🔷 Anthropic Claude Models ({len(claude_models)} Available from API)",
-        title_style="bold bright_cyan",
-        border_style="bright_cyan",
-        box=box.ROUNDED,
-    )
-    claude_table.add_column("Model ID", style="bold")
-    claude_table.add_column("Owned By")
-    claude_table.add_column("Vision", width=6, justify="center")
-    claude_table.add_column("Tools", width=6, justify="center")
-    claude_table.add_column("Thinking", width=16)
-    claude_table.add_column("Context", justify="right")
-    claude_table.add_column("Max Out", justify="right")
-
-    for m in sorted(claude_models, key=lambda x: x.get("id", "")):
-        caps = m.get("capabilities", {})
-        ctx = m.get("context_length") or caps.get("contextWindow", 0)
-        max_out = m.get("max_completion_tokens") or caps.get("maxOutput", 0)
-        th_fmt = caps.get("thinkingFormat") or "—"
-        claude_table.add_row(
-            f"[bright_yellow]{m.get('id')}[/bright_yellow]",
-            str(m.get("owned_by", "")),
-            "✅" if caps.get("vision") else "❌",
-            "✅" if caps.get("tools") else "❌",
-            str(th_fmt),
-            format_tokens(ctx),
-            format_tokens(max_out),
-        )
-
-    console.print()
-    console.print(claude_table)
-    console.print(
-        f"\n[bold green]✔ Successfully fetched {len(kg_models)} Kagiro models and "
-        f"{len(claude_models)} Claude models ({len(raw_models)} total models from API router).[/bold green]\n"
-    )
 
 
 async def ask_cmd(question: str, model: str | None = None) -> None:
@@ -1704,7 +1587,7 @@ def main() -> None:
 Examples:
   python main.py chat                     Interactive chat mode with Workspace IDE
   python main.py ask "What is Python?"    One-shot question
-  python main.py ask "Explain OOP" --model kg/deepseek-4-1-flash
+  python main.py ask "Explain OOP" --model your-model-id
   python main.py models                   List all models
   python main.py health                   Check API health
   python main.py web                      Local Web GUI at http://127.0.0.1:8080
@@ -1722,7 +1605,7 @@ Examples:
     ask_parser.add_argument("question", help="Question to ask")
     ask_parser.add_argument(
         "--model", "-m", default=None,
-        help="Model to use (e.g., kg/deepseek-4-1-flash, ag/claude-sonnet-4-6)"
+        help="Model id from your endpoint"
     )
 
     # models command
@@ -1749,6 +1632,11 @@ Examples:
         help="Expose the Web GUI publicly through Cloudflare Tunnel (default: disabled)",
     )
 
+    # trading command
+    trading_parser = subparsers.add_parser("trading", help="Start the trading backend and MT4 bridge on their own")
+    trading_parser.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
+    trading_parser.add_argument("--port", "-p", type=int, default=80, help="Port (default: 80, what MT4 reaches)")
+
     args = parser.parse_args()
 
     if args.command == "chat" or args.command is None:
@@ -1763,6 +1651,10 @@ Examples:
         _run_async(health_cmd)
     elif args.command == "doctor":
         sys.exit(0 if _display_doctor() else 1)
+    elif args.command == "trading":
+        from web.trading_server import run as run_trading
+
+        sys.exit(run_trading(args.host, args.port))
     elif args.command == "web":
         from rich.panel import Panel
 

@@ -11,7 +11,6 @@ Usage:
 
 from config.constants import (
     EventType,
-    ModelProvider,
     ResponseStatus,
     TaskType,
     ThinkingFormat,
@@ -27,7 +26,6 @@ __all__ = [
     "get_secrets",
     "TaskType",
     "ThinkingFormat",
-    "ModelProvider",
     "ToolName",
     "EventType",
     "ResponseStatus",

@@ -94,12 +94,12 @@ async def test_continuation_turn_reuses_previous_model(tmp_path) -> None:
     store = ConversationStore(storage_dir=tmp_path)
     orch._conversation_store = store
     orch._context_assembler._store = store
-    for model_id in ("ag/routed", "ag/worked"):
+    for model_id in ("prov/routed", "prov/worked"):
         orch.registry.register(ModelInfo(id=model_id, display_name=model_id, provider="ag"))
     store.add_message("s", "user", "tulis modul")
-    store.add_message("s", "assistant", "setengah jadi", model_used="ag/worked")
+    store.add_message("s", "assistant", "setengah jadi", model_used="prov/worked")
 
     response = await orch.process(user_input="lanjutkan...", session_id="s", stream=False)
 
-    assert calls == ["ag/worked"]
-    assert response.model_used == "ag/worked"
+    assert calls == ["prov/worked"]
+    assert response.model_used == "prov/worked"

@@ -28,7 +28,7 @@ class ModelRegistry:
     Usage:
         registry = ModelRegistry()
         registry.load_from_config("config/models_config.yaml")
-        model = registry.get("ag/gemini-3.8-flash-high")
+        model = registry.get("provider/model-name")
     """
 
     _instance: ModelRegistry | None = None
@@ -92,7 +92,7 @@ class ModelRegistry:
             model = ModelInfo.from_config(model_id, model_data)
             self.register(model)
             # Pinned in YAML: an API sync that does not list the id must not remove it
-            # (e.g. the ag/ models the router does not expose on /models).
+            # (a model the endpoint does not list).
             self._static_ids.add(model_id)
 
         logger.info(f"[registry] Loaded {len(models_config)} models from {path.name}")
@@ -102,7 +102,7 @@ class ModelRegistry:
         models_data: list[dict[str, Any]],
         filter_gemini_only: bool = False,
     ) -> list[ModelInfo]:
-        """Register models directly from 9Router API /v1/models response.
+        """Register models directly from the API /v1/models response.
 
         Args:
             models_data: List of model dicts from APIClient.list_models().

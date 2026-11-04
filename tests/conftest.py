@@ -16,6 +16,13 @@ os.environ["SANDBOX_MODE"] = "off"
 # The local graphify and aislop programs must not run during ordinary tests.
 os.environ["GRAPHIFY_AUTO"] = "false"
 os.environ["AISLOP_AUTO"] = "false"
+os.environ["MT4_RECORD_TICKS"] = "0"     # bridge tests must not write into trading/data
+os.environ["DOCUMENT_OCR"] = "false"      # each image would be a model call
+os.environ["TOOLS_AUTO_UPDATE"] = "false"   # no network or global installs during tests
+# Learned model stats must not land in the real .agent_memory: every test run would add fake failures.
+import tempfile as _tempfile  # noqa: E402
+
+os.environ["MODEL_STATS_PATH"] = os.path.join(_tempfile.mkdtemp(prefix="model-stats-"), "stats.json")
 
 import pytest
 

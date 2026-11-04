@@ -233,7 +233,7 @@ class APIClient(BaseClient):
         """Send a non-streaming chat completion request.
 
         Args:
-            model: Model ID (e.g., "ag/gemini-3.8-flash-high" or "bansos/deepseek-v4.1-flash-1017").
+            model: Model ID, as the endpoint lists it.
             messages: Chat messages list.
             temperature: Sampling temperature (0.0-2.0).
             max_tokens: Maximum output tokens.
@@ -572,63 +572,6 @@ class APIClient(BaseClient):
         total = sum(counts.values())
         logger.info(f"[api] sync_all_models done: {counts}  total={total}")
         return counts
-
-    async def list_gemini_models(self, provider: str | None = None) -> list[dict[str, Any]]:
-        """Fetch all models from 9Router and filter Gemini/Gemma models.
-
-        Args:
-            provider: Optional provider filter (e.g. 'gemini' to select direct provider models).
-
-        Returns:
-            List of Gemini/Gemma model dicts from 9Router.
-        """
-        all_models = await self.list_models()
-        gemini_models = []
-        for m in all_models:
-            mid = (m.get("id") or "").lower()
-            owned = (m.get("owned_by") or "").lower()
-            if not ("gemini" in mid or "gemma" in mid):
-                continue
-            if provider and owned != provider.lower() and not mid.startswith(f"{provider.lower()}/"):
-                continue
-            gemini_models.append(m)
-
-        logger.info(
-            f"[api] Selected {len(gemini_models)} Gemini models from {len(all_models)} total 9Router models (provider={provider})"
-        )
-        return gemini_models
-
-    async def list_kg_models(self) -> list[dict[str, Any]]:
-        """Fetch all models from 9Router and filter Kagiro (kg) marketplace models.
-
-        Returns:
-            List of Kagiro model dicts from 9Router.
-        """
-        all_models = await self.list_models()
-        kg_models = [
-            m for m in all_models
-            if (m.get("id") or "").startswith("kg/") or (m.get("owned_by") or "").lower() == "kg"
-        ]
-        logger.info(
-            f"[api] Selected {len(kg_models)} Kagiro models from {len(all_models)} total 9Router models"
-        )
-        return kg_models
-
-    async def list_claude_models(self) -> list[dict[str, Any]]:
-        """Fetch all models from 9Router and filter Claude models.
-
-        Returns:
-            List of Claude model dicts from 9Router.
-        """
-        all_models = await self.list_models()
-        claude_models = [
-            m for m in all_models
-            if "claude" in (m.get("id") or "").lower()
-        ]
-        logger.info(
-            f"[api] Selected {len(claude_models)} Claude models from {len(all_models)} total 9Router models"
-        )
-        return claude_models
 
     async def health_check(self) -> bool:
         """Check API health by hitting /models endpoint.

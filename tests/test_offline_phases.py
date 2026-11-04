@@ -22,7 +22,7 @@ def test_phase_0_configuration_loads_offline() -> None:
     config = yaml.safe_load(settings.models_config_path.read_text(encoding="utf-8"))
     # The YAML may pin models (used when the API does not list them); the API still supplies the rest.
     assert isinstance(config.get("models", {}), dict)
-    assert config["routing"] and config["default_model"]
+    assert config["routing"], "task settings stay; which model to use comes from the endpoint"
 
 
 
@@ -41,10 +41,10 @@ def test_phase_2_classifier_is_rule_based() -> None:
 
 def test_phase_9_web_models_with_mocked_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = MagicMock()
-    fake.registry.get_all.return_value = [ModelInfo(id="ag/gemini-3.8-flash-high", provider="ag", capabilities=ModelCapabilities(tools=True))]
+    fake.registry.get_all.return_value = [ModelInfo(id="prov/gemini-3.8-flash-high", provider="ag", capabilities=ModelCapabilities(tools=True))]
     monkeypatch.setattr(server, "get_orchestrator", lambda: fake)
     with TestClient(server.app) as client:
         response = client.get("/api/models")
         assert response.status_code == 200
         data = response.json()
-        assert "ag/gemini-3.8-flash-high" in json.dumps(data)
+        assert "prov/gemini-3.8-flash-high" in json.dumps(data)

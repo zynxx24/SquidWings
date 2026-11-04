@@ -18,9 +18,9 @@ _BY_TASK: dict[TaskType, list[str]] = {
     ],
     TaskType.ACTIVITY: [
         "web_research", "web_read", "read_file", "file_write", "file_patch", "file_search",
-        "execute_command", "list_directory", "time_now", "vault_recall", "vault_write", "load_skill",
+        "execute_command", "list_directory", "time_now", "vault_recall", "vault_write", "load_skill", "extract_files",
     ],
-    TaskType.SCHOOL_TASK: ["web_research", "web_read", "read_file", "file_write", "vault_recall", "time_now"],
+    TaskType.SCHOOL_TASK: ["web_research", "web_read", "read_file", "file_write", "vault_recall", "time_now", "extract_files"],
     # Small models make arithmetic slips; running the sum in Python avoids them.
     TaskType.MATH: ["execute_command"],
     TaskType.REASON: ["web_research", "web_read", "read_file", "vault_recall", "load_skill"],
@@ -45,6 +45,7 @@ _ON_DEMAND: dict[tuple[str, ...], list[str]] = {
         "file_move", "file_delete", "dir_create",
     ],
     ("json",): ["json_query"],
+    ("pdf", "dokumen", "ekstrak", "extract", "docx", "word", "excel", "pptx", "gambar", "file", "folder"): ["extract_files"],
 }
 
 

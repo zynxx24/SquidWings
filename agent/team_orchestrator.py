@@ -10,7 +10,7 @@ import shutil
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -98,6 +98,7 @@ class Team:
     reviewer_id: str | None = None
     schedule: dict[str, Any] = field(default_factory=lambda: {"mode": "off"})
     last_scheduled_at: float | None = None
+    mode: str = "standard"
 
 
 @dataclass
@@ -190,9 +191,16 @@ class TeamStore:
 
     @staticmethod
     def _team_from_dict(data: dict[str, Any]) -> Team:
-        data = dict(data)
-        data["members"] = [TeamMember(**member) for member in data.get("members", [])]
-        return Team(**data)
+        # A file from another version may hold fields this one does not know. Those are left out,
+        # because otherwise one extra key would make every saved team disappear.
+        known = {item.name for item in fields(Team)}
+        member_known = {item.name for item in fields(TeamMember)}
+        kept = {key: value for key, value in data.items() if key in known}
+        kept["members"] = [
+            TeamMember(**{key: value for key, value in member.items() if key in member_known})
+            for member in data.get("members", [])
+        ]
+        return Team(**kept)
 
     def _load(self) -> None:
         path = self.directory / "teams.json"
@@ -202,9 +210,14 @@ class TeamStore:
                 if not isinstance(items, list):
                     raise TypeError("teams.json must contain a list")
                 for item in items:
-                    team = self._team_from_dict(item)
+                    try:
+                        team = self._team_from_dict(item)
+                    except (TypeError, KeyError, AttributeError) as exc:
+                        # One damaged team must not hide the others.
+                        logger.error("[teams] Skipped a saved team: %s", exc)
+                        continue
                     self._teams[team.id] = team
-        except (OSError, ValueError, TypeError, KeyError) as exc:
+        except (OSError, ValueError, TypeError) as exc:
             logger.error("[teams] Could not load teams: %s", exc)
 
         for path in self.runs_directory.glob("*.json"):

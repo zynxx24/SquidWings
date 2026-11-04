@@ -17,7 +17,7 @@ def test_conversation_store_persistence(tmp_path: Path):
 
     # Add messages
     store.add_message(session_id, "user", "Tuliskan kode Python sederhana")
-    store.add_message(session_id, "assistant", "print('hello')", model_used="ag/gemini-3.8-flash-high")
+    store.add_message(session_id, "assistant", "print('hello')", model_used="prov/gemini-3.8-flash-high")
 
     # Verify session listed
     sessions = store.list_sessions()
@@ -58,7 +58,7 @@ async def test_web_chat_history_endpoints():
 
         orch = get_orchestrator()
         orch.conversation_store.add_message(sid, "user", "Halo dari unit test")
-        orch.conversation_store.add_message(sid, "assistant", "Halo juga!", model_used="ag/gemini-3.8-flash-high")
+        orch.conversation_store.add_message(sid, "assistant", "Halo juga!", model_used="prov/gemini-3.8-flash-high")
 
         # List sessions
         res = await client.get("/api/sessions")

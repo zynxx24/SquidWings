@@ -102,7 +102,7 @@ def real_orchestrator(tmp_path: Path, *replies: dict) -> Any:
     orch._conversation_store = store
     orch._context_assembler._store = store
     orch.registry.register(
-        ModelInfo(id="ag/m", display_name="M", provider="ag", capabilities=ModelCapabilities(tools=True))
+        ModelInfo(id="prov/m", display_name="M", provider="ag", capabilities=ModelCapabilities(tools=True))
     )
     return orch
 
@@ -120,7 +120,7 @@ def reply(content: str = "", calls: list | None = None) -> dict:
 async def test_process_input_returns_and_shows_the_answer(tmp_path: Path, capsys: Any) -> None:
     orch = real_orchestrator(tmp_path, reply("Halo **dunia**"))
     result = await process_input(
-        user_input="halo", session_id="s", orchestrator=orch, stream=False, override_model="ag/m",
+        user_input="halo", session_id="s", orchestrator=orch, stream=False, override_model="prov/m",
     )
     assert result == "Halo **dunia**"
     assert "dunia" in capsys.readouterr().out
@@ -136,7 +136,7 @@ async def test_process_input_runs_tools_through_the_orchestrator(tmp_path: Path)
     )
     result = await process_input(
         user_input="tulis file a.txt", session_id="s", orchestrator=orch, stream=False,
-        override_model="ag/m", active_workspace=workspace,
+        override_model="prov/m", active_workspace=workspace,
     )
     assert result == "Selesai."
     assert (workspace / "a.txt").read_text() == "isi"
@@ -146,7 +146,7 @@ async def test_process_input_reports_failure_without_raising(tmp_path: Path) -> 
     orch = real_orchestrator(tmp_path)
     orch._api_client.chat_completion = None  # any call now fails
     result = await process_input(
-        user_input="halo", session_id="s", orchestrator=orch, stream=False, override_model="ag/m",
+        user_input="halo", session_id="s", orchestrator=orch, stream=False, override_model="prov/m",
     )
     assert isinstance(result, str) and result
 

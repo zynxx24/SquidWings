@@ -59,6 +59,7 @@ from tool.execute.execute_local_ops.local_ops_tool import (
     time_now,
 )
 from tool.execute.execute_skills.skill_tool import load_skill
+from tool.execute.execute_upload_file.extract_tool import extract_files
 from tool.execute.execute_upload_file.read_file_tool import list_directory, read_file
 from tool.execute.execute_web_search.web_reader import web_read, web_research
 from tool.execute.execute_web_search.web_search_tool import web_search
@@ -111,6 +112,30 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         ],
     )
     reg.register(read_file_schema, read_file)
+
+    extract_schema = ToolSchema(
+        name="extract_files",
+        description=(
+            "Extract all text and images from one document, or from every document under a folder in the "
+            "workspace: PDF, Word, PowerPoint, Excel, EPUB, OpenDocument and ZIP. Writes the text and the "
+            "images to the extracted/ folder and lists them. Use it to see what a folder of documents holds."
+        ),
+        parameters=[
+            ToolParameter(
+                name="path",
+                param_type=ParamType.STRING,
+                description="A file or folder inside the workspace. Default: the whole workspace.",
+                required=False,
+            ),
+            ToolParameter(
+                name="workspace_path",
+                param_type=ParamType.STRING,
+                description="Workspace root.",
+                required=False,
+            ),
+        ],
+    )
+    reg.register(extract_schema, extract_files)
 
     # ─── Tool 2: list_directory ──────────────────────────────────────
     list_dir_schema = ToolSchema(
@@ -205,8 +230,7 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         description=(
             "Enhance a user's application prompt to be more detailed and structured. "
             "Takes a brief app description and returns a comprehensive, "
-            "feature-rich prompt for better code generation. "
-            "Use this tool in bansos mode to improve application quality."
+            "feature-rich prompt for better code generation."
         ),
         parameters=[
             ToolParameter(

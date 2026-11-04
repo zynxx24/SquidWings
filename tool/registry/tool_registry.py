@@ -84,7 +84,7 @@ WORKSPACE_TOOLS: dict[str, str] = {
             "vault_graph_build", "vault_neighbours", "vault_explain",
             "vault_health", "vault_search", "vault_read", "vault_recall", "vault_write",
             "project_overview", "code_outline", "find_symbol", "run_checks", "code_graph", "aislop_scan",
-            "web_research",
+            "web_research", "extract_files",
         ),
         "workspace_path",
     ),

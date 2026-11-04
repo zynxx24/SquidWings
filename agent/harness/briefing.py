@@ -69,7 +69,7 @@ def skill_guidance(user_input: str, task_type: TaskType, max_chars: int) -> tupl
         index = skills.index_text(active)
         if not index:
             return "", []
-        selected = skills.select(user_input, active=active) if max_chars > 0 else []
+        selected = skills.select(user_input, active=active, task=task_type.value) if max_chars > 0 else []
         chosen: list[str] = []
         parts = [index]
         room = max_chars

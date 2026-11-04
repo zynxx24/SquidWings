@@ -7,7 +7,7 @@ token_usage, active workspace, timing, and more.
 Usage:
     manager = SessionManager()
     session = manager.create_session()
-    session.record_model_usage("ag/claude-sonnet-4-6", prompt_tokens=500, completion_tokens=200)
+    session.record_model_usage("provider/model-name", prompt_tokens=500, completion_tokens=200)
     stats = manager.get_session_stats(session.session_id)
 """
 
@@ -125,7 +125,7 @@ class SessionManager:
         session_id = session.session_id
 
         # After an API call:
-        manager.record_model_usage(session_id, "ag/claude-sonnet-4-6", 500, 200, 1234.5)
+        manager.record_model_usage(session_id, "provider/model-name", 500, 200, 1234.5)
 
         # Get stats:
         stats = manager.get_session_stats(session_id)

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+import io
 import json
 import os
 import shutil
@@ -24,9 +25,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from agent import session_stack
@@ -34,12 +35,16 @@ from agent.orchestrator import Orchestrator
 from agent.team_orchestrator import TeamOrchestrator, TeamStore
 from brain.classifier.continuation import is_continuation_input
 from config.settings import get_settings
+from model.settings.model_picker import is_chat_model
 from security import sandbox
 from security.web_access import WebSecurityMiddleware, is_loopback_host, set_public_mode
 from tool.execute.execute_code_intel import quality_tools
+from utils import local_ocr
+from utils.extract import DOCUMENT_SUFFIXES, Extracted, extract, save_images
+from utils.extract import Image as ExtractedImage
 from utils.helpers import format_tokens, generate_session_id, is_valid_session_id
 from utils.logger import get_logger
-from utils.markdown_compact import compact_markdown
+from utils.markdown_compact import compact_markdown, fit_markdown
 from utils.workspace_context import SESSIONS_ROOT, session_workspace
 from web.team_api import router as team_router
 
@@ -73,13 +78,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         get_orchestrator()
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning(f"[web] eager orchestrator init failed: {exc}")
+    # Daily, in the background: keeps graphify and aislop on their latest release.
+    from tool.execute.execute_code_intel import tool_updates
+
+    tool_updates.start_background(get_settings().project_root / ".agent_memory" / "tool_updates.json")
     # Teams validate models against the registry, which is empty until the first
     # sync. In the background: a slow provider must not delay startup.
     sync_task = asyncio.create_task(_startup_sync())
+    refresh_task = asyncio.create_task(_model_refresh_loop())
     if app.state.team_orchestrator:
         app.state.team_orchestrator.start_scheduler()
     yield
     sync_task.cancel()
+    refresh_task.cancel()
     await shutdown_event()
 
 
@@ -211,8 +222,11 @@ if STATIC_DIR.exists():
 # ─── Dynamic Models (auto-fetched from /models) ─────────────────────
 
 _models_synced = False
+_models_synced_at = 0.0
+# The registry is re-read from the API this often, so models the provider adds appear in routing
+# without a restart or a manual refresh. 0 turns it off.
+MODEL_SYNC_EVERY_S = float(os.getenv("MODEL_SYNC_EVERY_S", "1800") or 0)
 _models_lock = asyncio.Lock()
-_FALLBACK_DEFAULT = "ag/gemini-3.8-flash-high"
 AUTO_MODEL = "auto"
 
 
@@ -223,6 +237,18 @@ def _registry_size() -> int:
     except Exception:  # noqa: BLE001
         return 0
     return n if isinstance(n, int) else 0
+
+
+async def _model_refresh_loop() -> None:
+    """Re-sync the model list on a timer, so the routing pool sees what the providers list now."""
+    if MODEL_SYNC_EVERY_S <= 0:
+        return
+    while True:
+        await asyncio.sleep(MODEL_SYNC_EVERY_S)
+        try:
+            await ensure_models(force=True)
+        except Exception as exc:  # noqa: BLE001 - a failed sync keeps the last good list
+            logger.warning(f"[web] scheduled model refresh failed: {exc}")
 
 
 async def _startup_sync() -> None:
@@ -247,10 +273,11 @@ async def ensure_models(force: bool = False) -> dict[str, int]:
     Only marks as synced when at least one provider returned models.
     If every provider fails the flag stays False so the next request retries.
     """
-    global _models_synced
+    global _models_synced, _models_synced_at
     orch = get_orchestrator()
     async with _models_lock:
-        if _models_synced and not force:
+        stale = MODEL_SYNC_EVERY_S > 0 and time.time() - _models_synced_at >= MODEL_SYNC_EVERY_S
+        if _models_synced and not force and not stale:
             return {}
         syncer = getattr(orch.api_client, "sync_all_models", None)
         if not callable(syncer):
@@ -269,6 +296,7 @@ async def ensure_models(force: bool = False) -> dict[str, int]:
         # This lets the next /api/models request retry automatically.
         if total_fetched > 0 or _registry_size() > 0:
             _models_synced = True
+            _models_synced_at = time.time()
             logger.info(f"[web] Models synced: {counts}")
         else:
             logger.warning(
@@ -281,12 +309,12 @@ async def ensure_models(force: bool = False) -> dict[str, int]:
 def default_model_id() -> str:
     """Configured default if registered, otherwise the first known model."""
     orch = get_orchestrator()
-    for candidate in (get_settings().default_model, _FALLBACK_DEFAULT):
-        if candidate and orch.registry.get(candidate):
-            return candidate
+    configured = get_settings().default_model
+    if configured and orch.registry.get(configured):
+        return configured
     ids = orch.registry.model_ids
     ids = ids() if callable(ids) else ids
-    return next(iter(ids), _FALLBACK_DEFAULT)
+    return next((mid for mid in ids if is_chat_model(mid)), "")
 
 
 def accepted_uploads(model: Any) -> list[str]:
@@ -331,7 +359,9 @@ async def list_models(refresh: bool = False) -> dict[str, Any]:
     """List every model fetched from the configured endpoints."""
     await ensure_models(force=refresh)
     orch = get_orchestrator()
-    models = sorted(orch.registry.get_all(), key=lambda m: (m.provider or "", m.id))
+    # Endpoints also list embedding and speech models, which cannot hold a chat.
+    chat_models = [m for m in orch.registry.get_all() if is_chat_model(m.id)]
+    models = sorted(chat_models, key=lambda m: (m.provider or "", m.id))
     by_provider: dict[str, list[dict[str, Any]]] = {}
     for m in models:
         by_provider.setdefault(m.provider or "unknown", []).append(model_payload(m))
@@ -370,6 +400,9 @@ def _env_int(name: str, default: int) -> int:
 
 MAX_UPLOAD_BYTES = _env_int("MAX_UPLOAD_MB", 20) * 1024 * 1024
 MAX_UPLOAD_CHARS = _env_int("MAX_UPLOAD_CHARS", 120_000)
+# What goes into the message. A longer document is fitted to this with its headings kept, and the
+# whole text waits in the chat's folder for the agent to read on demand.
+UPLOAD_INLINE_CHARS = _env_int("UPLOAD_INLINE_CHARS", 30_000)
 MAX_CHAT_IMAGES = _env_int("MAX_CHAT_IMAGES", 4)
 IMAGE_MAX_SIDE = _env_int("IMAGE_MAX_SIDE", 1536)
 _DOC_EXTS = {
@@ -390,6 +423,7 @@ _AUDIO_EXTS: set[str] = set()
 _VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 _DOC_EXTS |= _IMAGE_EXTS
+_DOC_EXTS |= DOCUMENT_SUFFIXES
 if _env_bool("VIDEO_UPLOAD_ENABLED", False):
     _DOC_EXTS |= _VIDEO_EXTS
 
@@ -402,7 +436,6 @@ def _ffmpeg_exe() -> str:
 
 def _transcribe(name: str, data: bytes, is_video: bool) -> str:
     """Extract mono 16k WAV with ffmpeg, then transcribe it via MarkItDown."""
-    import io
     import subprocess
     import tempfile
 
@@ -433,7 +466,6 @@ def _transcribe(name: str, data: bytes, is_video: bool) -> str:
 
 
 def _describe_image(name: str, data: bytes) -> str:
-    import io
 
     from PIL import Image
 
@@ -444,7 +476,6 @@ def _describe_image(name: str, data: bytes) -> str:
 def _image_data_url(data: bytes, max_side: int = 1536) -> str:
     """Downscale an image and return it as a base64 data URL for vision models."""
     import base64
-    import io
 
     from PIL import Image
 
@@ -462,10 +493,44 @@ def _image_data_url(data: bytes, max_side: int = 1536) -> str:
     return f"data:{mime};base64,{base64.b64encode(buf.getvalue()).decode()}"
 
 
+def _image_text(data: bytes) -> str:
+    """The text in an uploaded picture. Empty when OCR is off or the picture holds none."""
+    return (local_ocr.read_images([data])[0] or "") if local_ocr.enabled() else ""
+
+
+def _upload_folder(session: str) -> Path | None:
+    return session_workspace(session) / "uploads" if session else None
+
+
+def _upload_payload(name: str, ext: str, data: bytes, session: str) -> dict[str, Any]:
+    """Everything the file holds: its text, its images, and the full copy in the chat's folder."""
+    folder = _upload_folder(session)
+    stem = Path(name).stem[:80]
+    found = Extracted(_convert_to_markdown(name, data))
+    if ext in DOCUMENT_SUFFIXES:
+        found = extract(data, name, f"uploads/{stem}_img/", ocr=True)
+    elif ext in _IMAGE_EXTS:
+        found = Extracted(found.markdown, images=[ExtractedImage(f"gambar{ext}", data)])
+        found.images[0].text = _image_text(data)
+        found.markdown = "\n\n".join(part for part in (found.markdown, found.images[0].text) if part)
+    full = compact_markdown(found.markdown.strip())[:MAX_UPLOAD_CHARS]
+    fitted = fit_markdown(full, UPLOAD_INLINE_CHARS)
+    result: dict[str, Any] = {
+        "name": name, "pages": found.pages, "scanned": found.scanned, "markdown": fitted, "chars": len(fitted),
+        "total_chars": len(full), "truncated": len(fitted) < len(full), "images": len(found.images), "saved": "",
+        "ocr_read": sum(bool(item.text) for item in found.images), "ocr_failed": found.ocr_failed,
+    }
+    if folder and full:
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / f"{stem}.md").write_text(full, encoding="utf-8")
+        save_images(found, folder / f"{stem}_img")
+        result["saved"] = f"uploads/{stem}.md"
+    return result
+
+
 def _convert_to_markdown(name: str, data: bytes) -> str:
     """Convert uploaded bytes to Markdown using MarkItDown (stream mode only)."""
     global _markitdown
-    import io
 
     ext = Path(name).suffix.lower()
     if ext in _PLAIN_EXTS:
@@ -483,7 +548,7 @@ def _convert_to_markdown(name: str, data: bytes) -> str:
 
 
 @app.post("/api/upload")
-async def upload_file(request: Request, name: str = "file.txt") -> dict[str, Any]:
+async def upload_file(request: Request, name: str = "file.txt", session: str = "") -> dict[str, Any]:
     """Convert an uploaded document to Markdown. Body is the raw file bytes."""
     safe_name = Path(name).name[:120] or "file.txt"
     ext = Path(safe_name).suffix.lower()
@@ -506,16 +571,12 @@ async def upload_file(request: Request, name: str = "file.txt") -> dict[str, Any
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
     try:
-        markdown = await asyncio.to_thread(_convert_to_markdown, safe_name, data)
+        result = await asyncio.to_thread(_upload_payload, safe_name, ext, data, session)
     except Exception as exc:
         logger.error(f"[upload] {safe_name}: {exc}")
         raise HTTPException(status_code=422, detail=f"Could not read file: {exc}") from exc
-    markdown = markdown.strip()
-    truncated = len(markdown) > MAX_UPLOAD_CHARS
-    if truncated:
-        markdown = markdown[:MAX_UPLOAD_CHARS]
-    result: dict[str, Any] = {"name": safe_name, "markdown": markdown, "chars": len(markdown), "truncated": truncated}
-    if ext in _IMAGE_EXTS:
+    # The models take text only, so a picture goes as what OCR read. SEND_IMAGES=true is for a model that can see.
+    if ext in _IMAGE_EXTS and _env_bool("SEND_IMAGES", False):
         try:
             result["image_data_url"] = await asyncio.to_thread(_image_data_url, data, IMAGE_MAX_SIDE)
         except Exception as exc:
@@ -659,6 +720,38 @@ async def update_session_stack(session_id: str, payload: dict[str, Any]) -> dict
     stack = _stack(session_id)
     await asyncio.to_thread(stack.update, **payload)
     return await asyncio.to_thread(stack.status)
+
+
+# Images a session's files reference (``![chart](plot.png)``). Only raster images, only from this
+# session's own folder, and only through the path guard, so a link cannot reach another chat or
+# the rest of the disk.
+_SESSION_IMAGE_TYPES = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+}
+_SESSION_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+_SESSION_FILE_HEADERS = {
+    "Cache-Control": "private, max-age=300",
+    "X-Content-Type-Options": "nosniff",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+}
+
+
+@app.get("/api/session/{session_id}/file")
+async def session_image(session_id: str, path: str = Query(..., min_length=1, max_length=400)) -> FileResponse:
+    from tool.execute.execute_local_ops.path_guard import PathGuardError, resolve_inside
+
+    workspace = session_workspace(session_id, create=False).resolve()
+    try:
+        target = resolve_inside(workspace, path, must_exist=True)
+    except PathGuardError as exc:
+        raise HTTPException(status_code=404, detail="file not found in this session") from exc
+    media = _SESSION_IMAGE_TYPES.get(target.suffix.lower())
+    if media is None or not target.is_file():
+        raise HTTPException(status_code=415, detail="only png, jpg, gif, webp and bmp images can be shown")
+    if target.stat().st_size > _SESSION_IMAGE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="image larger than 10 MB")
+    return FileResponse(target, media_type=media, headers=_SESSION_FILE_HEADERS)
 
 
 @app.post("/api/session/{session_id}/graph")

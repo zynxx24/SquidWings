@@ -32,7 +32,7 @@ class Provider:
 
     @property
     def url(self) -> str:
-        # Read per call so "/bansos" picks up edits to .env without a restart.
+        # Read per call so edits to .env apply without a restart.
         configured = os.getenv(self.base_url_env, "") if self.base_url_env else ""
         return (configured or self.base_url).rstrip("/")
 
@@ -85,5 +85,5 @@ def load_providers(path: Path | None = None) -> list[Provider]:
             max_concurrency=int(item.get("max_concurrency", 0)),
             models=tuple(str(m) for m in item.get("models") or []),
         ))
-    # Longest prefix first, so "vk/special/" wins over "vk/".
+    # Longest prefix first, so "a/special/" wins over "a/".
     return sorted(providers, key=lambda p: len(p.prefix), reverse=True)

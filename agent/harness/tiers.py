@@ -19,7 +19,7 @@ _CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "models_config.y
 # Used when models_config.yaml has no ``harness.tiers`` section.
 _DEFAULT_PATTERNS: dict[str, list[str]] = {
     "frontier": [r"opus", r"gpt-6-sol", r"fable"],
-    "lite": [r"flash", r"haiku", r"\bmini\b", r"-mini", r"lite", r"nano", r"free", r"gemma", r"^bansos/"],
+    "lite": [r"flash", r"haiku", r"\bmini\b", r"-mini", r"lite", r"nano", r"free", r"gemma", r"glm"],
 }
 
 
@@ -65,8 +65,8 @@ class Scaffold:
 
 
 _SCAFFOLDS: dict[Tier, Scaffold] = {
-    Tier.LITE: Scaffold(Tier.LITE, "harness_lite.txt", 16, 20, 6_000, 60_000, 2, 2, 2, 1_800, 6_000),
-    Tier.STANDARD: Scaffold(Tier.STANDARD, "harness_standard.txt", 18, 30, 12_000, 120_000, 3, 2, 1, 1_500, 3_500),
+    Tier.LITE: Scaffold(Tier.LITE, "harness_lite.txt", 16, 20, 6_000, 60_000, 2, 2, 2, 1_800, 12_000),
+    Tier.STANDARD: Scaffold(Tier.STANDARD, "harness_standard.txt", 18, 30, 12_000, 120_000, 3, 2, 1, 1_500, 8_000),
     Tier.FRONTIER: Scaffold(Tier.FRONTIER, "", None, 40, 30_000, 400_000, 4, 1, 0, 800, 0),
 }
 

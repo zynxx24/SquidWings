@@ -12,6 +12,10 @@ from typing import Any
 
 from config.constants import FREE_MODEL_SUFFIX, ThinkingFormat
 
+# Safe guesses for an endpoint that reports no limits.
+UNKNOWN_CONTEXT_WINDOW = 32_000
+UNKNOWN_MAX_OUTPUT = 4_096
+
 
 @dataclass
 class ModelCapabilities:
@@ -59,7 +63,7 @@ class ModelInfo:
     """Complete information about a model.
 
     Attributes:
-        id: Unique model identifier (e.g., "ag/gemini-3.8-flash-high").
+        id: Unique model identifier (e.g., "provider/model-name").
         display_name: Human-readable model name.
         provider: Provider prefix (e.g., "ag", "TH").
         capabilities: What the model can do.
@@ -156,16 +160,19 @@ class ModelInfo:
             ModelInfo instance with all fields populated.
         """
         caps_data = data.get("capabilities", {})
+        # A plain OpenAI-style list gives only ids. Tool calling is the norm, and a model that
+        # refuses it fails over; assuming no tools would remove every model from the agent.
+        capabilities = ModelCapabilities.from_dict(caps_data) if caps_data else ModelCapabilities(tools=True)
 
         return cls(
             id=data["id"],
             provider=data.get("owned_by", ""),
-            capabilities=ModelCapabilities.from_dict(caps_data),
+            capabilities=capabilities,
             thinking_format=caps_data.get("thinkingFormat", ""),
             thinking_can_disable=caps_data.get("thinkingCanDisable", False),
             thinking_effort_supported=caps_data.get("thinkingEffortSupported", False),
-            context_window=data.get("context_length", caps_data.get("contextWindow", 0)),
-            max_output=data.get("max_completion_tokens", caps_data.get("maxOutput", 0)),
+            context_window=data.get("context_length") or caps_data.get("contextWindow") or UNKNOWN_CONTEXT_WINDOW,
+            max_output=data.get("max_completion_tokens") or caps_data.get("maxOutput") or UNKNOWN_MAX_OUTPUT,
         )
 
     @classmethod

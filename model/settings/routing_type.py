@@ -4,13 +4,17 @@ model.settings.routing_type — Smart router logic.
 Routes tasks to the appropriate model based on task type,
 difficulty level, and model availability. Uses the models_config.yaml
 routing configuration with difficulty-based escalation:
-  easy   → Gemini 3.8 Flash (default, fast)
-  medium → Claude Sonnet 4.6 (quality balance)
-  hard   → Claude Opus 4.6 (deep reasoning)
+  easy   → a cheap, fast model
+  medium → any model that is not top tier
+  hard   → the strongest models listed
+
+No model is named in the code. A task can pin one in models_config.yaml, and otherwise the choice
+comes from what the endpoint lists.
 """
 
 from __future__ import annotations
 
+import os
 from enum import StrEnum, unique
 from pathlib import Path
 from typing import Any
@@ -20,6 +24,13 @@ import yaml
 from config.constants import TaskType
 from model.registry.model_info import ModelInfo
 from model.registry.model_registry import ModelRegistry
+from model.settings.model_picker import (
+    ModelPicker,
+    discover,
+    get_model_picker,
+    is_chat_model,
+    is_cheap,
+)
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -37,9 +48,9 @@ class RoutingType:
     """Smart router that selects the best model for a given task.
 
     Uses a difficulty-based escalation strategy:
-    - EASY tasks → fast/cheap model (Gemini Flash)
-    - MEDIUM tasks → balanced model (Claude Sonnet)
-    - HARD tasks → premium reasoning model (Claude Opus)
+    - EASY tasks → fast, cheap models
+    - MEDIUM tasks → balanced models
+    - HARD tasks → the strongest models
 
     Falls back to the configured fallback chain if the primary
     model is unavailable.
@@ -53,19 +64,66 @@ class RoutingType:
         self,
         config_path: str | Path | None = None,
         registry: ModelRegistry | None = None,
+        picker: ModelPicker | None = None,
     ) -> None:
         """Initialize the router.
 
         Args:
             config_path: Path to models_config.yaml.
             registry: ModelRegistry instance for model lookups.
+            picker: Learned chooser for easy and medium tasks. Defaults to the shared one.
         """
         self._registry = registry or ModelRegistry()
+        self._picker = picker or get_model_picker()
         self._routing_config: dict[str, Any] = {}
-        self._default_model: str = "ag/gemini-3.8-flash-high"
+        self._default_model: str = os.getenv("DEFAULT_MODEL", "").strip()
 
         if config_path:
             self.load_config(config_path)
+
+    @property
+    def picker(self) -> ModelPicker:
+        return self._picker
+
+    def record_outcome(self, model_id: str, ok: bool, latency_ms: float | None = None) -> None:
+        """Feed a request's result back so the next choice learns from it."""
+        self._picker.record(model_id, ok, latency_ms)
+
+    def _learned_pick(
+        self,
+        task_config: dict[str, Any],
+        primary_id: str,
+        difficulty: Difficulty,
+        healthy_models: list[str] | None,
+    ) -> ModelInfo | None:
+        """Choose among the configured candidates AND the models the registry lists now.
+
+        Easy tasks stay on cheap models. Medium tasks skip frontier models unless they are the
+        configured primary. Hard tasks never come here (see ``route``).
+        """
+        from agent.harness.tiers import Tier, tier_for  # local: harness imports the model layer
+
+        cheap = difficulty == Difficulty.EASY
+
+        def frontier(mid: str) -> bool:
+            return tier_for(mid) == Tier.FRONTIER
+
+        configured = [m for m in (primary_id, *task_config.get("fallback_chain", [])) if m]
+        configured = [m for m in configured if m == primary_id or (is_cheap(m) if cheap else not frontier(m))]
+        listed = discover(
+            self._registry.get_all(),
+            prefer_cheap=cheap,
+            needs_tools=bool(task_config.get("enable_tools", False)),
+            is_frontier=frontier,
+        )
+        # An endpoint's names may say nothing about price, so never end up with no choice at all.
+        everything = [m.id for m in self._registry.get_all() if is_chat_model(m.id)]
+        candidates = self._usable(configured + listed, healthy_models) or self._usable(everything, healthy_models)
+        chosen = self._picker.choose(candidates, prefer_cheap=cheap)
+        if chosen is None:
+            return None
+        logger.info(f"[router] Learned pick {difficulty.value}: {chosen} from {len(candidates)} candidate(s)")
+        return self._registry.get(chosen)
 
     def load_config(self, config_path: str | Path) -> None:
         """Load routing configuration from YAML.
@@ -82,7 +140,7 @@ class RoutingType:
             config = yaml.safe_load(f)
 
         self._routing_config = config.get("routing", {})
-        self._default_model = config.get("default_model", self._default_model)
+        self._default_model = self._default_model or str(config.get("default_model") or "")
 
         logger.info(
             f"[router] Loaded routing config: {len(self._routing_config)} task types"
@@ -121,6 +179,15 @@ class RoutingType:
             default_diff = task_config.get("default_difficulty", "easy")
             model_id = task_config.get(default_diff, self._default_model)
 
+        # Easy and medium tasks rotate among the learned candidates, so the same model does not
+        # win every time and models the API adds later get tried.
+        if difficulty != Difficulty.HARD:
+            learned = self._learned_pick(task_config, model_id, difficulty, healthy_models)
+            if learned is not None:
+                return learned
+        elif not model_id or self._registry.get(model_id) is None:
+            return self._strongest(healthy_models) or self._find_fallback(task_config, healthy_models)
+
         # Check if model is healthy
         if healthy_models is not None and model_id not in healthy_models:
             logger.warning(
@@ -142,6 +209,21 @@ class RoutingType:
             return self._find_fallback(task_config, healthy_models)
 
         return model
+
+    def _usable(self, ids: list[str], healthy_models: list[str] | None) -> list[str]:
+        unique = dict.fromkeys(ids)
+        return [m for m in unique if self._registry.get(m) and (healthy_models is None or m in healthy_models)]
+
+    def _strongest(self, healthy_models: list[str] | None) -> ModelInfo | None:
+        """A hard task with no pinned model: the top tier listed, else whatever is not lite."""
+        from agent.harness.tiers import tier_for  # local: harness imports the model layer
+
+        ids = self._usable([m.id for m in self._registry.get_all() if is_chat_model(m.id)], healthy_models)
+        if not ids:
+            return None
+        best = max(tier_for(m) for m in ids)
+        chosen = self._picker.choose([m for m in ids if tier_for(m) == best])
+        return self._registry.get(chosen) if chosen else None
 
     def _find_fallback(
         self,
