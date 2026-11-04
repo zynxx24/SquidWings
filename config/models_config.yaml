@@ -215,3 +215,267 @@ bansos:
   fallback_chain:
     - "deepseek-v4.1-flash-1017"
 
+# ============================================
+# STATIC MODEL DEFINITIONS (fallback jika API mati)
+# ============================================
+# Semua model yang direferensikan di routing didaftarkan statis di sini.
+# Saat API hidup, data dari API menimpa definisi ini (capabilities dll).
+# Ini memastikan model selalu tampil di UI dan bisa dipilih.
+models:
+  # ── Default Provider (ag/) ──────────────────────────
+  ag/gemini-3.8-flash-high:
+    display_name: "Gemini 3.8 Flash High"
+    provider: ag
+    thinking_format: gemini-level
+    context_window: 1000000
+    max_output: 65536
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: true
+      video_input: true
+      tools: true
+      search: true
+      reasoning: true
+
+  ag/claude-sonnet-4-6:
+    display_name: "Claude Sonnet 4.6"
+    provider: ag
+    thinking_format: claude-adaptive
+    context_window: 200000
+    max_output: 64000
+    capabilities:
+      vision: true
+      pdf: true
+      tools: true
+      reasoning: true
+
+  ag/claude-opus-4-6-thinking:
+    display_name: "Claude Opus 4.6 Thinking"
+    provider: ag
+    thinking_format: claude-budget
+    context_window: 200000
+    max_output: 64000
+    capabilities:
+      vision: true
+      pdf: true
+      tools: true
+      reasoning: true
+
+  # ── Gemini Direct ───────────────────────────────────
+  gemini/gemini-3.8-flash:
+    display_name: "Gemini 3.8 Flash"
+    provider: gemini
+    thinking_format: gemini-level
+    context_window: 1000000
+    max_output: 65536
+    capabilities:
+      vision: true
+      pdf: true
+      audio_input: true
+      video_input: true
+      tools: true
+      search: true
+
+  gemini/gemini-4-argon:
+    display_name: "Gemini 4 Argon"
+    provider: gemini
+    thinking_format: gemini-level
+    context_window: 1000000
+    max_output: 65536
+    capabilities:
+      vision: true
+      pdf: true
+      tools: true
+      reasoning: true
+
+  # ── Kagiro (kg/) ────────────────────────────────────
+  kg/gemini-3-8-flash:
+    display_name: "Gemini 3.8 Flash (KG)"
+    provider: kg
+    thinking_format: gemini-level
+    context_window: 1000000
+    max_output: 65536
+    capabilities:
+      vision: true
+      tools: true
+
+  kg/deepseek-v4-pro:
+    display_name: "DeepSeek V4 Pro (KG)"
+    provider: kg
+    thinking_format: deepseek
+    context_window: 128000
+    max_output: 64000
+    capabilities:
+      tools: true
+      reasoning: true
+
+  kg/qwen3.8-max:
+    display_name: "Qwen 3.8 Max (KG)"
+    provider: kg
+    context_window: 128000
+    max_output: 32768
+    capabilities:
+      tools: true
+      reasoning: true
+
+  kg/kimi-k2-7-code:
+    display_name: "Kimi K2.7 Code (KG)"
+    provider: kg
+    context_window: 128000
+    max_output: 32768
+    capabilities:
+      tools: true
+
+  kg/claude-haiku-5-5:
+    display_name: "Claude Haiku 5.5 (KG)"
+    provider: kg
+    thinking_format: claude-adaptive
+    context_window: 200000
+    max_output: 32768
+    capabilities:
+      vision: true
+      tools: true
+
+  kg/gpt-5-6-luna:
+    display_name: "GPT-5.6 Luna (KG)"
+    provider: kg
+    context_window: 128000
+    max_output: 32768
+    capabilities:
+      vision: true
+      tools: true
+
+  kg/claude-sonnet-4-6:
+    display_name: "Claude Sonnet 4.6 (KG)"
+    provider: kg
+    thinking_format: claude-adaptive
+    context_window: 200000
+    max_output: 64000
+    capabilities:
+      vision: true
+      tools: true
+      reasoning: true
+
+  kg/mimo-v2.6-flash:
+    display_name: "MiMo V2.6 Flash (KG)"
+    provider: kg
+    context_window: 128000
+    max_output: 32768
+    capabilities:
+      vision: true
+      tools: true
+
+  # ── VK Provider ─────────────────────────────────────
+  vk/anthropic/claude-sonnet-4.6:
+    display_name: "Claude Sonnet 4.6 (VK)"
+    provider: vk
+    thinking_format: claude-adaptive
+    context_window: 200000
+    max_output: 64000
+    capabilities:
+      vision: true
+      tools: true
+      reasoning: true
+
+  vk/openai/gpt-6-sol:
+    display_name: "GPT-6 Sol (VK)"
+    provider: vk
+    context_window: 128000
+    max_output: 32768
+    capabilities:
+      vision: true
+      tools: true
+
+  vk/openai/gpt-6-luna:
+    display_name: "GPT-6 Luna (VK)"
+    provider: vk
+    context_window: 128000
+    max_output: 32768
+    capabilities:
+      vision: true
+      tools: true
+
+  vk/openai/gpt-6-astra:
+    display_name: "GPT-6 Astra (VK)"
+    provider: vk
+    context_window: 128000
+    max_output: 32768
+    capabilities:
+      vision: true
+      tools: true
+      reasoning: true
+
+  vk/deepseek/deepseek-v4-pro:
+    display_name: "DeepSeek V4 Pro (VK)"
+    provider: vk
+    thinking_format: deepseek
+    context_window: 128000
+    max_output: 64000
+    capabilities:
+      tools: true
+      reasoning: true
+
+  vk/deepseek/deepseek-v4.1-flash:
+    display_name: "DeepSeek V4.1 Flash (VK)"
+    provider: vk
+    thinking_format: deepseek
+    context_window: 128000
+    max_output: 64000
+    capabilities:
+      tools: true
+
+  vk/gemini/gemini-3.8-flash:
+    display_name: "Gemini 3.8 Flash (VK)"
+    provider: vk
+    thinking_format: gemini-level
+    context_window: 1000000
+    max_output: 65536
+    capabilities:
+      vision: true
+      tools: true
+
+  vk/gemini/gemini-3.7-flash-high:
+    display_name: "Gemini 3.7 Flash High (VK)"
+    provider: vk
+    thinking_format: gemini-level
+    context_window: 1000000
+    max_output: 65536
+    capabilities:
+      vision: true
+      tools: true
+
+  vk/anthropic/claude-sonnet-5.5:
+    display_name: "Claude Sonnet 5.5 (VK)"
+    provider: vk
+    thinking_format: claude-adaptive
+    context_window: 200000
+    max_output: 64000
+    capabilities:
+      vision: true
+      tools: true
+      reasoning: true
+
+  vk/anthropic/claude-opus-5.5:
+    display_name: "Claude Opus 5.5 (VK)"
+    provider: vk
+    thinking_format: claude-budget
+    context_window: 200000
+    max_output: 64000
+    capabilities:
+      vision: true
+      tools: true
+      reasoning: true
+
+  # ── Bansos Provider ─────────────────────────────────
+  bansos/deepseek-v4.1-flash-1017:
+    display_name: "DeepSeek V4.1 Flash 1017 (Bansos)"
+    provider: bansos
+    thinking_format: deepseek
+    context_window: 1000000
+    max_output: 128000
+    capabilities:
+      tools: true
+      vision: false
+      audio_input: false
+

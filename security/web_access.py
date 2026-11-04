@@ -45,6 +45,11 @@ def set_public_mode(enabled: bool) -> None:
     _public_mode = enabled
 
 
+def is_public_mode() -> bool:
+    """True once the server is opened to other machines or a tunnel (see web.server.open_to_public)."""
+    return _public_mode
+
+
 def is_loopback_host(host: str) -> bool:
     return host.strip("[]").lower() in LOOPBACK_HOSTS
 

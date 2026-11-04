@@ -144,13 +144,18 @@
     select.innerHTML = (withAuto ? `<option value="auto" ${selected === 'auto' ? 'selected' : ''}>Auto (pilih sesuai tugas)</option>` : '') + options;
   }
 
-  async function loadModels() {
+  async function loadModels(retries = 3) {
     const data = await api('/api/models');
     S.models = Object.values(data.models).flat();
     S.byId = Object.fromEntries(S.models.map(m => [m.id, m]));
     const saved = store.get('model');
     S.model = saved === 'auto' || S.byId[saved] ? saved : data.default_model;
     fillModelOptions($('model-select'), S.model, true);
+
+    // If the registry was empty (API still starting), retry after a short delay.
+    if (!S.models.length && retries > 0) {
+      setTimeout(() => loadModels(retries - 1).catch(() => {}), 2500);
+    }
   }
 
   $('model-select').onchange = async e => {
