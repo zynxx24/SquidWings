@@ -207,7 +207,7 @@ async def test_fallback_moves_past_failing_models_to_one_that_answers(tmp_path) 
 
         async def chat_completion(self, **kwargs):
             calls.append(kwargs["model"])
-            if kwargs["model"] != "ag/third":
+            if kwargs["model"] != "prov/third":
                 raise RuntimeError(f"{kwargs['model']} is down")
             return good
 
@@ -221,17 +221,17 @@ async def test_fallback_moves_past_failing_models_to_one_that_answers(tmp_path) 
     saved_models = dict(orch.registry._models)
     orch.registry._models.clear()
     try:
-        for model_id in ("ag/first", "ag/second", "ag/third"):
+        for model_id in ("prov/first", "prov/second", "prov/third"):
             orch.registry.register(ModelInfo(id=model_id, display_name=model_id, provider="ag"))
 
-        response = await orch.process(user_input="halo", session_id="s", override_model="ag/first", stream=False)
+        response = await orch.process(user_input="halo", session_id="s", override_model="prov/first", stream=False)
 
         assert response.content == "Berhasil"
         assert response.status == ResponseStatus.FALLBACK_USED
     finally:
         orch.registry._models.clear()
         orch.registry._models.update(saved_models)
-    assert calls[0] == "ag/first" and calls[-1] == "ag/third"
+    assert calls[0] == "prov/first" and calls[-1] == "prov/third"
 
 
 # --- audit fixes (2026-10-30) ---
@@ -244,14 +244,14 @@ def _retries(error, attempt):
     return APIClient._should_retry_transient(Provider(id="x", transient_retries=3), error, attempt)
 
 
-def test_bansos_never_retries_a_request_that_cannot_succeed():
+def test_a_provider_never_retries_a_request_that_cannot_succeed():
     from utils.exceptions import ModelError
 
     assert not _retries(ModelError("bad", status_code=401), 1)
     assert not _retries(ModelError("bad", status_code=400), 1)
 
 
-def test_bansos_retries_transient_errors_up_to_the_cap():
+def test_a_provider_retries_transient_errors_up_to_the_cap():
     from utils.exceptions import ModelError, RateLimitError
 
     assert _retries(ModelError("boom", status_code=503), 1)
@@ -266,7 +266,7 @@ def test_empty_model_list_does_not_wipe_the_registry():
     from model.connection.api_client import APIClient
 
     class Registry:
-        model_ids = ["ag/a", "bansos/b"]
+        model_ids = ["prov/a", "extra/b"]
         removed: list = []
 
         def unregister(self, model_id):

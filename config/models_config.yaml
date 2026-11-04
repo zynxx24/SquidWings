@@ -1,166 +1,54 @@
-# ============================================
-# Agent Router — Model Capabilities Configuration
-# ============================================
-# Auto-generated from /v1/models API endpoint (ag/, kg/ and vk/ providers)
-# Last synchronized: 2026-10-22
+# How tasks use models. No model is named here: the list comes from your endpoint's /models.
 #
-# Router Strategy:
-#   - DEFAULT (semua task) → Gemini 3.8 Flash (cepat, murah, multimodal)
-#   - ACTIVITY MEDIUM      → Claude Sonnet 4.6 (balance quality/speed)
-#   - ACTIVITY HARD         → Claude Opus 4.6 Thinking (deep reasoning)
+# Connect a provider in .env with API_BASE_URL and API_KEY. Nothing else is needed. Auto mode then
+# picks among the models the endpoint lists, and learns which ones work.
+#
+# To fix the choice for a task, add easy, medium or hard to it, with an id your endpoint lists:
+#
+#   code:
+#     medium: "gpt-5"
+#     fallback_chain: ["gpt-5", "claude-sonnet-5"]
 
-# ============================================
-# MODEL DEFINITIONS
-# ============================================
 routing:
-  # --- Code Tasks ---
   code:
-    easy: "ag/gemini-3.8-flash-high"
-    medium: "ag/claude-sonnet-4-6"
-    hard: "ag/claude-opus-4-6-thinking"
-    fallback_chain:
-      - "ag/gemini-3.8-flash-high"
-      - "gemini/gemini-3.8-flash"
-      - "kg/gemini-3-8-flash"
-      - "ag/claude-sonnet-4-6"
-      - "kg/deepseek-v4-pro"
-      - "kg/qwen3.8-max"
-      - "kg/kimi-k2-7-code"
-      - "ag/claude-opus-4-6-thinking"
-      - "kg/claude-haiku-5-5"
-      - "vk/anthropic/claude-sonnet-4.6"
-      - "vk/openai/gpt-6-sol"
-      - "vk/deepseek/deepseek-v4-pro"
     default_difficulty: medium
     temperature: 0.2
     enable_thinking: true
     enable_tools: true
-
-  # --- Math Tasks ---
   math:
-    easy: "ag/gemini-3.8-flash-high"
-    medium: "ag/claude-sonnet-4-6"
-    hard: "ag/claude-opus-4-6-thinking"
-    fallback_chain:
-      - "ag/gemini-3.8-flash-high"
-      - "gemini/gemini-3.8-flash"
-      - "kg/deepseek-v4-pro"
-      - "ag/claude-sonnet-4-6"
-      - "kg/qwen3.8-max"
-      - "ag/claude-opus-4-6-thinking"
-      - "vk/deepseek/deepseek-v4-pro"
-      - "vk/openai/gpt-6-astra"
     default_difficulty: medium
     temperature: 0.1
     enable_thinking: true
     enable_tools: false
-
-  # --- Activity (General) Tasks ---
   activity:
-    easy: "ag/gemini-3.8-flash-high"
-    medium: "ag/claude-sonnet-4-6"
-    hard: "ag/claude-opus-4-6-thinking"
-    fallback_chain:
-      - "ag/gemini-3.8-flash-high"
-      - "gemini/gemini-3.8-flash"
-      - "kg/gemini-3-8-flash"
-      - "ag/claude-sonnet-4-6"
-      - "kg/gpt-5-6-luna"
-      - "ag/claude-opus-4-6-thinking"
-      - "kg/claude-sonnet-4-6"
-      - "vk/openai/gpt-6-luna"
-      - "vk/gemini/gemini-3.8-flash"
     default_difficulty: easy
     temperature: 0.7
     enable_thinking: false
     enable_tools: false
-
-  # --- School Tasks ---
   school_task:
-    easy: "ag/gemini-3.8-flash-high"
-    medium: "ag/claude-sonnet-4-6"
-    hard: "ag/claude-opus-4-6-thinking"
-    fallback_chain:
-      - "ag/gemini-3.8-flash-high"
-      - "gemini/gemini-3.8-flash"
-      - "kg/gemini-3-8-flash"
-      - "ag/claude-sonnet-4-6"
-      - "kg/deepseek-v4-pro"
-      - "ag/claude-opus-4-6-thinking"
-      - "vk/anthropic/claude-sonnet-5.5"
-      - "vk/deepseek/deepseek-v4.1-flash"
     default_difficulty: medium
     temperature: 0.3
     enable_thinking: true
     enable_tools: false
-
-  # --- Image Generation Tasks ---
   generate_img:
-    easy: "ag/gemini-3.8-flash-high"
-    medium: "ag/claude-sonnet-4-6"
-    hard: "ag/claude-opus-4-6-thinking"
-    fallback_chain:
-      - "ag/gemini-3.8-flash-high"
-      - "kg/gpt-5-6-luna"
-      - "gemini/gemini-4-argon"
-      - "ag/claude-sonnet-4-6"
-      - "vk/openai/gpt-6-luna"
-      - "vk/gemini/gemini-3.8-flash"
     default_difficulty: easy
     temperature: 0.8
     enable_thinking: false
     enable_tools: true
-
-  # --- Reasoning Tasks ---
   reason:
-    easy: "ag/gemini-3.8-flash-high"
-    medium: "ag/claude-sonnet-4-6"
-    hard: "ag/claude-opus-4-6-thinking"
-    fallback_chain:
-      - "ag/claude-opus-4-6-thinking"
-      - "kg/claude-sonnet-4-6"
-      - "kg/qwen3.8-max"
-      - "kg/deepseek-v4-pro"
-      - "ag/claude-sonnet-4-6"
-      - "gemini/gemini-4-argon"
-      - "ag/gemini-3.8-flash-high"
-      - "gemini/gemini-3.8-flash"
-      - "vk/anthropic/claude-opus-5.5"
-      - "vk/deepseek/deepseek-v4-pro"
     default_difficulty: hard
     temperature: 0.1
     enable_thinking: true
     enable_tools: false
-
-  # --- Multimodal Tasks ---
   multimodal:
-    easy: "ag/gemini-3.8-flash-high"
-    medium: "ag/claude-sonnet-4-6"
-    hard: "ag/claude-opus-4-6-thinking"
-    fallback_chain:
-      - "ag/gemini-3.8-flash-high"
-      - "gemini/gemini-3.8-flash"
-      - "gemini/gemini-4-argon"
-      - "kg/gemini-3-8-flash"
-      - "kg/mimo-v2.6-flash"
-      - "kg/claude-sonnet-4-6"
-      - "kg/gpt-5-6-luna"
-      - "ag/claude-sonnet-4-6"
-      - "vk/gemini/gemini-3.7-flash-high"
-      - "vk/openai/gpt-6-astra"
     default_difficulty: easy
     temperature: 0.5
     enable_thinking: true
     enable_tools: true
 
-# ============================================
-# DEFAULT MODEL
-# ============================================
-default_model: "ag/gemini-3.8-flash-high"
+# Set this, or DEFAULT_MODEL in .env, to pick the model used when routing has no better answer.
+default_model: ""
 
-# ============================================
-# TOKEN LIMITS PER TASK TYPE
-# ============================================
 token_limits:
   code:
     min_output: 100
@@ -184,10 +72,6 @@ token_limits:
     min_output: 20
     default_max_output: 8192
 
-# ============================================
-# THINKING FORMAT HANDLERS
-# ============================================
-# Maps thinking_format → parser class to use
 thinking_handlers:
   gemini-level: "model.parser.gemini_parser.GeminiParser"
   claude-adaptive: "model.parser.claude_parser.ClaudeAdaptiveParser"
@@ -195,287 +79,10 @@ thinking_handlers:
   openai: "model.parser.openai_parser.OpenAIParser"
   deepseek: "model.parser.deepseek_parser.DeepSeekParser"
 
-# ============================================
-# BANSOS MODE — Free API via Kagiro
-# ============================================
-# Model khusus untuk mode bansos (gratis, unlimited fallback)
-# API: https://api.kagiro.net/v1
-# Konfigurasi API key & base URL di file .env
-bansos:
-  model: "deepseek-v4.1-flash-1017"
-  display_name: "DeepSeek V4.1 Flash 1017 (Bansos)"
-  provider: bansos
-  thinking_format: deepseek
-  context_window: 1000000
-  max_output: 128000
-  temperature: 0.3
-  enable_tools: true
-  enable_auto_generate: true
-  max_tool_retries: unlimited
-  fallback_chain:
-    - "deepseek-v4.1-flash-1017"
-
-# ============================================
-# STATIC MODEL DEFINITIONS (fallback jika API mati)
-# ============================================
-# Semua model yang direferensikan di routing didaftarkan statis di sini.
-# Saat API hidup, data dari API menimpa definisi ini (capabilities dll).
-# Ini memastikan model selalu tampil di UI dan bisa dipilih.
-models:
-  # ── Default Provider (ag/) ──────────────────────────
-  ag/gemini-3.8-flash-high:
-    display_name: "Gemini 3.8 Flash High"
-    provider: ag
-    thinking_format: gemini-level
-    context_window: 1000000
-    max_output: 65536
-    capabilities:
-      vision: true
-      pdf: true
-      audio_input: true
-      video_input: true
-      tools: true
-      search: true
-      reasoning: true
-
-  ag/claude-sonnet-4-6:
-    display_name: "Claude Sonnet 4.6"
-    provider: ag
-    thinking_format: claude-adaptive
-    context_window: 200000
-    max_output: 64000
-    capabilities:
-      vision: true
-      pdf: true
-      tools: true
-      reasoning: true
-
-  ag/claude-opus-4-6-thinking:
-    display_name: "Claude Opus 4.6 Thinking"
-    provider: ag
-    thinking_format: claude-budget
-    context_window: 200000
-    max_output: 64000
-    capabilities:
-      vision: true
-      pdf: true
-      tools: true
-      reasoning: true
-
-  # ── Gemini Direct ───────────────────────────────────
-  gemini/gemini-3.8-flash:
-    display_name: "Gemini 3.8 Flash"
-    provider: gemini
-    thinking_format: gemini-level
-    context_window: 1000000
-    max_output: 65536
-    capabilities:
-      vision: true
-      pdf: true
-      audio_input: true
-      video_input: true
-      tools: true
-      search: true
-
-  gemini/gemini-4-argon:
-    display_name: "Gemini 4 Argon"
-    provider: gemini
-    thinking_format: gemini-level
-    context_window: 1000000
-    max_output: 65536
-    capabilities:
-      vision: true
-      pdf: true
-      tools: true
-      reasoning: true
-
-  # ── Kagiro (kg/) ────────────────────────────────────
-  kg/gemini-3-8-flash:
-    display_name: "Gemini 3.8 Flash (KG)"
-    provider: kg
-    thinking_format: gemini-level
-    context_window: 1000000
-    max_output: 65536
-    capabilities:
-      vision: true
-      tools: true
-
-  kg/deepseek-v4-pro:
-    display_name: "DeepSeek V4 Pro (KG)"
-    provider: kg
-    thinking_format: deepseek
-    context_window: 128000
-    max_output: 64000
-    capabilities:
-      tools: true
-      reasoning: true
-
-  kg/qwen3.8-max:
-    display_name: "Qwen 3.8 Max (KG)"
-    provider: kg
-    context_window: 128000
-    max_output: 32768
-    capabilities:
-      tools: true
-      reasoning: true
-
-  kg/kimi-k2-7-code:
-    display_name: "Kimi K2.7 Code (KG)"
-    provider: kg
-    context_window: 128000
-    max_output: 32768
-    capabilities:
-      tools: true
-
-  kg/claude-haiku-5-5:
-    display_name: "Claude Haiku 5.5 (KG)"
-    provider: kg
-    thinking_format: claude-adaptive
-    context_window: 200000
-    max_output: 32768
-    capabilities:
-      vision: true
-      tools: true
-
-  kg/gpt-5-6-luna:
-    display_name: "GPT-5.6 Luna (KG)"
-    provider: kg
-    context_window: 128000
-    max_output: 32768
-    capabilities:
-      vision: true
-      tools: true
-
-  kg/claude-sonnet-4-6:
-    display_name: "Claude Sonnet 4.6 (KG)"
-    provider: kg
-    thinking_format: claude-adaptive
-    context_window: 200000
-    max_output: 64000
-    capabilities:
-      vision: true
-      tools: true
-      reasoning: true
-
-  kg/mimo-v2.6-flash:
-    display_name: "MiMo V2.6 Flash (KG)"
-    provider: kg
-    context_window: 128000
-    max_output: 32768
-    capabilities:
-      vision: true
-      tools: true
-
-  # ── VK Provider ─────────────────────────────────────
-  vk/anthropic/claude-sonnet-4.6:
-    display_name: "Claude Sonnet 4.6 (VK)"
-    provider: vk
-    thinking_format: claude-adaptive
-    context_window: 200000
-    max_output: 64000
-    capabilities:
-      vision: true
-      tools: true
-      reasoning: true
-
-  vk/openai/gpt-6-sol:
-    display_name: "GPT-6 Sol (VK)"
-    provider: vk
-    context_window: 128000
-    max_output: 32768
-    capabilities:
-      vision: true
-      tools: true
-
-  vk/openai/gpt-6-luna:
-    display_name: "GPT-6 Luna (VK)"
-    provider: vk
-    context_window: 128000
-    max_output: 32768
-    capabilities:
-      vision: true
-      tools: true
-
-  vk/openai/gpt-6-astra:
-    display_name: "GPT-6 Astra (VK)"
-    provider: vk
-    context_window: 128000
-    max_output: 32768
-    capabilities:
-      vision: true
-      tools: true
-      reasoning: true
-
-  vk/deepseek/deepseek-v4-pro:
-    display_name: "DeepSeek V4 Pro (VK)"
-    provider: vk
-    thinking_format: deepseek
-    context_window: 128000
-    max_output: 64000
-    capabilities:
-      tools: true
-      reasoning: true
-
-  vk/deepseek/deepseek-v4.1-flash:
-    display_name: "DeepSeek V4.1 Flash (VK)"
-    provider: vk
-    thinking_format: deepseek
-    context_window: 128000
-    max_output: 64000
-    capabilities:
-      tools: true
-
-  vk/gemini/gemini-3.8-flash:
-    display_name: "Gemini 3.8 Flash (VK)"
-    provider: vk
-    thinking_format: gemini-level
-    context_window: 1000000
-    max_output: 65536
-    capabilities:
-      vision: true
-      tools: true
-
-  vk/gemini/gemini-3.7-flash-high:
-    display_name: "Gemini 3.7 Flash High (VK)"
-    provider: vk
-    thinking_format: gemini-level
-    context_window: 1000000
-    max_output: 65536
-    capabilities:
-      vision: true
-      tools: true
-
-  vk/anthropic/claude-sonnet-5.5:
-    display_name: "Claude Sonnet 5.5 (VK)"
-    provider: vk
-    thinking_format: claude-adaptive
-    context_window: 200000
-    max_output: 64000
-    capabilities:
-      vision: true
-      tools: true
-      reasoning: true
-
-  vk/anthropic/claude-opus-5.5:
-    display_name: "Claude Opus 5.5 (VK)"
-    provider: vk
-    thinking_format: claude-budget
-    context_window: 200000
-    max_output: 64000
-    capabilities:
-      vision: true
-      tools: true
-      reasoning: true
-
-  # ── Bansos Provider ─────────────────────────────────
-  bansos/deepseek-v4.1-flash-1017:
-    display_name: "DeepSeek V4.1 Flash 1017 (Bansos)"
-    provider: bansos
-    thinking_format: deepseek
-    context_window: 1000000
-    max_output: 128000
-    capabilities:
-      tools: true
-      vision: false
-      audio_input: false
-
+# Models your endpoint does not list, or whose limits it does not report:
+#
+#   my-model:
+#     context_window: 128000
+#     max_output: 8192
+#     capabilities: {tools: true}
+models: {}

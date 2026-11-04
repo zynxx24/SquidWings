@@ -1,14 +1,14 @@
 """
 tool.execute.execute_auto_generate.auto_generate_tool — Auto-enhance prompts for app creation.
 
-Tool "auto_generate" digunakan di mode bansos.
+Tool "auto_generate" memperkaya prompt aplikasi.
 AI mengirimkan prompt mentah user, tool ini mengembalikan
 prompt yang sudah diperkaya secara detail agar hasil pembuatan
 aplikasi lebih baik dan lengkap.
 
 Flow:
 1. Terima prompt mentah user (misal: "buatkan aplikasi kasir")
-2. Gunakan bansos model untuk generate prompt yang lebih detail
+2. Gunakan model default untuk generate prompt yang lebih detail
 3. Return prompt yang sudah diperkaya ke AI
 4. AI lalu menggunakan prompt tersebut sebagai konteks
 """
@@ -49,21 +49,21 @@ Tulis dalam bahasa Indonesia."""
 
 async def auto_generate(
     user_prompt: str,
-    bansos_base_url: str | None = None,
-    bansos_api_key: str | None = None,
-    bansos_model: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
 ) -> dict[str, Any]:
     """Auto-enhance a user prompt for better application generation.
 
-    Memanggil bansos model untuk memperkaya prompt user agar
+    Memanggil model untuk memperkaya prompt user agar
     menghasilkan kode aplikasi yang lebih baik dan lengkap.
     Menerapkan fallback / retry tiada henti jika terjadi error API.
 
     Args:
         user_prompt: Prompt mentah dari user tentang aplikasi yang ingin dibuat.
-        bansos_base_url: Base URL API bansos (optional, uses env/settings).
-        bansos_api_key: API key bansos (optional, uses env/settings).
-        bansos_model: Model ID bansos (optional, uses env/settings).
+        base_url: Base URL API (optional, default API_BASE_URL).
+        api_key: API key (optional, default API_KEY).
+        model: Model ID (optional, default DEFAULT_MODEL).
 
     Returns:
         dict with keys: success, original_prompt, enhanced_prompt, model_used, error.
@@ -71,16 +71,16 @@ async def auto_generate(
     # Always reload .env so edits to key/url take effect immediately
     load_dotenv(override=True)
 
-    base_url = bansos_base_url or os.getenv("BANSOS_API_BASE_URL", "https://api.kagiro.net/v1")
-    api_key = bansos_api_key or os.getenv("BANSOS_API_KEY", "")
-    model = bansos_model or os.getenv("BANSOS_MODEL", "deepseek-v4.1-flash-1017")
+    base_url = base_url or os.getenv("API_BASE_URL", "")
+    api_key = api_key or os.getenv("API_KEY", "")
+    model = model or os.getenv("DEFAULT_MODEL", "")
 
-    if not api_key:
+    if not api_key or not model:
         return {
             "success": False,
             "original_prompt": user_prompt,
             "enhanced_prompt": "",
-            "error": "BANSOS_API_KEY belum di-set. Silakan isi di file .env.",
+            "error": "API_KEY dan DEFAULT_MODEL belum di-set. Silakan isi di file .env.",
         }
 
     logger.info(f"[auto_generate] Enhancing prompt with {model} via {base_url}")

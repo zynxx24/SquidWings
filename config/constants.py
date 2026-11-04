@@ -68,18 +68,6 @@ class ThinkingFormat(StrEnum):
 
 
 @unique
-class ModelProvider(StrEnum):
-    """Model provider identifiers."""
-
-    AG = "ag"  # Agent router models (primary)
-    TH = "TH"  # TH provider models (available as fallback)
-    KG = "kg"  # Kagiro provider models (external marketplace)
-    GEMINI = "gemini"  # Direct Google Gemini models from 9Router
-    BANSOS = "bansos"  # Bansos mode (free Kagiro direct API)
-    VK = "vk"  # Vikey router models (vk/... multi-vendor)
-
-
-@unique
 class ToolName(StrEnum):
     """Registered tool names for function calling."""
 

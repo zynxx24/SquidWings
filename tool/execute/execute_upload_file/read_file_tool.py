@@ -19,6 +19,7 @@ import mimetypes
 from pathlib import Path
 from typing import Any
 
+from utils.extract import DOCUMENT_SUFFIXES, extract, save_images
 from utils.logger import get_logger
 from utils.markdown_compact import compact_markdown, fit_markdown
 
@@ -26,7 +27,7 @@ logger = get_logger(__name__)
 
 # Max text preview size
 MAX_PREVIEW_BYTES = 512_000  # 512KB
-DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".epub"}
+DOCUMENT_EXTENSIONS = DOCUMENT_SUFFIXES
 MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
 MAX_DOCUMENT_CHARS = 20_000
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
@@ -44,21 +45,22 @@ TEXT_EXTENSIONS: set[str] = {
 
 
 @functools.lru_cache(maxsize=8)
-def _document_markdown(path: str, _modified: float) -> str:
-    """Convert a document once. Reading a range would otherwise convert it each time."""
-    from markitdown import MarkItDown
-
-    return compact_markdown(str(MarkItDown(enable_plugins=False).convert_local(path).markdown))
+def _document_markdown(path: str, _modified: float) -> tuple[str, tuple[str, ...]]:
+    """Extract a document once, with its images beside it. Reading a range would redo it each time."""
+    source = Path(path)
+    folder = source.with_name(f"{source.name}_img")
+    result = extract(source.read_bytes(), source.name, f"{folder.name}/", ocr=True)
+    return compact_markdown(result.markdown), tuple(str(p) for p in save_images(result, folder))
 
 
 def _read_document(
     path: Path, ext: str, size: int, start_line: int | None, end_line: int | None
 ) -> dict[str, Any] | None:
-    """A PDF or office file as compact Markdown, or None if it cannot be converted."""
+    """A document as compact Markdown with its images saved, or None if it cannot be read."""
     if size > MAX_DOCUMENT_BYTES:
         return None
     try:
-        markdown = _document_markdown(str(path), path.stat().st_mtime)
+        markdown, images = _document_markdown(str(path), path.stat().st_mtime)
     except Exception as exc:  # noqa: BLE001 - the converter raises many types
         logger.warning(f"[read_file] Could not convert {path.name}: {exc}")
         return None
@@ -74,6 +76,8 @@ def _read_document(
         "converted_from": ext.lstrip("."),
         "total_lines": len(lines),
     }
+    if images:
+        result["images"] = list(images)
     if start_line is not None or end_line is not None:
         first = max(1, start_line or 1) - 1
         last = min(len(lines), end_line or len(lines))
@@ -83,6 +87,59 @@ def _read_document(
         if len(markdown) > MAX_DOCUMENT_CHARS:
             result["note"] = "Long document, so some sections are skipped. Use start_line and end_line for more."
     return result
+
+
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+
+
+def _read_image(path: Path, ext: str, size: int) -> dict[str, Any]:
+    """Size and format of an image, plus the markdown that shows it in chat.
+
+    The model cannot read pixels from a tool result, so this says what the image is and how to
+    show it to the user. ``![name](relative/path)`` renders in the chat when the path is inside
+    the session's folder.
+    """
+    info: dict[str, Any] = {}
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            info = {"width": im.width, "height": im.height, "format": im.format or ext.lstrip(".").upper()}
+    except Exception as exc:  # noqa: BLE001 - a broken image should still be reported, not crash the read
+        logger.debug(f"[read_file] image header unreadable for {path.name}: {exc}")
+    summary = f"[Image {path.name}: {_format_size(size)}"
+    if info:
+        summary += f", {info['width']}x{info['height']} {info['format']}"
+    summary += "]"
+    result: dict[str, Any] = {
+        "success": True,
+        "file_path": str(path),
+        "file_name": path.name,
+        "extension": ext,
+        "file_size": size,
+        "file_size_human": _format_size(size),
+        "is_text": False,
+        "is_image": True,
+        **info,
+        "content": summary,
+        "total_lines": 0,
+    }
+    rel = _relative_to_session(path)
+    if rel:
+        result["markdown"] = f"![{path.stem}]({rel})"
+        result["content"] += f" Show it with this markdown: {result['markdown']}"
+    return result
+
+
+def _relative_to_session(path: Path) -> str | None:
+    """The path relative to the active session's folder, when the file is inside it."""
+    try:
+        from utils.workspace_context import get_active_session, session_workspace
+
+        root = session_workspace(get_active_session() or "default", create=False).resolve()
+        return str(path.resolve().relative_to(root))
+    except (ValueError, OSError, RuntimeError):
+        return None
 
 
 def read_file(
@@ -137,6 +194,9 @@ def read_file(
         # Try mimetype detection
         mime, _ = mimetypes.guess_type(str(path))
         is_text = mime is not None and mime.startswith("text/")
+
+    if ext in IMAGE_EXTENSIONS:
+        return _read_image(path, ext, size)
 
     if not is_text:
         # Binary file → return metadata only

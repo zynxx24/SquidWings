@@ -149,7 +149,7 @@ def test_old_saved_teams_still_load(tmp_path: Path) -> None:
 
 def test_templates_are_valid_and_spend_the_strong_model_on_review(tmp_path: Path) -> None:
     manager, _ = make(tmp_path)
-    models = ["ag/gemini-flash", "ag/claude-sonnet", "ag/claude-opus"]
+    models = ["prov/gemini-flash", "prov/claude-sonnet", "prov/claude-opus"]
     templates = team_templates(models)
     assert templates
     for template in templates:
@@ -157,7 +157,7 @@ def test_templates_are_valid_and_spend_the_strong_model_on_review(tmp_path: Path
             continue
         manager.create_team(template["name"], "", template["members"], template["lead_id"], template["reviewer_id"])
         reviewer = next(m for m in template["members"] if m["id"] == template["reviewer_id"])
-        assert reviewer["model_id"] == "ag/claude-opus"
+        assert reviewer["model_id"] == "prov/claude-opus"
 
 
 def test_templates_work_with_a_single_model() -> None:
@@ -237,3 +237,33 @@ async def test_a_hanging_model_cannot_block_the_run(tmp_path: Path, monkeypatch:
     assert run.agents["a"]["status"] == "failed"
     assert "batas waktu" in run.agents["a"]["error"]
     assert run.status == "completed"
+
+
+def _saved_team(team_id="team-1", **extra):
+    member = {"id": "a", "name": "A", "role": "r", "model_id": "m"}
+    return {"id": team_id, "name": "Tim", "description": "", "members": [member], "lead_id": "a", **extra}
+
+
+def test_saved_team_mode_survives_a_reload():
+    from agent.team_orchestrator import TeamStore
+
+    team = TeamStore._team_from_dict(_saved_team(mode="video"))
+    assert team.mode == "video"
+
+
+def test_a_field_from_another_version_does_not_lose_the_team():
+    from agent.team_orchestrator import TeamStore
+
+    data = _saved_team(dari_versi_baru=1)
+    data["members"][0]["field_baru"] = "x"
+    assert TeamStore._team_from_dict(data).members[0].id == "a"
+
+
+def test_one_damaged_team_does_not_hide_the_others(tmp_path):
+    import json
+
+    from agent.team_orchestrator import TeamStore
+
+    (tmp_path / "teams.json").write_text(json.dumps([{"id": "rusak"}, _saved_team("team-baik")]), encoding="utf-8")
+    assert list(TeamStore(tmp_path)._teams) == ["team-baik"]
+

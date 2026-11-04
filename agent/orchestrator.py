@@ -45,6 +45,7 @@ from model.connection.health_check import HealthChecker
 from model.registry.model_info import ModelInfo
 from model.registry.model_registry import ModelRegistry
 from model.settings.fallback import FallbackStrategy
+from model.settings.model_picker import get_model_picker, is_cheap
 from model.settings.routing_type import Difficulty, RoutingType
 from model.type.activity import ActivityHandler
 from model.type.base_handler import BaseTypeHandler
@@ -60,6 +61,7 @@ from tool.execute.execute_local_memory.session_distill import distill_session
 from tool.register_tools import register_all_tools
 from tool.registry.tool_registry import ToolRegistry
 from utils.exceptions import RateLimitError
+from utils.extract import intent_of
 from utils.logger import get_logger
 from utils.workspace_context import get_active_workspace
 
@@ -276,22 +278,24 @@ class Orchestrator:
         max_token_config = MaxTokenConfig(settings.models_config_path)
         health_checker = HealthChecker()
 
+        picker = get_model_picker()
+
         def cheapest_model() -> str | None:
+            # The intent classifier runs on every message. A fixed "cheapest" pick sent all of
+            # them to one model; the picker rotates among the healthy cheap ones instead.
             all_models = registry.get_all()
-            healthy_ids = health_checker.filter_healthy([m.id for m in all_models])
-            candidates = [m for m in all_models if m.id in healthy_ids]
-            if not candidates:
-                candidates = all_models
-            candidates = sorted(
-                candidates,
-                key=lambda item: (not item.is_free, item.max_output or 8192),
-            )
-            return candidates[0].id if candidates else None
+            healthy_ids = set(health_checker.filter_healthy([m.id for m in all_models]))
+            candidates = [m for m in all_models if m.id in healthy_ids] or all_models
+            cheap = [m.id for m in candidates if m.is_free or is_cheap(m.id)]
+            pool = cheap or [
+                m.id for m in sorted(candidates, key=lambda item: (not item.is_free, item.max_output or 8192))
+            ]
+            return picker.choose(pool, prefer_cheap=True)
 
         classifier = IntentClassifier(
             llm_classifier=LLMIntentClassifier(client, model=cheapest_model)
         )
-        router = RoutingType(config_path=settings.models_config_path, registry=registry)
+        router = RoutingType(config_path=settings.models_config_path, registry=registry, picker=picker)
         conversation_store = ConversationStore()
         think_prompt_mgr = ThinkPromptManager()
         context_assembler = ContextAssembler(
@@ -385,7 +389,8 @@ class Orchestrator:
         self._session_manager.get_or_create_session(session_id)
         self._session_manager.increment_turn(session_id)
 
-        intent_text = task_hint or user_input
+        # A document in the message must not steer the routing, the skills or the memory.
+        intent_text = task_hint or intent_of(user_input)
         model = None
         harness: Harness | None = None
         project: ProjectMemory | None = None
@@ -482,7 +487,7 @@ class Orchestrator:
                 })
 
             if persist and task_hint is None and _fallback_depth == 0:
-                saved = await asyncio.to_thread(user_profile.capture_from_message, user_input)
+                saved = await asyncio.to_thread(user_profile.capture_from_message, intent_text)
                 if saved and on_event:
                     on_event({"type": "remembered", "items": saved, "text": "Remembered"})
 
@@ -617,8 +622,7 @@ class Orchestrator:
                 if on_content_chunk:
                     on_content_chunk(loop_result.notes)
 
-            # 9b. A blank answer is a failure, not a success. Bansos mode must
-            # keep advancing through the chain instead of returning nothing.
+            # 9b. A blank answer is a failure, not a success. Keep advancing through the chain instead of returning nothing.
             if not final_content.strip():
                 raise EmptyResponseError(
                     f"Model '{model.id}' returned empty content"
@@ -643,6 +647,8 @@ class Orchestrator:
                     loop_result.model or model.id,
                     changed_files(loop_result.tool_calls_history, workspace),
                     loop_result.finish_reason == "length",
+                    request=intent_text,
+                    tools=[str((entry.get("tool_call") or {}).get("name") or "") for entry in loop_result.tool_calls_history],
                 )
             touched = changed_files(loop_result.tool_calls_history, workspace)
             if workspace and touched:
@@ -658,6 +664,7 @@ class Orchestrator:
             # 11. Record health + session usage
             latency_ms = (time.time() - start_time) * 1000
             self._health_checker.record_success(model.id, latency_ms)
+            self._router.record_outcome(model.id, True, latency_ms)
             self._session_manager.record_model_usage(
                 session_id=session_id,
                 model_id=model.id,
@@ -700,6 +707,7 @@ class Orchestrator:
             if model is not None:
                 # Feed failures back so routing can skip unhealthy models.
                 self._health_checker.record_failure(model.id)
+                self._router.record_outcome(model.id, False)
                 if is_model_specific:
                     self._health_checker.mark_unavailable(model.id)
                 elif isinstance(e, RateLimitError) and (e.retry_after or 0) > 30.0:
@@ -1112,7 +1120,7 @@ class Orchestrator:
         The loop is iterative rather than recursive so a long chain cannot
         exhaust the stack, and every model is attempted exactly once. A blank
         or errored response advances to the next candidate instead of ending
-        the request — bansos mode must keep going.
+        the request.
         """
         attempted: set[str] = set()
         current_failed = failed_model_id

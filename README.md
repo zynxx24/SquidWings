@@ -1,19 +1,45 @@
 # SquidWings
 
-Agent AI multi-model untuk terminal dan web. Agent ini mengerjakan tugas sungguhan: membaca dan mengubah kode, menjalankan perintah di sandbox, membaca web, dan mengingat konteks per chat. Lapisan pengawasnya dibuat supaya model murah bekerja mendekati model mahal.
+Agent AI multi-model untuk terminal dan web. Ia bisa diajak ngobrol, membantu tugas sekolah, membaca dokumen, dan mengerjakan kode sungguhan: mengubah file, menjalankan perintah di sandbox, dan membaca web. Lapisan pengawasnya dibuat supaya model murah bekerja mendekati model mahal.
+
+## Mulai cepat
+
+```bash
+git clone https://github.com/zynxx24/SquidWings.git
+cd SquidWings
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env        # isi API_BASE_URL dan API_KEY, lihat Menghubungkan provider
+sudo apt install bubblewrap
+python main.py doctor       # memastikan sandbox benar-benar mengisolasi
+python main.py web          # buka http://127.0.0.1:8080
+```
+
+## Dokumentasi
+
+| Panduan | Isi |
+|---|---|
+| [Menghubungkan provider](#menghubungkan-provider) | Memakai endpoint mana pun dengan URL dan API key |
+| [Mengunggah dokumen](#mengunggah-dokumen) | Cara kerja PDF dari guru dan file lain |
+| [Tim agent](docs/tim-agent.md) | Kanvas alur, jadwal, Telegram, dan database |
+| [Panel trading](docs/trading.md) | MT4, chart, prosedur praktik, dan backtest |
+| [Cara kerja agent](docs/cara-kerja-agent.md) | Harness, tier model, dan skill |
 
 ## Fitur
 
 | Fitur | Keterangan |
 |---|---|
 | Terminal dan Web UI | Satu orchestrator yang sama, tanpa login |
-| Multi-model | Routing, fallback, dan banyak provider lewat `config/providers.yaml` |
+| Teman ngobrol dan tugas | Mendengarkan saat curhat, menjawab tugas dengan bahasa wajar, dan ingat isi chat |
+| Baca dokumen | Teks dan gambar dari PDF, Office, EPUB, ZIP, dan scan, lalu agent menentukan langkahnya |
+| Provider bebas | Cukup URL dan API key dari endpoint yang kompatibel dengan OpenAI. Daftar model diambil otomatis, dan routing belajar dari hasilnya |
 | Execution harness | Verifikasi hasil, deteksi loop, perbaikan argumen tool, dan eskalasi ke model lebih kuat |
 | Tim agent | Kanvas alur seperti n8n: delay, gate OR, jadwal, output Telegram, dan pilihan database |
 | Riset web | Mencari, membuka beberapa halaman, membaca isinya, dan mencantumkan sumber |
 | Satu chat, satu set | Folder, memori, vault Obsidian, graph kode, skor aislop, dan mode Ponytail sendiri |
 | Sandbox | Perintah agent berjalan terisolasi lewat bubblewrap atau Docker |
 | Keamanan | Policy engine, path jail, audit log, prompt shield, dan penyamaran rahasia |
+| Panel trading | Chart, tiket order, usulan kuant, dan backtest di `/trading`, lewat MT5, EA MT4, atau pasar simulasi |
 
 ## Kebutuhan
 
@@ -29,22 +55,9 @@ npm install -g aislop        # skor kualitas kode
 uv tool install graphifyy    # graph kode
 ```
 
+Keduanya diperbarui otomatis sekali sehari saat server web menyala. Atur `TOOLS_AUTO_UPDATE=false` untuk mematikannya, karena pembaruan ini mengubah instalasi global.
+
 Chrome atau Chromium dipakai untuk membaca situs yang butuh JavaScript. `cloudflared` dipakai untuk `--tunnel`.
-
-## Instalasi
-
-```bash
-git clone https://github.com/zynxx24/SquidWings.git
-cd SquidWings
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-sudo apt install bubblewrap
-python main.py doctor        # memastikan sandbox benar-benar mengisolasi
-```
-
-Isi `API_BASE_URL` dan `API_KEY` di `.env`.
 
 ## Menjalankan
 
@@ -53,64 +66,65 @@ python main.py chat                     # terminal, dengan pilihan folder proyek
 python main.py chat --project nama      # langsung ke workspace/projects/nama
 python main.py ask "pertanyaan"         # satu pertanyaan
 python main.py web                      # Web UI di http://127.0.0.1:8080
+python main.py trading                  # backend trading saja, di port 80
 python main.py models                   # daftar model
 python main.py health                   # cek koneksi API
 ```
 
 Perintah di dalam `chat`: `/model`, `/stack`, `/ponytail`, `/memory`, `/sandbox`, `/status`, dan `/help` untuk daftar lengkap.
 
-Menu tim agent di web aktif dengan `WEB_TEAMS_ENABLED=true`.
+> **Tidak ada login.** Web UI hanya menerima akses dari mesin ini secara bawaan. Dengan `--tunnel`, siapa pun yang punya URL-nya bisa memakai agent dan membaca semua chat.
 
-Satu permintaan tim dibatasi 10 menit, dan tiap agent 4 menit serta 120 ribu token. Agent yang kehabisan batas menulis hasilnya, sedangkan laporan yang sudah selesai tetap dipakai. Ubah lewat `TEAM_RUN_SECONDS`, `TEAM_MEMBER_SECONDS`, `TEAM_MEMBER_ROUNDS`, dan `TEAM_MEMBER_TOKENS`.
+## Menghubungkan provider
 
-### Alur tim
-
-Kanvas tim bekerja seperti alur di n8n. Urutannya ditandai 1, 2, 3 mengikuti sambungan antar-node, dan node pertama diberi tanda **Mulai**. Jalur keluar dari gate dan switch diberi huruf, misalnya 5A dan 5B, dan hanya jalur yang terpilih yang berjalan.
-
-| Node | Fungsi |
-|---|---|
-| Agent | Mengerjakan tugas dengan model dan instruksinya sendiri |
-| Gate IF | Sampai 5 syarat digabung dengan AND atau OR. Terpenuhi ke jalur A, tidak ke jalur B |
-| Switch | Sampai 3 aturan. Aturan pertama yang cocok memilih jalur A, B, atau C, sisanya ke D |
-| Merge | Menggabungkan beberapa jalur, lanjut saat salah satu tiba atau menunggu semuanya |
-| Delay | Menunggu 1 sampai 3600 detik, tanpa memakan batas waktu tim |
-| Teks | Menyusun teks dengan `{{input}}`, `{{task}}`, `{{date}}`, `{{time}}`, `{{day}}`, `{{team}}`, dan `{{node.ID}}` |
-| HTTP | GET atau POST ke alamat publik, balasannya diteruskan ke node berikutnya |
-| Telegram | Mengirim hasil ke chat Telegram |
-| Database | Menyimpan hasil ke SQLite, PostgreSQL, MySQL, atau MongoDB |
-
-Syarat di gate dan switch bisa berupa: berisi atau tidak berisi kata kunci, sama persis, regex, kosong, rentang jam dan hari, atau pertanyaan ya/tidak ke AI. Syarat tanpa AI dicek lebih dulu, jadi AND yang sudah gagal atau OR yang sudah terpenuhi tidak memanggil model.
-
-Tombol **Jadwal** mengatur pemicunya:
-
-| Pemicu | Contoh |
-|---|---|
-| Manual | Tombol Jalankan |
-| Interval | Tiap 30 menit (minimal 5) |
-| Jam tertentu | `05:00, 12:00, 17:00` pada hari yang dipilih |
-| Cron | `0 7 * * 1-5` untuk 07:00 Senin sampai Jumat |
-| Sekali | 2026-11-02 09:00 |
-| Pesan Telegram | Semua pesan, atau hanya yang diawali kata seperti `/jadwal` |
-
-Pemicu berjalan selama server menyala. Jadwal yang terlewat saat server mati tidak dijalankan belakangan. Pada pemicu Telegram, isi pesan menjadi tugasnya, dan node Telegram tanpa Chat ID membalas ke chat yang mengirim. Hanya pesan dari `TELEGRAM_CHAT_ID` yang diterima, karena siapa pun bisa mengirim pesan ke bot.
-
-Template yang tersedia:
-
-- **Alarm bangun dan pengingat jadwal**: berjalan jam 05:00, 12:00, 17:00, dan 21:00. Pagi hari, gate AND (jam 04:00 sampai 10:00 dan catatan tidak berisi "libur") membangunkan lewat Telegram, lalu alarm kedua 10 menit kemudian. Di jam lain, agent mengingatkan kegiatan 4 jam ke depan. Ubah daftar kegiatan di node **Agenda**.
-- **Bot Telegram serba bisa**: berjalan saat kamu mengirim pesan ke bot. Switch memilah `/jadwal`, `/cuaca`, dan `/catat`, pesan lain dijawab agent umum, lalu balasan dikirim ke chat yang sama.
-- **Asisten sehari-hari**: mencari fakta nyata, jeda, gate, menulis jawaban, lalu mengirim ke Telegram dan menyimpan ke database.
-
-Telegram butuh `TELEGRAM_BOT_TOKEN` dan `TELEGRAM_CHAT_ID` di `.env`. Untuk tahu chat ID-mu, kirim pesan ke bot lalu buka `https://api.telegram.org/bot<TOKEN>/getUpdates`. Database selain SQLite butuh alamatnya di `.env` dan drivernya:
+SquidWings bisa memakai endpoint apa pun yang kompatibel dengan OpenAI Chat Completions. Isi dua baris ini di `.env`:
 
 ```bash
-pip install "psycopg[binary]"   # TEAM_DB_POSTGRES_URL
-pip install pymysql             # TEAM_DB_MYSQL_URL
-pip install pymongo             # TEAM_DB_MONGODB_URL
+API_BASE_URL=https://openrouter.ai/api/v1
+API_KEY=kunci-kamu
 ```
 
-Token dan alamat database hanya disimpan di `.env`, tidak di pengaturan tim.
+Lalu jalankan `python main.py models`. Tidak ada nama model yang tertanam di kode: daftarnya diambil dari `/models`, dan mode Auto memilih di antaranya.
 
-> **Tidak ada login.** Web UI hanya menerima akses dari mesin ini secara bawaan. Dengan `--tunnel`, siapa pun yang punya URL-nya bisa memakai agent dan membaca semua chat.
+| Provider | `API_BASE_URL` |
+|---|---|
+| OpenAI | `https://api.openai.com/v1` |
+| OpenRouter | `https://openrouter.ai/api/v1` |
+| Groq | `https://api.groq.com/openai/v1` |
+| 9Router | `http://localhost:20128/v1` |
+| Ollama | `http://localhost:11434/v1` |
+| LM Studio | `http://localhost:1234/v1` |
+
+Ollama dan LM Studio tetap butuh `API_KEY`, tetapi isinya boleh apa saja.
+
+Nama model yang berisi `flash`, `mini`, atau `lite` dianggap murah dan dipakai untuk tugas mudah. Nama seperti `opus` dipakai untuk tugas sulit. Bila namanya tidak memberi petunjuk, semua model dipakai bergiliran. Untuk memaksa satu model, isi `DEFAULT_MODEL`, atau tulis di `routing` pada `config/models_config.yaml`.
+
+Bila endpoint tidak melaporkan batasnya, agent memakai perkiraan aman (konteks 32 ribu token, output 4 ribu token) dan menganggap model mendukung tool. Batas yang tepat bisa ditulis di bagian `models` pada file yang sama. Untuk memakai beberapa endpoint sekaligus, lihat `config/providers.yaml`.
+
+## Mengunggah dokumen
+
+Tekan ikon klip di kotak chat, pilih file, lalu kirim. Pesan boleh dikosongkan.
+
+Semua isi file diekstrak apa adanya, tanpa ditebak atau disaring, lalu agent sendiri yang membaca maksudnya. Pesanmu dan awal dokumen yang menentukan model dan skill, bukan seluruh isi file.
+
+| File | Teks | Gambar |
+|---|---|---|
+| PDF | Baris per baris, dengan tabel di tempatnya | Gambar di tiap halaman. Halaman tanpa teks (scan) jadi satu gambar utuh |
+| Word, PowerPoint, Excel, EPUB, ZIP | Lewat MarkItDown | Semua gambar di dalam file |
+| OpenDocument (`.odt`, `.odp`, `.ods`) | Dari isi dokumennya | Semua gambar di dalam file |
+| Teks dan kode | Apa adanya | Tidak ada |
+
+Teks lengkap masuk ke `uploads/` di folder chat, dan gambarnya ke `uploads/<nama>_img/`, jadi agent bisa membukanya lagi tanpa unggah ulang. Di dalam teks, gambar muncul sebagai tautan di tempatnya, dan tampil di chat kalau agent menuliskannya. Gambar di bawah 48 piksel dilewati karena biasanya ikon.
+
+Dokumen di atas `UPLOAD_INLINE_CHARS` dikirim dengan semua judulnya, dan agent membaca sisanya saat perlu.
+
+Gambar dan halaman scan dibaca oleh OCR lokal (`utils/local_ocr.py`), dan teksnya ditaruh tepat setelah tautan gambarnya. OCR ini memakai RapidOCR di CPU, tanpa model AI luar, tanpa internet, dan tanpa `sudo`. Kecepatannya sekitar 3 detik per halaman. Satu file dibaca paling banyak `OCR_MAX_IMAGES` gambar. Gambar yang tidak sempat terbaca ditandai di teks. OCR hanya membaca tulisan: isi foto dan diagram tidak dijelaskan, dan judul huruf besar bisa kehilangan spasi. Gambar tidak dikirim ke model, kecuali `SEND_IMAGES=true`.
+
+Plugin `markitdown-ocr` tidak dipakai, karena ia butuh model vision dan `pymupdf` yang berlisensi AGPL.
+
+Untuk file yang sudah ada di folder, tool `extract_files` mengekstrak satu file atau semua dokumen sekaligus ke folder `extracted/`. File yang tidak berubah tidak diproses ulang. `read_file` juga membaca dokumen dan menyimpan gambarnya di samping file.
+
+Gambar di folder chat bisa tampil di Web UI dengan path relatif, misalnya `![grafik](plot.png)`. Hanya PNG, JPG, GIF, WebP, dan BMP sampai 10 MB, dan hanya dari folder chat itu sendiri. SVG tidak ditampilkan. Saat agent membaca gambar dengan `read_file`, ia mendapat ukuran, format, dan Markdown untuk menampilkannya, bukan isi gambarnya. Gambar di dalam PDF atau file Office tidak diekstrak. Supaya model bisa melihat gambar, unggah gambarnya ke chat dan pilih model yang mendukung vision.
 
 ## Konfigurasi
 
@@ -119,16 +133,28 @@ Semua pengaturan ada di `.env`, dengan contoh lengkap di [.env.example](.env.exa
 | Kelompok | Variabel utama |
 |---|---|
 | API | `API_BASE_URL`, `API_KEY`, `TIMEOUT_SECONDS`, `MAX_RETRIES` |
-| Model | `DEFAULT_MODEL`, `DEFAULT_TEMPERATURE`, `DEFAULT_MAX_TOKENS` |
+| Model | `DEFAULT_MODEL` (boleh kosong), `DEFAULT_TEMPERATURE`, `DEFAULT_MAX_TOKENS`, `MODEL_SYNC_EVERY_S` |
 | Web UI | `WEB_HOST`, `WEB_PORT`, `WEB_ALLOWED_HOSTS`, `WEB_ALLOWED_ORIGINS`, `WEB_TEAMS_ENABLED` |
 | Sandbox | `SANDBOX_NETWORK`, `SANDBOX_RO_PATHS` |
 | Riset web | `SEARXNG_URL`, `BRAVE_SEARCH_API_KEY`, `WEB_BROWSER_ENABLED` |
 | Memori | `HISTORY_SUMMARY_CHARS`, `HISTORY_MAX_TOKENS`, `OBSIDIAN_VAULT_PATH` |
 | Ponytail | `PONYTAIL_MODE`, `PONYTAIL_TASKS` |
 | Tim agent | `TEAM_RUN_SECONDS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TEAM_DB_POSTGRES_URL`, `TEAM_DB_MYSQL_URL`, `TEAM_DB_MONGODB_URL` |
-| Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `MAX_CHAT_IMAGES`, `IMAGE_MAX_SIDE` |
+| Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `UPLOAD_INLINE_CHARS`, `DOCUMENT_OCR`, `OCR_MAX_IMAGES`, `MAX_CHAT_IMAGES`, `IMAGE_MAX_SIDE` |
+| Alat lokal | `GRAPHIFY_AUTO`, `AISLOP_AUTO`, `TOOLS_AUTO_UPDATE` |
+| Trading | `MT5_TRADE_TOKEN`, `MT5_MAX_VOLUME`, `MT5_REQUIRE_SL`, `MT5_ALLOW_LIVE`, `MT4_BRIDGE_SECRET`, `QUANT_RISK_PER_TRADE`, `TRADE_NEWS_FILE` |
 
-Provider tambahan didaftarkan di `config/providers.yaml`. Key-nya tetap dibaca dari `.env`.
+### Pilihan model
+
+Pada mode Auto, router tidak lagi selalu memakai model yang sama:
+
+- Kandidat diambil dari `config/models_config.yaml` dan dari daftar model yang sedang dikembalikan API. Model baru dari provider ikut dicoba tanpa mengubah konfigurasi.
+- Tugas mudah memakai model murah seperti DeepSeek Flash dan GLM, dikenali dari namanya. Tugas sedang memakai semua model kecuali tier frontier. Tugas sulit tetap memakai model yang dikonfigurasi.
+- Tiap pilihan melihat catatan sukses, gagal, dan latensi model, ditambah sedikit acak dan bonus untuk model yang lama tidak dipakai. Model yang sering gagal jadi jarang terpilih, dan model baru tetap kebagian giliran.
+
+Router menilai keandalan dan kecepatan, bukan mutu jawaban. Catatannya ada di `.agent_memory/model_stats.json` di folder proyek, berlaku untuk semua chat, dan hanya berisi angka per model, tanpa isi chat.
+
+Daftar model diambil ulang tiap 30 menit. Ubah lewat `MODEL_SYNC_EVERY_S`, atau isi `0` untuk mematikannya.
 
 ### Hasil riset web
 
@@ -156,43 +182,15 @@ Setiap folder punya memorinya sendiri:
 | aislop | Skor kualitas kode | `.agent_memory/aislop.json` |
 | Ponytail | Mode `off`, `lite`, `full`, atau `ultra` | `.agent_memory/session.json` |
 
+Memori proyek juga menyimpan catatan per giliran: apa yang diminta, intinya, tool yang dipakai, dan file yang diubah. Agent menerimanya sebagai blok `[EARLIER IN THIS CHAT]` tanpa memanggil model. Giliran baru yang masih ada di riwayat hanya dicatat aksinya, giliran lama dapat satu baris, dan yang relevan dengan pertanyaan didahulukan. Ukurannya dibatasi sekitar 1.600 karakter, sepanjang apa pun chatnya.
+
 Profil pengguna dan playbook berlaku di semua chat, dan disimpan di `vault/`.
 
 Semua data ini diabaikan Git dan tidak ikut terbit. Menghapus chat di web juga menghapus foldernya.
 
-Saat agent membaca isi workspace, PDF dan file Office diubah ke Markdown lewat MarkItDown, lalu dipadatkan dengan parser markdown-it (`utils/markdown_compact.py`). Blok kode tidak diubah. File Markdown panjang juga dipadatkan, kecuali bila agent meminta rentang baris untuk mengedit.
-
 ## Sandbox
 
 `execute_command`, `run_checks`, dan tes dari verifikasi berjalan terisolasi. Agent hanya bisa menulis ke folder kerjanya, dan internet mati secara bawaan. Atur `SANDBOX_NETWORK=true` agar `pip install` dan `npm install` bisa jalan. `python main.py doctor` mencoba keluar dari sandbox dan melaporkan hasilnya.
-
-## Execution harness
-
-`agent/harness/` memindahkan disiplin kerja dari model ke loop:
-
-| Lapisan | Fungsi |
-|---|---|
-| `tiers.py` | Membagi model ke lite, standard, dan frontier, dengan pengawasan lebih ketat untuk tier murah |
-| `tool_select.py` | Menawarkan tool yang relevan saja, sehingga skemanya hemat token |
-| `guards.py` | Memperbaiki argumen rusak, memangkas hasil panjang, dan mendeteksi loop |
-| `verifier.py` | Memeriksa file dan tes sebelum jawaban diterima |
-| `advisor.py` | Meminta saran model lebih kuat saat macet, lalu menyerahkan tugasnya bila perlu |
-| `playbooks.py`, `briefing.py` | Menyimpan cara kerja yang berhasil dan memakainya lagi |
-
-Panduan kerja ada di `brain/skills/`: `fix-bug`, `add-feature`, `clean-code`, `web-research`, `design-ui`, `build-web`, `build-backend`, dan `animate`.
-
-Skill besar berupa folder dengan `SKILL.md` dan file pendamping. `animate` (diadaptasi dari [cth9191/animate](https://github.com/cth9191/animate), MIT) membuat video animasi pendek sepenuhnya dari kode, dengan gaya cut paper, crosshatch, riso, sketchbook, math, pixel, atau isometric. Agent memasang kit-nya ke `.skills/<sesi>/animate/`, satu salinan per sesi supaya dua chat di proyek yang sama tidak saling campur, lalu bertanya soal cerita, tampilan, dan storyboard sebelum merender. Butuh Node 18+, ffmpeg, dan Chromium untuk Playwright (`npx playwright install chromium`).
-
-Skill punya dua jenis:
-
-| Jenis | Kapan aktif |
-|---|---|
-| Utama (`scope: core`, bawaan) | Selalu ada di daftar skill. Panduannya ditambahkan saat permintaan cocok |
-| Kontekstual (`scope: contextual`) | Diam, tidak ada di prompt sama sekali, sampai permintaan cocok dengan `triggers` dan `context`-nya. Setelah itu tetap aktif sampai sesi itu selesai, dan hanya di sesi itu |
-
-`animate` termasuk kontekstual. "Buat video animasi 30 detik" membangunkannya, sedangkan "tambah animasi hover di tombol" tidak, karena tidak menyebut video. Memanggil `load_skill` dengan namanya juga membangunkannya.
-
-Skill tambahan bisa ditaruh di folder `SKILLS_DIR`, dan skill yang tidak dipakai bisa dimatikan dengan `SKILLS_DISABLED=animate,build-web`.
 
 ## Struktur proyek
 
@@ -203,7 +201,9 @@ brain/            classifier, konteks, memori, prompt, skill
 model/            API client, provider, registry, stream
 tool/             tool lokal, web, memori, dan kode
 security/         sandbox, policy, path jail, audit, shield
-web/              server FastAPI dan Web UI
+web/              server FastAPI, Web UI, dan API trading
+trading/          adapter MT5, EA MT4, jurnal, dan model kuant
+knowledge/        impor hasil Google Maps ke vault
 config/           settings, model, provider
 utils/            logger, CLI UI, workspace
 tests/            test suite
@@ -225,9 +225,16 @@ Jangan pernah meng-commit `.env`. Key disimpan di sana, dan `.env.example` hanya
 | Perintah agent ditolak | Pasang bubblewrap atau Docker, lalu jalankan `python main.py doctor` |
 | Koneksi ditolak | Periksa `API_BASE_URL` dan `API_KEY`, lalu jalankan `python main.py health` |
 | Hasil riset kurang lengkap | Pasang SearXNG atau isi `BRAVE_SEARCH_API_KEY` |
-| Gambar tidak terbaca | Model tidak mendukung vision, jadi pilih model lain |
+| Gambar atau PDF scan tidak terbaca | Periksa `DOCUMENT_OCR=true`, lalu kirim scan yang lebih tajam |
 | Nilai env tidak terbaca | Pindahkan komentar ke baris sendiri |
 | Menu tim tidak muncul | Atur `WEB_TEAMS_ENABLED=true` |
+| Backend `mt5` gagal login | Paket `MetaTrader5` hanya jalan di Windows. Di Linux pakai `mt4` atau `sim` |
+| EA MT4 tampil offline | Masukkan URL server ke daftar WebRequest di MT4, lalu cek secret di preset EA |
+| Perubahan kode trading tidak terasa | Restart server. Hanya file statis yang langsung terbaca |
+
+## Dukung pengembangan
+
+SquidWings dikembangkan terus dan terbuka untuk donasi. Hubungi aguswiraw60@gmail.com untuk berdonasi atau bertanya soal cara mendukung proyek ini.
 
 ## Lisensi
 

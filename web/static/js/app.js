@@ -23,6 +23,7 @@
     stop: '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/>',
     team: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3.2 3.2 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6"/>',
     chat: '<path d="M4 5h16v11H9l-5 4z"/>',
+    chart: '<path d="M4 19V5M4 19h16M8 15l4-5 3 3 5-6"/>',
     theme: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/>',
     layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
     chevron: '<path d="m9 6 6 6-6 6"/>',
@@ -40,9 +41,28 @@
     });
   }
   // Model output can carry text from web pages, so it never reaches innerHTML unsanitized.
-  const md = text => (window.marked && window.DOMPurify)
-    ? window.DOMPurify.sanitize(window.marked.parse(text || ''))
-    : esc(text).replace(/\n/g, '<br>');
+  // An image written as a relative path (![chart](plot.png)) is a file in this chat's folder,
+  // so it is loaded through the session file endpoint. Absolute and data: URLs are left alone.
+  const RELATIVE_SRC = /^(?![a-z][a-z0-9+.-]*:|\/|#)/i;
+  const md = text => {
+    if (!(window.marked && window.DOMPurify)) return esc(text).replace(/\n/g, '<br>');
+    const clean = window.DOMPurify.sanitize(window.marked.parse(text || ''));
+    if (!clean.includes('<img')) return clean;
+    const doc = new DOMParser().parseFromString(`<body>${clean}</body>`, 'text/html');
+    doc.querySelectorAll('img').forEach(img => {
+      const src = img.getAttribute('src') || '';
+      img.setAttribute('loading', 'lazy');
+      img.setAttribute('decoding', 'async');
+      if (S.session && src && RELATIVE_SRC.test(src)) {
+        img.setAttribute('src', `/api/session/${encodeURIComponent(S.session)}/file?path=${encodeURIComponent(src)}`);
+      }
+    });
+    return doc.body.innerHTML;
+  };
+
+  // The EA talks to the trading server on the default port, so the live data is there. Only a
+  // local chat can reach it; through a tunnel the link stays on this server's own page.
+  if (['127.0.0.1', 'localhost'].includes(location.hostname)) $('nav-trading').href = `http://${location.hostname}/trading`;
 
   const S = {
     models: [], byId: {}, model: 'auto', session: null, ws: null, busy: false,
@@ -596,7 +616,10 @@
     const text = input.value.trim();
     if ((!text && !S.attachments.length) || S.busy) return;
 
-    const files = S.attachments.map(a => `<file name="${a.name}">\n${a.markdown}\n</file>`).join('\n\n');
+    const files = S.attachments.map(a => {
+      const saved = a.saved ? ` saved="${a.saved}"` : '';
+      return `<file name="${a.name}"${saved}>\n${a.markdown}\n</file>`;
+    }).join('\n\n');
     const full = files ? `${files}\n\n${text}` : text;
     const label = S.attachments.map(a => `[${a.name}] `).join('') + text;
     const images = S.attachments.map(a => a.image_data_url).filter(Boolean);
@@ -680,10 +703,14 @@
   $('file-input').onchange = async e => {
     for (const file of e.target.files) {
       try {
-        const response = await fetch(`/api/upload?name=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
+        const query = `name=${encodeURIComponent(file.name)}&session=${encodeURIComponent(S.session || '')}`;
+        const response = await fetch(`/api/upload?${query}`, { method: 'POST', body: file });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || 'Unggah gagal');
         S.attachments.push(data);
+        if (data.ocr_failed) toast(`${file.name}: ${data.ocr_failed} gambar belum terbaca.`);
+        else if (data.images) toast(`${file.name}: ${data.images} gambar diekstrak, ${data.ocr_read} berisi teks.`);
+        else if (data.truncated) toast(`${file.name} panjang: teks lengkap tersimpan, AI membukanya saat perlu.`);
       } catch (err) { toast(`${file.name}: ${err.message}`); }
     }
     e.target.value = '';

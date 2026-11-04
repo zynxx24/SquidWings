@@ -337,7 +337,7 @@ def test_all_agent_teams_still_default_to_a_lead(tmp_path: Path, settings: Any) 
 
 def test_assistant_template_is_valid(tmp_path: Path, settings: Any) -> None:
     manager, _ = make(tmp_path)
-    template = next(t for t in team_templates(["ag/gemini-flash", "ag/claude-sonnet"]) if t["key"] == "assistant")
+    template = next(t for t in team_templates(["prov/gemini-flash", "prov/claude-sonnet"]) if t["key"] == "assistant")
     team = manager.create_team(template["name"], "", template["members"], template["lead_id"], template["reviewer_id"], template["schedule"])
     assert team.lead_id == ""
     assert {m.kind for m in team.members} == {"agent", "delay", "gate", "telegram", "database"}

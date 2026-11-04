@@ -90,7 +90,7 @@ def registry(tmp_path) -> ToolRegistry:
     return reg
 
 
-def make_harness(registry: ToolRegistry, tmp_path, model: str = "ag/gemini-flash", **options: Any) -> Harness:
+def make_harness(registry: ToolRegistry, tmp_path, model: str = "prov/gemini-flash", **options: Any) -> Harness:
     schemas = registry.get_all_schemas()
     return Harness(
         scaffold=scaffold_for(model),
@@ -104,7 +104,7 @@ def make_harness(registry: ToolRegistry, tmp_path, model: str = "ag/gemini-flash
 
 async def run(client: FakeClient, registry: ToolRegistry, harness: Harness | None) -> Any:
     loop = AgentLoop(client, registry, harness=harness)  # type: ignore[arg-type]
-    return await loop.run("ag/gemini-flash", [{"role": "user", "content": "x"}], stream=False)
+    return await loop.run("prov/gemini-flash", [{"role": "user", "content": "x"}], stream=False)
 
 
 # --- tiers ---------------------------------------------------------------
@@ -113,13 +113,12 @@ async def run(client: FakeClient, registry: ToolRegistry, harness: Harness | Non
 @pytest.mark.parametrize(
     ("model", "tier"),
     [
-        ("ag/gemini-3.8-flash-high", Tier.LITE),
-        ("kg/claude-haiku-5-5", Tier.LITE),
-        ("bansos/anything", Tier.LITE),
-        ("ag/claude-sonnet-4-6", Tier.STANDARD),
-        ("kg/deepseek-v4-pro", Tier.STANDARD),
-        ("ag/claude-opus-4-6-thinking", Tier.FRONTIER),
-        ("vk/openai/gpt-6-sol", Tier.FRONTIER),
+        ("prov/gemini-3.8-flash-high", Tier.LITE),
+        ("prov/claude-haiku-5-5", Tier.LITE),
+        ("prov/claude-sonnet-4-6", Tier.STANDARD),
+        ("prov/deepseek-v4-pro", Tier.STANDARD),
+        ("prov/claude-opus-4-6-thinking", Tier.FRONTIER),
+        ("prov/openai/gpt-6-sol", Tier.FRONTIER),
     ],
 )
 def test_tiers(model: str, tier: Tier) -> None:
@@ -333,27 +332,27 @@ async def test_unfixed_problems_are_reported_honestly(registry, tmp_path) -> Non
 
 
 async def test_stuck_run_consults_the_advisor(registry, tmp_path) -> None:
-    harness = make_harness(registry, tmp_path, advisor_model="ag/opus")
+    harness = make_harness(registry, tmp_path, advisor_model="prov/opus")
     failing = reply("", [("read_file", {"file_path": "missing.py"})])
     advice = reply("Periksa path-nya, file ada di src/.")
     client = FakeClient(failing, failing, advice, reply("Saya berhenti: berkas tidak ada."))
     result = await run(client, registry, harness)
     assert harness.stats.advisor_calls == 1
-    assert client.requests[2]["model"] == "ag/opus"
+    assert client.requests[2]["model"] == "prov/opus"
     assert "tools" not in client.requests[2]
     assert "Periksa path-nya" in str(client.requests[3]["messages"][-1]["content"])
     assert result.content.startswith("Saya berhenti")
 
 
 async def test_run_escalates_once_advice_is_used_up(registry, tmp_path) -> None:
-    harness = make_harness(registry, tmp_path, advisor_model="ag/opus")
+    harness = make_harness(registry, tmp_path, advisor_model="prov/opus")
     harness.scaffold = scaffold_for("x-sonnet")  # one advisor call, stuck after 3
     failing = [reply("", [("read_file", {"file_path": f"m{i}.py"})]) for i in range(6)]
     client = FakeClient(*failing[:3], reply("hint"), *failing[3:], reply("Sudah dicoba model kuat."))
     result = await run(client, registry, harness)
-    assert harness.stats.escalated_to == "ag/opus"
-    assert client.requests[-1]["model"] == "ag/opus"
-    assert result.model == "ag/opus"
+    assert harness.stats.escalated_to == "prov/opus"
+    assert client.requests[-1]["model"] == "prov/opus"
+    assert result.model == "prov/opus"
 
 
 async def test_endless_repeats_are_cut_off(registry, tmp_path) -> None:
@@ -522,12 +521,12 @@ async def test_failure_after_tool_work_hands_over_to_the_stronger_model(registry
                 raise outcome
             return outcome
 
-    harness = make_harness(registry, tmp_path, advisor_model="ag/opus")
+    harness = make_harness(registry, tmp_path, advisor_model="prov/opus")
     result = await AgentLoop(Client(), registry, harness=harness).run(  # type: ignore[arg-type]
         "m", [{"role": "user", "content": "x"}], stream=False
     )
     assert result.content == "Selesai."
-    assert models == ["m", "m", "ag/opus"]
+    assert models == ["m", "m", "prov/opus"]
 
 
 def test_topic_tools_do_not_push_out_the_ability_to_run_things() -> None:
@@ -574,7 +573,7 @@ def test_limits_shrink_every_tier_and_turn_off_the_advisor() -> None:
     from agent.harness import RunLimits
 
     limits = RunLimits(max_rounds=10, tokens=1, deadline=0.0)
-    for model in ("x-flash", "ag/claude-sonnet-4-6", "vk/openai/gpt-6-sol"):
+    for model in ("x-flash", "prov/claude-sonnet-4-6", "prov/openai/gpt-6-sol"):
         scaffold = limits.apply(scaffold_for(model))
         assert scaffold.max_iterations == 10
         assert scaffold.context_chars <= 24_000

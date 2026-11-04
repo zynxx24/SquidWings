@@ -105,7 +105,7 @@ class Settings(BaseSettings):
     # ``extra="ignore"`` silently drops unknown keys, the values loaded fine
     # and then vanished — every ``settings.api_base_url`` in main.py raised
     # AttributeError and main() died before the first prompt.
-    api_base_url: str = "https://api.9router.ai/v1"
+    api_base_url: str = "https://api.openai.com/v1"
     default_model: str = ""
     default_temperature: float = 0.7
     default_max_tokens: int = 8192
