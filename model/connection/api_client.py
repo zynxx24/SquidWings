@@ -559,7 +559,7 @@ class APIClient(BaseClient):
         for provider, items in results:
             if items and hasattr(registry, "model_ids") and hasattr(registry, "unregister"):
                 current_ids = {m["id"] for m in items}
-                pinned = getattr(registry, "_static_ids", set())
+                pinned: set[str] = getattr(registry, "_static_ids", set())
                 for mid in list(registry.model_ids):
                     if mid in pinned or mid in current_ids:
                         continue
