@@ -12,19 +12,31 @@ panel fills the order ticket, and the normal preview and confirm still apply.
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
+import threading
 import time
+from collections.abc import Callable
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
 from trading import strategy
-from trading.quant import engine
+from trading.quant import engine, forward
 from trading.quant import risk as R
+from utils.logger import get_logger
 from web.mt5_api import _backend, guard
 
+logger = get_logger(__name__)
 router = APIRouter(prefix="/api/quant", tags=["quant"])
+WORKER_TIMEOUT_S = 300
+_worker: ProcessPoolExecutor | None = None
+_forward: forward.ForwardTest | None = None
+_worker_lock = threading.Lock()
 SCALP_MIN_BARS = 400
 
 
@@ -98,8 +110,8 @@ def _set_file(secret: str, url: str) -> str:
         f"BridgeSecret={secret}",
         "AllowTrading=false",
         "TickThrottleMs=200",
-        "PositionsEverySec=2",
-        "CommandsEverySec=1",
+        "PositionsEverySec=1",
+        "CommandsEveryMs=250",
         "SymbolsCsv=EURUSD,GBPUSD,XAUUSD",
         "MaxSlippage=20",
         "HISTORY_BARS=5000",
@@ -109,7 +121,7 @@ def _set_file(secret: str, url: str) -> str:
 
 @router.get("/bridge", dependencies=[Depends(guard)])
 def bridge_status() -> dict[str, Any]:
-    from web.mt4_bridge import bridge_secret, store
+    from web.mt4_bridge import EA_VERSION, bridge_secret, store
     with store.lock:
         symbols = sorted(store.ticks)
         # The EA skips unchanged quotes, so a quiet market has old tick times. The account heartbeat
@@ -121,6 +133,8 @@ def bridge_status() -> dict[str, Any]:
         "account": store.account.get("login") if store.account else None,
         "live": bool(store.account.get("live")) if store.account else False,
         "symbols": symbols,
+        "trading_allowed": bool(store.account.get("trade_allowed")) if store.account else False,
+        "ea_outdated": store.account is not None and int(store.account.get("ver") or 1) < EA_VERSION,
         "bars": {s: len(store.bars.get(s, [])) for s in symbols},
         "last_message_s_ago": round(time.time() - seen, 1) if seen else None,
     }
@@ -144,6 +158,32 @@ def bridge_pair(request: Request, rotate: bool = False) -> dict[str, Any]:
             "Di tab Inputs, tekan Load lalu pilih Mt4Bridge.set yang diunduh dari halaman ini.",
         ],
     }
+
+
+def _in_worker(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run a heavy pure-Python job in its own process.
+
+    A thread would hold the GIL for the whole job, and every price update, order and page refresh
+    would wait behind it.
+    """
+    global _worker
+    if os.getenv("QUANT_WORKER", "1").strip() == "0":
+        return fn(*args, **kwargs)
+    with _worker_lock:
+        if _worker is None:
+            _worker = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+        worker = _worker
+    try:
+        return worker.submit(fn, *args, **kwargs).result(timeout=WORKER_TIMEOUT_S)
+    except BrokenProcessPool:
+        with _worker_lock:
+            _worker = None
+        return fn(*args, **kwargs)
+
+
+def _short_history(found: int, needed: int) -> str:
+    return (f"Baru ada {found} bar, butuh minimal {needed}. Lepas Mt4Bridge dari chart lalu pasang lagi "
+            "supaya EA mengirim history-nya. Bar berikutnya tersimpan di disk, jadi cukup sekali.")
 
 
 def _scalp_reviewer(use_llm: bool) -> tuple[Any, dict[str, int]]:
@@ -190,15 +230,58 @@ def scalp_backtest(
     except Exception as exc:  # noqa: BLE001 - shown to the user, as the other backtest does
         raise HTTPException(502, f"Could not read data for {symbol}: {exc}") from exc
     if len(bars) < SCALP_MIN_BARS:
-        raise HTTPException(422, f"Only {len(bars)} short bars available; this backtest needs at least {SCALP_MIN_BARS}.")
-    reviewer, usage = _scalp_reviewer(llm)
-    result = scalp.run(bars, spread=spread, reviewer=reviewer)
-    baseline = scalp.run(bars, spread=spread, random_entries=True)
+        raise HTTPException(422, _short_history(len(bars), SCALP_MIN_BARS))
+    try:
+        reviewer, usage = _scalp_reviewer(llm)
+        # An LLM reviewer holds a live connection, so it stays here. The rule can move to the worker.
+        result = scalp.run(bars, spread=spread, reviewer=reviewer) if llm else _in_worker(scalp.run, bars, spread=spread, reviewer=reviewer)
+        baseline = _in_worker(scalp.run, bars, spread=spread, random_entries=True)
+    except Exception as exc:  # noqa: BLE001 - shown to the user instead of a bare 500
+        logger.exception("[quant] scalp backtest failed")
+        raise HTTPException(502, f"Backtest gagal: {exc}") from exc
     return {
         "symbol": symbol, "source": source, "bars": len(bars), "summary": result["summary"], "reviews": result["reviews"][-10:],
         "random_entries": baseline["summary"], "llm": {"used": llm, **usage},
         "warning": "A high win rate alone is not profit: compare the expectancy and the random-entry row. Past results do not show future ones.",
     }
+
+
+class ForwardIn(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=32, pattern=r"^[A-Za-z0-9._-]+$")
+    minutes: float = Field(..., gt=0, le=forward.MAX_MINUTES)
+
+
+@router.post("/forward/start", dependencies=[Depends(guard)])
+def forward_start(body: ForwardIn) -> dict[str, Any]:
+    """Start the demo-only forward test. It places real orders on the demo account by itself."""
+    from web.mt4_bridge import store as mt4_store
+
+    global _forward
+    if _forward and _forward.state == "running":
+        raise HTTPException(409, "Forward test masih berjalan.")
+    backend = _backend()
+    if backend.account().get("live"):
+        raise HTTPException(403, "Forward test hanya untuk akun demo.")
+    if backend.name == "mt4" and not (mt4_store.account or {}).get("trade_allowed"):
+        raise HTTPException(409, "EA menolak order: AllowTrading di chart masih mati. Tekan F7 di chart, tab Inputs.")
+    _forward = forward.ForwardTest(backend, body.symbol, body.minutes)
+    threading.Thread(target=_forward.run, name="forward-test", daemon=True).start()
+    return {"started": True, "file": str(_forward.path)}
+
+
+@router.post("/forward/stop", dependencies=[Depends(guard)])
+def forward_stop() -> dict[str, Any]:
+    if _forward is None:
+        raise HTTPException(404, "Belum ada forward test.")
+    _forward.stop_event.set()
+    return _forward.report()
+
+
+@router.get("/forward/status", dependencies=[Depends(guard)])
+def forward_status() -> dict[str, Any]:
+    if _forward is None:
+        raise HTTPException(404, "Belum ada forward test.")
+    return _forward.report()
 
 
 @router.get("/backtest", dependencies=[Depends(guard)])
@@ -222,8 +305,8 @@ def backtest(
         raise HTTPException(502, f"Could not read history for {symbol}: {exc}") from exc
     spread = max(0.0, float(spec_tick["ask"]) - float(spec_tick["bid"]))
     if len(bars) < 1200 + 400 + 10:
-        raise HTTPException(422, f"Only {len(bars)} closed bars available; the backtest needs at least 1610.")
-    res = bt.run(bars, symbol=symbol, train=min(2000, len(bars) // 2), refit=500, spread=spread, commission_r=commission_r)
+        raise HTTPException(422, _short_history(len(bars), 1610))
+    res = _in_worker(bt.run, bars, symbol=symbol, train=min(2000, len(bars) // 2), refit=500, spread=spread, commission_r=commission_r)
     return {
         "symbol": symbol, "bars": len(bars), "from": bars[0]["t"], "to": bars[-1]["t"],
         "spread_used": spread, "commission_r": commission_r,

@@ -77,6 +77,16 @@ Target 8 dari 10 bisa didekati dengan target sempit dan stop lebar, tetapi tiap 
 
 Bar M1 tidak bisa menunjukkan isi 30 detik. EA terbaru dan server merekam tick ke `trading/data/ticks/`, dan backtest otomatis memakainya setelah ada minimal 400 bar 5 detik, sekitar 35 menit data. Matikan rekaman dengan `MT4_RECORD_TICKS=0`.
 
+## Forward test demo
+
+`POST /api/quant/forward/start` dengan `{"symbol": "...", "minutes": 30}` menjalankan ensemble scalp dengan posisi sungguhan: 5 posisi 0,01 lot tiap 30 detik, dengan SL dan TP. Status ada di `GET /api/quant/forward/status`, dan `POST /api/quant/forward/stop` menghentikannya. Tiap basket dicatat di `trading/data/forward/`.
+
+Runner ini mengirim order tanpa konfirmasi, jadi ia menolak akun riil, berhenti sendiri di batas waktu (paling lama 120 menit), saat rugi 2% ekuitas awal, atau setelah 3 kali gagal berturut-turut. Posisi lain tidak disentuh.
+
+## Data yang tersimpan
+
+Semua ada di `trading/data/` dan tidak ikut Git: `journal.jsonl` (order dan close, termasuk SL, TP, dan tutup manual di MT4 lewat EA terbaru), `bars/`, `ticks/`, dan `forward/`. Folder ini hanya ada di mesin ini, jadi cadangkan sendiri.
+
 ## Status fitur
 
 | Fitur | Status |

@@ -28,6 +28,7 @@ from config.settings import get_settings
 from security.headers import SecurityHeadersMiddleware
 from security.web_access import WebSecurityMiddleware, is_loopback_host, set_public_mode
 from web.mt4_bridge import router as mt4_router
+from web.mt4_bridge import store
 from web.mt5_api import router as mt5_router
 from web.quant_api import router as quant_router
 
@@ -110,7 +111,9 @@ def run(host: str = "127.0.0.1", port: int = DEFAULT_PORT) -> int:
         return 1
     if not is_loopback_host(host):
         set_public_mode(True)      # the trading guard then demands MT5_TRADE_TOKEN
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    store.restore()
+    # No access log: the EA makes several requests a second, and each line would cost time.
+    uvicorn.run(app, host=host, port=port, log_level="warning")
     return 0
 
 

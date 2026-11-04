@@ -25,6 +25,7 @@ def limits() -> dict[str, Any]:
             return default
 
     return {
+        "max_risk_pct": num("MT5_MAX_RISK_PCT", 5.0),
         "max_volume": num("MT5_MAX_VOLUME", 0.10),
         "require_sl": os.getenv("MT5_REQUIRE_SL", "1").strip() != "0",
         "allow_live": os.getenv("MT5_ALLOW_LIVE", "0").strip() == "1",
@@ -42,6 +43,15 @@ def _multiple_of(value: float, step: float) -> bool:
         return True
     k = value / step
     return abs(k - round(k)) < 1e-6
+
+
+def check_risk(risk: dict[str, Any] | None) -> list[str]:
+    """A stop so far away that it does not limit anything. An entered SL of 1.0 on gold passed as a stop."""
+    limit = limits()["max_risk_pct"]
+    pct = (risk or {}).get("pct_of_equity")
+    if pct is not None and pct > limit:
+        return [f"Stop loss ini berisiko {pct}% ekuitas, di atas batas MT5_MAX_RISK_PCT={limit}%. Dekatkan SL atau kecilkan volume."]
+    return []
 
 
 def check_order(order: dict[str, Any], spec: dict[str, Any], tick: dict[str, Any]) -> list[str]:

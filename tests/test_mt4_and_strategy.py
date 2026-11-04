@@ -328,13 +328,83 @@ def test_lot_risk_uses_the_tick_value_for_cross_currency_pairs(monkeypatch):
     assert backend_module.Mt4BridgeBackend().risk_per_lot("USDCHF", "buy", 0.8, 0.799) == pytest.approx(125.0)
 
 
-def test_a_restarted_server_asks_the_ea_for_its_history_once_a_minute():
+def _bar(t, close=1.0):
+    return {"type": "bar", "symbol": "EURUSD", "time": t, "o": 1, "h": 1, "l": 1, "c": close}
+
+
+def test_a_restarted_server_asks_the_ea_for_its_history_a_few_times():
     from web import mt4_bridge as bridge
 
     store = bridge.Store()
     store.ingest([{"type": "tick", "symbol": "EURUSD", "bid": 1, "ask": 1}])
     assert store.wants_history() is True
-    assert store.wants_history() is False
+    assert store.wants_history() is False, "not again within a minute"
+    for _ in range(bridge.MAX_RESYNCS):
+        store.resync_at = 0.0
+        store.wants_history()
     store.resync_at = 0.0
-    store.ingest([{"type": "bar", "symbol": "EURUSD", "time": 1, "o": 1, "h": 1, "l": 1, "c": 1}])
+    assert store.wants_history() is False, "an EA that cannot answer must not be asked for ever"
+
+
+def test_enough_bars_stops_the_requests():
+    from web import mt4_bridge as bridge
+
+    store = bridge.Store()
+    store.ingest([{"type": "tick", "symbol": "EURUSD", "bid": 1, "ask": 1}])
+    store.ingest([_bar(t) for t in range(bridge.MIN_HISTORY_BARS)])
     assert store.wants_history() is False
+
+
+def test_history_that_arrives_after_newer_bars_is_kept_in_order():
+    """The bug behind the 422: older bars from a late EA were thrown away."""
+    from web import mt4_bridge as bridge
+
+    store = bridge.Store()
+    store.ingest([_bar(1000), _bar(1300)])
+    store.ingest([_bar(t) for t in (100, 400, 700)])
+    assert [b["t"] for b in store.bars["EURUSD"]] == [100, 400, 700, 1000, 1300]
+
+
+def test_a_resent_bar_replaces_the_old_values():
+    from web import mt4_bridge as bridge
+
+    store = bridge.Store()
+    store.ingest([_bar(100, 1.0)])
+    store.ingest([_bar(100, 2.0)])
+    assert [b["c"] for b in store.bars["EURUSD"]] == [2.0]
+
+
+def test_saved_bars_come_back_after_a_restart(tmp_path, monkeypatch):
+    from trading.quant import ticks
+    from web import mt4_bridge as bridge
+
+    monkeypatch.setenv("MT4_RECORD_TICKS", "1")
+    monkeypatch.setattr(ticks, "TICK_DIR", tmp_path / "ticks")
+    monkeypatch.setattr(ticks, "append", lambda *a, **k: None)
+    first = bridge.Store()
+    first.ingest([_bar(100, 1.0), _bar(400, 1.5)])
+    first.ingest([_bar(400, 2.0)])
+    second = bridge.Store()
+    assert second.restore() == 1
+    assert [(b["t"], b["c"]) for b in second.bars["EURUSD"]] == [(100, 1.0), (400, 2.0)]
+
+
+def test_a_cut_off_line_in_the_saved_bars_is_skipped(tmp_path):
+    from trading.quant import ticks
+
+    (tmp_path / "EURUSD-M5.csv").write_text("100,1,1,1,1,5\n400,1,1", encoding="utf-8")
+    assert [b["t"] for b in ticks.load_saved_bars(tmp_path)[("EURUSD", "M5")]] == [100]
+
+
+def test_the_backtest_says_how_to_get_more_bars(monkeypatch):
+    from web import quant_api
+
+    assert "pasang lagi" in quant_api._short_history(27, 1610) and "27" in quant_api._short_history(27, 1610)
+
+
+def test_an_old_ea_is_reported():
+    from web import mt4_bridge as bridge
+
+    assert bridge.EA_VERSION == 2
+    assert '\\"ver\\":2' in (Path(bridge.__file__).resolve().parent.parent / "trading/mt4/Mt4Bridge.mq4").read_text(encoding="utf-8")
+

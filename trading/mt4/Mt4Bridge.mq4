@@ -17,8 +17,8 @@ input string BridgeUrl     = "http://127.0.0.1";  // agent endpoint (must be whi
 input string BridgeSecret  = "";           // empty = read it from MQL4/Files/mt4_bridge_secret.txt
 input bool   AllowTrading  = true;        // true = execute order commands from the agent
 input int    TickThrottleMs = 200;         // at most one tick message per symbol this often
-input int    PositionsEverySec = 2;        // how often open positions and account are pushed
-input int    CommandsEverySec  = 1;        // how often the EA asks for new commands
+input int    PositionsEverySec = 1;        // how often open positions and account are pushed
+input int    CommandsEveryMs   = 250;      // how often the EA asks for new commands
 input string SymbolsCsv    = "";          // extra symbols to stream, comma separated (chart symbol is always included)
 input int    MaxSlippage   = 20;          // points
 input int    HISTORY_BARS  = 5000;        // closed M5 bars sent at start, per symbol (for backtests)
@@ -31,7 +31,7 @@ double   g_lastAsk[];
 string   g_symbols[];
 ulong    g_lastTickMs = 0;
 datetime g_lastPositions = 0;
-datetime g_lastCommands  = 0;
+ulong    g_lastCommands  = 0;
 datetime g_lastHistoryTry = 0;
 datetime g_lastErrorLog = 0;
 datetime g_lastDeals = 0;
@@ -55,7 +55,7 @@ int OnInit()
    ArrayInitialize(g_lastBid, 0.0);
    ArrayInitialize(g_lastAsk, 0.0);
    PushHistory();
-   EventSetTimer(1);
+   EventSetMillisecondTimer(50);
    Print("Mt4Bridge started for ", ArraySize(g_symbols), " symbol(s). Trading allowed: ", AllowTrading);
    return(INIT_SUCCEEDED);
 }
@@ -83,9 +83,14 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   // OnTick fires on the chart symbol only. Every symbol in the list is read here, and all
-   // of their quotes go out in ONE request per throttle window: WebRequest blocks the EA
-   // until the server answers, so one request per symbol would slow order handling.
+   PushQuotes();
+}
+
+// OnTick fires on the chart symbol only, so the timer calls this too. Every symbol in the list is
+// read here, and all of their quotes go out in ONE request per throttle window: WebRequest blocks
+// the EA until the server answers, so one request per symbol would slow order handling.
+void PushQuotes()
+{
    ulong nowMs = GetTickCount();
    if (nowMs - g_lastTickMs < (ulong)TickThrottleMs) return;
    g_lastTickMs = nowMs;
@@ -121,6 +126,13 @@ void OnTimer()
    // TimeLocal, not TimeCurrent: server time stops without ticks, and the heartbeat and the
    // command poll must keep going when the market is closed or the terminal is reconnecting.
    datetime now = TimeLocal();
+   ulong nowMs = GetTickCount();
+   if (nowMs - g_lastCommands >= (ulong)CommandsEveryMs)
+   {
+      g_lastCommands = nowMs;
+      PollCommands();
+   }
+   PushQuotes();
    if (now - g_lastHistoryTry >= 30)
    {
       g_lastHistoryTry = now;
@@ -135,11 +147,6 @@ void OnTimer()
    {
       g_lastDeals = now;
       PushDeals();
-   }
-   if (now - g_lastCommands >= CommandsEverySec)
-   {
-      g_lastCommands = now;
-      PollCommands();
    }
 }
 
@@ -260,7 +267,7 @@ void PushAccountAndPositions()
                                  (int)OrderOpenTime(), JsonEscape(OrderComment()));
       pos += (pos == "" ? "" : ",") + item;
    }
-   string acct = StringFormat("{\"type\":\"account\",\"ea\":\"%s\",\"login\":%d,\"server\":\"%s\",\"currency\":\"%s\",\"balance\":%s,\"equity\":%s,\"margin\":%s,\"free_margin\":%s,\"profit\":%s,\"leverage\":%d,\"live\":%s,\"trade_allowed\":%s,\"positions\":[%s],\"orders\":[%s]}",
+   string acct = StringFormat("{\"type\":\"account\",\"ea\":\"%s\",\"login\":%d,\"server\":\"%s\",\"currency\":\"%s\",\"balance\":%s,\"equity\":%s,\"margin\":%s,\"free_margin\":%s,\"profit\":%s,\"leverage\":%d,\"ver\":2,\"live\":%s,\"trade_allowed\":%s,\"positions\":[%s],\"orders\":[%s]}",
                               g_eaId, AccountNumber(), JsonEscape(AccountServer()), AccountCurrency(),
                               DoubleToString(AccountBalance(), 2), DoubleToString(AccountEquity(), 2),
                               DoubleToString(AccountMargin(), 2), DoubleToString(AccountFreeMargin(), 2),

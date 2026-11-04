@@ -36,6 +36,28 @@ def record(event: dict[str, Any]) -> None:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
+def _closed_tickets(rows: list[dict[str, Any]]) -> set[int]:
+    return {int(r["ticket"]) for r in rows if r.get("event") == "close" and r.get("ticket") is not None}
+
+
+def record_closes(deals: list[dict[str, Any]]) -> int:
+    """Closed trades reported by the terminal. A ticket already in the journal is not added twice."""
+    known = _closed_tickets([r for r in read() if r.get("source") == "terminal"])
+    fresh = [deal for deal in deals if int(deal["ticket"]) not in known]
+    for deal in fresh:
+        record({"event": "close", "ticket": int(deal["ticket"]), "symbol": deal.get("symbol"), "side": deal.get("side"),
+                "volume": float(deal.get("volume") or 0), "price": float(deal.get("price") or 0), "profit": float(deal.get("profit") or 0),
+                "closed_at": int(deal.get("time") or 0), "comment": deal.get("comment", ""), "source": "terminal", "backend": "mt4"})
+    return len(fresh)
+
+
+def saved_deals() -> list[dict[str, Any]]:
+    """The terminal's closed trades from the journal, in the shape the EA sends them."""
+    return [{"ticket": r["ticket"], "symbol": r.get("symbol"), "side": r.get("side") or "buy", "volume": r.get("volume"),
+             "price": r.get("price") or 0, "profit": r.get("profit") or 0, "time": r.get("closed_at") or 0, "comment": r.get("comment", "")}
+            for r in read() if r.get("event") == "close" and r.get("source") == "terminal"]
+
+
 def read(since_days: int | None = None) -> list[dict[str, Any]]:
     target = path()
     if not target.exists():
@@ -66,7 +88,11 @@ def trades(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Pair each open with its close by ticket. Open trades are left out."""
     opened: dict[int, dict[str, Any]] = {}
     closed: list[dict[str, Any]] = []
+    # The terminal's own figure wins over the one noted when the close was sent, and counts once.
+    settled = _closed_tickets([r for r in rows if r.get("source") == "terminal"])
     for r in rows:
+        if r.get("event") == "close" and r.get("source") != "terminal" and r.get("ticket") is not None and int(r["ticket"]) in settled:
+            continue
         if r.get("event") == "order" and r.get("ticket") is not None:
             opened[int(r["ticket"])] = r
         elif r.get("event") == "close" and r.get("ticket") is not None:

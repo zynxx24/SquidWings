@@ -375,9 +375,10 @@
     // Polling pauses while the tab is hidden and catches up when it comes back.
     const every = (ms, fn) => setInterval(() => { if (!document.hidden) fn(); }, ms);
     every(500, T.tickModal);
-    every(1000, tickLoop);
+    every(250, tickLoop);
     every(3000, () => { if (S.connected) refreshQuotes(); });
-    every(5000, () => { T.refreshAll(); T.refreshBridge(); });
+    every(1000, T.refreshAll);
+    every(5000, T.refreshBridge);
     every(30000, () => { if (S.connected && S.symbol) loadBars(); });
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) { tickLoop(); T.refreshAll(); T.refreshBridge(); }

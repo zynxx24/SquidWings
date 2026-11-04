@@ -259,6 +259,9 @@ def preview_order(body: OrderIn) -> dict[str, Any]:
     if not check.get("ok"):
         raise HTTPException(422, {"problems": [f"Broker refused the order: {check.get('comment')}"], "check": check})
     equity = float(_run(b.account)["equity"])
+    risky = mt5_rules.check_risk(_risk(b, order["symbol"], order["side"], float(order["volume"]), order.get("sl"), equity))
+    if risky:
+        raise HTTPException(422, {"problems": risky})
     pid = secrets.token_urlsafe(16)
     _previews[pid] = {"kind": "order", "order": order, "expires": time.time() + PREVIEW_TTL}
     return {"preview_id": pid, "expires_in": PREVIEW_TTL, "order": order,

@@ -21,6 +21,7 @@ from collections.abc import Callable
 from typing import Any
 
 from model.connection.response_handler import ResponseHandler
+from model.settings.model_picker import is_chat_model, is_cheap
 from trading.quant.scalp import BOUNDS, TARGET_WIN_RATE
 from utils.logger import get_logger
 
@@ -84,18 +85,32 @@ def llm_reviewer(client: Any, model: str, *, max_calls: int = MAX_LLM_CALLS,
     Returns the reviewer and a counter of calls and failures, so the result can say what really ran.
     """
     usage = {"llm_calls": 0, "llm_failures": 0}
+    # One loop for every call: the client's connections belong to the loop that opened them.
+    loop = asyncio.new_event_loop()
+    chosen = {"model": model}
+
+    async def pick_model() -> str:
+        """Without a configured model, take a chat model the endpoint lists, cheap names first."""
+        names = [str(m.get("id")) for m in await client.list_models() if m.get("id")]
+        usable = sorted((name for name in names if is_chat_model(name)), key=lambda name: not is_cheap(name))
+        if not usable:
+            raise RuntimeError("the endpoint lists no chat model")
+        return usable[0]
 
     async def ask(prompt: str) -> Any:
-        call = client.chat_completion(model=model, messages=[{"role": "user", "content": prompt}],
+        if not chosen["model"]:
+            chosen["model"] = await pick_model()
+        call = client.chat_completion(model=chosen["model"], messages=[{"role": "user", "content": prompt}],
                                       temperature=0.0, max_tokens=256)
         return await call if inspect.isawaitable(call) else call
 
     def review(stats: dict[str, Any], policy: dict[str, float]) -> dict[str, Any]:
-        if usage["llm_calls"] >= max_calls:
+        # A model that failed once would only make every later review wait for its timeout too.
+        if usage["llm_calls"] >= max_calls or usage["llm_failures"]:
             return rule_reviewer(stats, policy)
         usage["llm_calls"] += 1
         try:
-            raw = asyncio.run(asyncio.wait_for(ask(build_prompt(stats, policy)), timeout))
+            raw = loop.run_until_complete(asyncio.wait_for(ask(build_prompt(stats, policy)), timeout))
             return parse_answer(ResponseHandler.handle(raw).content)
         except Exception as exc:  # noqa: BLE001 - a model failure must not end a backtest
             usage["llm_failures"] += 1

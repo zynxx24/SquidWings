@@ -24,6 +24,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
+from trading import journal
 from trading.quant import ticks
 from utils.logger import get_logger
 
@@ -32,9 +33,16 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/mt4", tags=["mt4"])
 
 BAR_KEEP = 6000
+EA_VERSION = 2           # what Mt4Bridge.mq4 reports; an older EA lacks history resend and fast commands
+MIN_HISTORY_BARS = 1610  # what the backtest needs
+MAX_RESYNCS = 3
 RESYNC_EVERY = 60        # seconds between requests for the EA to send its history again
 EA_TIMEOUT = 15          # seconds without a message before the EA counts as gone
 RESULT_WAIT = 8          # seconds to wait for the EA to report an order's outcome
+
+
+def _recording() -> bool:
+    return os.getenv("MT4_RECORD_TICKS", "1").strip() != "0"
 
 
 class Store:
@@ -51,10 +59,54 @@ class Store:
         self.orders: list[dict[str, Any]] = []
         self.deals: list[dict[str, Any]] = []
         self.resync_at = 0.0
+        self.resyncs = 0
         self.commands: deque[dict[str, Any]] = deque()
         self.results: dict[str, str] = {}
 
+    def _merge_bars(self, symbol: str, timeframe: str, bars: list[dict[str, Any]]) -> None:
+        """Add bars in time order. History can arrive after newer bars, as when an EA is attached late."""
+        book = self.bars_m1 if timeframe == "M1" else self.bars
+        series = book.get(symbol)
+        if series is None or (series and min(b["t"] for b in bars) <= series[-1]["t"]):
+            merged = {bar["t"]: bar for bar in series or ()} | {bar["t"]: bar for bar in bars}
+            book[symbol] = deque((merged[t] for t in sorted(merged)), maxlen=BAR_KEEP)
+        else:
+            series.extend(sorted(bars, key=lambda bar: bar["t"]))
+
+    @staticmethod
+    def _save_bars(symbol: str, timeframe: str, bars: list[dict[str, Any]]) -> None:
+        if not _recording():
+            return
+        try:
+            ticks.append_bars(symbol, timeframe, bars)
+        except OSError as exc:
+            logger.debug(f"[mt4] bars not saved: {exc}")
+
+    def _merge_deals(self, deals: list[dict[str, Any]]) -> None:
+        """Keep every closed trade the EA reports, and put the new ones in the journal.
+
+        That covers a stop, a target or a close in the terminal, which never pass through the panel.
+        The EA sends only the latest 100, so the list here grows past that.
+        """
+        known = {int(deal["ticket"]) for deal in self.deals}
+        fresh = [deal for deal in deals if int(deal["ticket"]) not in known]
+        self.deals.extend(fresh)
+        if fresh and _recording():
+            journal.record_closes(fresh)
+
+    def restore(self) -> int:
+        """Bring back what was saved before a restart. Returns how many bar series came back."""
+        saved = ticks.load_saved_bars() if _recording() else {}
+        if _recording():
+            self.deals = journal.saved_deals()
+        with self.lock:
+            for (symbol, timeframe), bars in saved.items():
+                if bars:
+                    self._merge_bars(symbol, timeframe, bars)
+        return len(saved)
+
     def ingest(self, items: list[dict[str, Any]]) -> int:
+        received: dict[tuple[str, str], list[dict[str, Any]]] = {}
         with self.lock:
             for item in items:
                 kind = item.get("type")
@@ -62,26 +114,24 @@ class Store:
                     self.ticks[item["symbol"]] = {**item, "seen": time.time()}
                     self._record_tick(item)
                 elif kind == "bar":
-                    book = self.bars_m1 if item.get("tf") == "M1" else self.bars
-                    series = book.setdefault(item["symbol"], deque(maxlen=BAR_KEEP))
                     bar = {"t": int(item["time"]), "o": float(item["o"]), "h": float(item["h"]),
                            "l": float(item["l"]), "c": float(item["c"]), "v": int(item.get("v", 0))}
-                    if not series or series[-1]["t"] < bar["t"]:
-                        series.append(bar)
-                    elif series[-1]["t"] == bar["t"]:
-                        series[-1] = bar
+                    received.setdefault((item["symbol"], str(item.get("tf") or "M5")), []).append(bar)
                 elif kind == "account":
                     self.account = {k: v for k, v in item.items() if k not in ("type", "positions")}
                     self.account_seen = time.time()
                     self.positions = list(item.get("positions", []))
                     self.orders = list(item.get("orders", []))
                 elif kind == "history":
-                    self.deals = list(item.get("deals", []))
+                    self._merge_deals(list(item.get("deals", [])))
+            for (symbol, timeframe), bars in received.items():
+                self._merge_bars(symbol, timeframe, bars)
+                self._save_bars(symbol, timeframe, bars)
             return len(items)
 
     @staticmethod
     def _record_tick(item: dict[str, Any]) -> None:
-        if os.getenv("MT4_RECORD_TICKS", "1").strip() == "0":
+        if not _recording():
             return
         try:
             ticks.append(item["symbol"], time.time(), float(item["bid"]), float(item["ask"]))
@@ -89,12 +139,13 @@ class Store:
             logger.debug(f"[mt4] tick not recorded: {exc}")
 
     def wants_history(self) -> bool:
-        """True when a streamed symbol has no bars, as after a server restart. At most once a minute."""
+        """True when a streamed symbol has too few bars to backtest. Asks a few times, a minute apart."""
         with self.lock:
-            missing = any(not self.bars.get(symbol) for symbol in self.ticks)
-            if not missing or time.time() - self.resync_at < RESYNC_EVERY:
+            short = any(len(self.bars.get(symbol, ())) < MIN_HISTORY_BARS for symbol in self.ticks)
+            if not short or self.resyncs >= MAX_RESYNCS or time.time() - self.resync_at < RESYNC_EVERY:
                 return False
             self.resync_at = time.time()
+            self.resyncs += 1
             return True
 
     def alive(self) -> bool:
@@ -119,7 +170,7 @@ class Store:
             with self.lock:
                 if cid in self.results:
                     return self.results.pop(cid)
-            time.sleep(0.1)
+            time.sleep(0.02)
         return None
 
     def set_results(self, lines: list[str]) -> None:
@@ -196,4 +247,4 @@ async def result(request: Request, x_bridge_secret: str | None = Header(default=
     return "ok"
 
 
-__all__ = ["router", "store", "Store", "EA_TIMEOUT", "RESULT_WAIT"]
+__all__ = ["router", "store", "Store", "EA_TIMEOUT", "EA_VERSION", "MIN_HISTORY_BARS", "RESULT_WAIT"]

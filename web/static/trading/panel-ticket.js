@@ -269,6 +269,8 @@
     try {
       const b = await T.api("/api/quant/bridge");
       if (!b.paired) setEaPill("EA: belum dipasang", "off", "Buka Koneksi lalu Pasang EA");
+      else if (b.ea_online && !b.trading_allowed) setEaPill("Trading mati di EA", "warn", "AllowTrading di chart masih mati. Tekan F7 di chart MT4, tab Inputs.");
+      else if (b.ea_outdated) setEaPill("EA versi lama", "warn", "Lepas Mt4Bridge dari chart lalu pasang lagi");
       else if (b.ea_online) setEaPill("EA online", b.live ? "live" : "demo", `Akun ${b.account ?? "-"} · pesan terakhir ${b.last_message_s_ago} s lalu`);
       else setEaPill("EA offline", "warn", "Sudah dipasang, tapi tidak ada pesan dari EA dalam 15 detik");
     } catch (e) {

@@ -27,6 +27,30 @@ def append(symbol: str, seen: float, bid: float, ask: float, folder: Path | None
         out.write(f"{seen:.3f},{bid},{ask}\n")
 
 
+def append_bars(symbol: str, timeframe: str, bars: list[dict[str, float]], folder: Path | None = None) -> None:
+    """Keep closed bars on disk, so a server restart does not need the EA to send them again."""
+    root = (folder or TICK_DIR.parent / "bars")
+    root.mkdir(parents=True, exist_ok=True)
+    with open(root / f"{_safe(symbol)}-{timeframe}.csv", "a", encoding="utf-8") as out:
+        out.writelines(f"{b['t']},{b['o']},{b['h']},{b['l']},{b['c']},{b['v']}\n" for b in bars)
+
+
+def load_saved_bars(folder: Path | None = None) -> dict[tuple[str, str], list[dict[str, float]]]:
+    """Every saved series, oldest bar first. A bar written twice keeps its latest values."""
+    root = (folder or TICK_DIR.parent / "bars")
+    series: dict[tuple[str, str], list[dict[str, float]]] = {}
+    for path in sorted(root.glob("*.csv")) if root.is_dir() else []:
+        symbol, _, timeframe = path.stem.rpartition("-")
+        rows: dict[float, dict[str, float]] = {}
+        for line in path.read_text(encoding="utf-8").splitlines():
+            parts = line.split(",")
+            if len(parts) == 6:      # a shorter line was cut off by a crash
+                t, o, h, low, c, v = (float(part) for part in parts)
+                rows[t] = {"t": int(t), "o": o, "h": h, "l": low, "c": c, "v": int(v)}
+        series[(symbol, timeframe)] = [rows[t] for t in sorted(rows)]
+    return series
+
+
 def load_bars(symbol: str, seconds: int = BAR_SECONDS, folder: Path | None = None) -> tuple[list[dict[str, float]], float]:
     """Bars built from the recorded mid prices, and the median spread. Empty when nothing is recorded."""
     root = folder or TICK_DIR
@@ -49,4 +73,4 @@ def load_bars(symbol: str, seconds: int = BAR_SECONDS, folder: Path | None = Non
     return bars, statistics.median(spreads) if spreads else 0.0
 
 
-__all__ = ["append", "load_bars", "BAR_SECONDS", "TICK_DIR"]
+__all__ = ["append", "append_bars", "load_bars", "load_saved_bars", "BAR_SECONDS", "TICK_DIR"]

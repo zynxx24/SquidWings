@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import random
 
@@ -163,4 +164,56 @@ def test_the_llm_reviewer_can_be_built_from_the_real_settings():
 
     review, usage = quant_api._scalp_reviewer(True)
     assert callable(review) and usage == {"llm_calls": 0, "llm_failures": 0}
+
+
+class _Listing(_FakeClient):
+    async def list_models(self):
+        return [{"id": "text-embedding-3"}, {"id": "vendor/opus-big"}, {"id": "vendor/tiny-flash"}]
+
+    async def chat_completion(self, **kwargs):
+        self.model = kwargs["model"]
+        return await super().chat_completion(**kwargs)
+
+
+def test_with_no_model_set_the_reviewer_picks_a_cheap_listed_one():
+    client = _Listing('{"tp_atr": 0.25}')
+    review, _ = scalp_review.llm_reviewer(client, "")
+    review(_stats(), {"cooldown_s": 30.0, "threshold": 0.7, "tp_atr": 0.3, "sl_atr": 3.0})
+    assert client.model == "vendor/tiny-flash"
+
+
+def test_every_review_shares_one_event_loop():
+    seen = []
+
+    class Client(_FakeClient):
+        async def chat_completion(self, **kwargs):
+            seen.append(asyncio.get_running_loop())
+            return await super().chat_completion(**kwargs)
+
+    review, _ = scalp_review.llm_reviewer(Client('{"tp_atr": 0.25}'), "m", max_calls=3)
+    for _ in range(3):
+        review(_stats(), {"cooldown_s": 30.0, "threshold": 0.7, "tp_atr": 0.3, "sl_atr": 3.0})
+    assert len(set(seen)) == 1, "connections belong to one loop; a new loop per call breaks the second call"
+
+
+def test_after_one_failure_the_llm_is_left_alone():
+    client = _FakeClient(RuntimeError("down"))
+    review, usage = scalp_review.llm_reviewer(client, "m")
+    for _ in range(3):
+        review(_stats(), {"cooldown_s": 30.0, "threshold": 0.7, "tp_atr": 0.3, "sl_atr": 3.0})
+    assert client.calls == 1 and usage["llm_failures"] == 1
+
+
+def test_the_heavy_job_really_runs_in_another_process(monkeypatch):
+    import os
+
+    from web import quant_api
+
+    monkeypatch.setenv("QUANT_WORKER", "1")
+    monkeypatch.setattr(quant_api, "_worker", None)
+    try:
+        assert quant_api._in_worker(os.getpid) != os.getpid()
+    finally:
+        if quant_api._worker:
+            quant_api._worker.shutdown()
 
