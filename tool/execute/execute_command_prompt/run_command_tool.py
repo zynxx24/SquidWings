@@ -24,6 +24,8 @@ from tool.execute.execute_command_prompt.command_sanitizer import CommandSanitiz
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
+# Long enough to render a minute of video. A command that hangs still ends.
+MAX_COMMAND_SECONDS = 900
 
 
 async def execute_command(
@@ -45,6 +47,8 @@ async def execute_command(
         dict with: success, command, stdout, stderr,
         return_code, duration, timed_out, error (if any).
     """
+    timeout = max(1, min(int(timeout or 30), MAX_COMMAND_SECONDS))
+
     # 1. Sanitize command
     sanitizer = CommandSanitizer()
     check = sanitizer.sanitize(command)

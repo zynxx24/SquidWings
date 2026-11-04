@@ -434,3 +434,71 @@ async def test_loading_a_dormant_skill_by_name_wakes_it(tmp_path: Path, monkeypa
     monkeypatch.setattr(skill_tool, "get_active_workspace", lambda: str(tmp_path))
     assert (await skill_tool.load_skill("animate"))["ok"]
     assert session_settings.load(tmp_path).skills == ["animate"]
+
+
+# --- video mode ----------------------------------------------------------
+
+
+async def test_video_mode_gives_long_limits_and_wakes_animate(tmp_path: Path, settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from utils import session_settings
+
+    monkeypatch.setattr(team_orchestrator.session_stack, "session_workspace", lambda run_id, create=True: tmp_path / run_id)
+    manager, fake = make(tmp_path)
+    standard = manager.create_team("biasa", "", [agent("a"), agent("b")], "a")
+    video = manager.create_team("video", "", [agent("a"), agent("b")], "a", mode="video")
+    assert standard.mode == "standard" and video.mode == "video"
+
+    run = await finish(manager, video.id)
+    assert run.budget["run_seconds"] == settings.team_video_run_seconds
+    limits = manager._limits(run, "lead")
+    # The lead keeps every round and its full tokens: it still reviews and renders.
+    assert limits.max_rounds == settings.team_video_member_rounds
+    assert limits.tokens == settings.team_video_member_tokens
+    assert session_settings.load(tmp_path / run.id).skills == ["animate"]
+
+    plain = await finish(manager, standard.id)
+    assert plain.budget["run_seconds"] == settings.team_run_seconds
+    assert manager._limits(plain, "lead").max_rounds == team_orchestrator.FINISHING_ROUNDS["lead"]
+    assert session_settings.load(tmp_path / plain.id).skills == []
+    assert len(fake.calls) == 4
+
+
+def test_unknown_team_modes_are_refused(tmp_path: Path, settings: Any) -> None:
+    manager, _ = make(tmp_path)
+    with pytest.raises(ValueError):
+        manager.create_team("t", "", [agent("a"), agent("b")], "a", mode="turbo")
+
+
+def test_video_studio_template_is_valid(tmp_path: Path, settings: Any) -> None:
+    manager, _ = make(tmp_path)
+    template = next(t for t in team_templates(["m"]) if t["key"] == "video-studio")
+    team = manager.create_team(
+        template["name"], "", template["members"], template["lead_id"], template["reviewer_id"], mode=template["mode"],
+    )
+    assert team.mode == "video" and team.lead_id == "editor"
+
+
+async def test_a_video_shared_mid_run_survives_a_lead_that_leaves_it_out(
+    tmp_path: Path, settings: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from utils import shared_files
+    from utils.workspace_context import get_active_workspace
+
+    monkeypatch.setattr(team_orchestrator.session_stack, "session_workspace", lambda run_id, create=True: tmp_path / run_id)
+    manager, fake = make(tmp_path)
+    original = fake.process
+
+    async def process(**kwargs: Any) -> Any:
+        # The animator renders and shares; the lead's answer then forgets the link.
+        if "-b-" in kwargs["session_id"]:
+            workspace = Path(get_active_workspace())
+            (workspace / "renders").mkdir(exist_ok=True)
+            (workspace / "renders/share.mp4").write_bytes(b"video")
+            shared_files.add(workspace, "renders/share.mp4")
+        return await original(**kwargs)
+
+    fake.process = process  # type: ignore[method-assign]
+    team = manager.create_team("video", "", [agent("a"), agent("b")], "a", mode="video")
+    run = await finish(manager, team.id)
+    url = shared_files.url_for(run.id, "renders/share.mp4")
+    assert run.result.count(url) == 1

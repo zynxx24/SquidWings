@@ -2,6 +2,8 @@
 
 Menu ini aktif dengan `WEB_TEAMS_ENABLED=true`. Satu permintaan tim dibatasi 10 menit, dan tiap agent 4 menit serta 120 ribu token. Ubah lewat `TEAM_RUN_SECONDS`, `TEAM_MEMBER_SECONDS`, `TEAM_MEMBER_ROUNDS`, dan `TEAM_MEMBER_TOKENS`.
 
+Centang **Mode video** pada tim yang membangun dan merender video. Tim itu dapat 60 menit per permintaan, dan tiap agent 30 menit, 40 putaran, serta 400 ribu token. Skill `animate` juga langsung aktif di sesinya. Ubah lewat `TEAM_VIDEO_RUN_SECONDS`, `TEAM_VIDEO_MEMBER_SECONDS`, `TEAM_VIDEO_MEMBER_ROUNDS`, dan `TEAM_VIDEO_MEMBER_TOKENS`. Template **Studio video animasi** sudah memakai mode ini: penulis naskah, animator, lalu editor yang meninjau dan mengirim videonya ke hasil tim.
+
 ## Alur
 
 Kanvas tim bekerja seperti alur di n8n. Urutannya ditandai 1, 2, 3 mengikuti sambungan antar-node, dan node pertama diberi tanda **Mulai**. Jalur keluar dari gate dan switch diberi huruf, misalnya 5A dan 5B, dan hanya jalur yang terpilih yang berjalan.
@@ -37,6 +39,7 @@ Template yang tersedia:
 
 - **Alarm bangun dan pengingat jadwal**: berjalan jam 05:00, 12:00, 17:00, dan 21:00. Pagi hari, gate AND (jam 04:00 sampai 10:00 dan catatan tidak berisi "libur") membangunkan lewat Telegram, lalu alarm kedua 10 menit kemudian. Di jam lain, agent mengingatkan kegiatan 4 jam ke depan. Ubah daftar kegiatan di node **Agenda**.
 - **Bot Telegram serba bisa**: berjalan saat kamu mengirim pesan ke bot. Switch memilah `/jadwal`, `/cuaca`, dan `/catat`, pesan lain dijawab agent umum, lalu balasan dikirim ke chat yang sama.
+- **Studio video animasi**: mode video, dari naskah sampai video yang bisa diputar di hasil tim.
 - **Asisten sehari-hari**: mencari fakta nyata, jeda, gate, menulis jawaban, lalu mengirim ke Telegram dan menyimpan ke database.
 
 Telegram butuh `TELEGRAM_BOT_TOKEN` dan `TELEGRAM_CHAT_ID` di `.env`. Untuk tahu chat ID-mu, kirim pesan ke bot lalu buka `https://api.telegram.org/bot<TOKEN>/getUpdates`. Database selain SQLite butuh alamatnya di `.env` dan drivernya:
