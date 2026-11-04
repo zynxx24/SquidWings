@@ -38,15 +38,8 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Providers / model-id prefixes that natively support prompt caching.
-_CACHE_SUPPORTED_PREFIXES: tuple[str, ...] = (
-    "ag/claude",
-    "kg/claude",
-    "ag/gemini",   # Gemini silently ignores — safe to include
-    "kg/gemini",
-    "kg/gpt",
-    "ag/gpt",
-)
+# Model families that support prompt caching, whichever endpoint serves them.
+_CACHE_FAMILIES: tuple[str, ...] = ("claude", "gemini", "gpt")
 
 # Minimum system-prompt token count to bother caching.
 _MIN_TOKENS_TO_CACHE = 100
@@ -58,8 +51,7 @@ _MAX_BREAKPOINTS = 4
 def _supports_cache(model_id: str) -> bool:
     """Return True if the model may benefit from prompt caching."""
     ml = (model_id or "").lower()
-    # Providers differ in prefix, but a Claude model behind any of them caches.
-    return "claude" in ml or any(ml.startswith(p) for p in _CACHE_SUPPORTED_PREFIXES)
+    return any(family in ml for family in _CACHE_FAMILIES)
 
 
 def _inject_cache_control(block: dict[str, Any]) -> dict[str, Any]:

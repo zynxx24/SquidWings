@@ -24,3 +24,9 @@ Generic AI output is recognisable: purple gradients, everything centred, identic
 **Motion** only explains a change: 150 to 250ms, and respect `prefers-reduced-motion`.
 
 Before finishing, check the page at 360px and at desktop width, in light and dark, and with long text and with no data.
+
+## How to think this through
+
+Start from the person using the screen: what they came to do, and the one thing they must see first. Give that the most space and contrast. Everything else steps back. Before adding a new element, try removing one.
+
+Look at the existing screens and reuse their colours, spacing and components, since consistency reads as quality. Think through the states people really meet: empty, loading, error, very long text, a small screen. After you build it, open it and look. A design only exists once you have seen it rendered.

@@ -53,6 +53,8 @@ class Skill:
     requires: tuple[str, ...] = ()
     scope: str = "core"
     context: tuple[str, ...] = ()
+    # Task types this guide is for. Empty means all. "bingung" in a coding request is not a heart-to-heart.
+    tasks: tuple[str, ...] = ()
     # Set for folder skills: where the companion files live, and which guides there are.
     root: Path | None = None
     guides: tuple[str, ...] = field(default=())
@@ -96,6 +98,7 @@ def _parse(path: Path) -> Skill | None:
         requires=tuple(r.strip() for r in fields.get("requires", "").split(",") if r.strip()),
         scope="contextual" if fields.get("scope", "").lower() == "contextual" else "core",
         context=tuple(c.strip().lower() for c in fields.get("context", "").split(",") if c.strip()),
+        tasks=tuple(t.strip().lower() for t in fields.get("tasks", "").split(",") if t.strip()),
         root=path.parent if folder else None,
         guides=_guides(path.parent) if folder else (),
     )
@@ -137,7 +140,7 @@ def woken(user_input: str) -> list[str]:
     ]
 
 
-def select(user_input: str, limit: int = 2, active: tuple[str, ...] | list[str] = ()) -> list[Skill]:
+def select(user_input: str, limit: int = 2, active: tuple[str, ...] | list[str] = (), task: str = "") -> list[Skill]:
     """Skills whose triggers appear in the request, most matches first.
 
     A contextual skill counts only once it is active in this session, or this
@@ -148,6 +151,8 @@ def select(user_input: str, limit: int = 2, active: tuple[str, ...] | list[str] 
     scored: list[tuple[int, Skill]] = []
     for skill in load_all().values():
         if skill.scope == "contextual" and skill.name not in awake:
+            continue
+        if task and skill.tasks and task not in skill.tasks:
             continue
         score = _score(skill, text)
         if score:

@@ -97,3 +97,64 @@ def test_existing_state_files_keep_working(tmp_path: Path) -> None:
     assert "lama" in memory.summary()
     memory.build_input("halo", False)
     assert memory.state["turn_count"] == 4
+
+
+def _chat(memory, count, tools=None):
+    for i in range(count):
+        memory.finish_turn(f"Jawaban nomor {i} panjang. Kalimat kedua.", "m", [], truncated=False,
+                           request=f"pertanyaan nomor {i}", tools=tools)
+
+
+def test_turn_log_is_empty_until_something_happened(tmp_path):
+    assert ProjectMemory.for_path(tmp_path).turn_log() == ""
+
+
+def test_recent_chat_is_not_repeated_because_it_is_still_in_the_history(tmp_path):
+    memory = ProjectMemory.for_path(tmp_path)
+    _chat(memory, 5)
+    assert memory.turn_log() == ""
+
+
+def test_recent_actions_are_kept_because_the_history_has_no_tool_calls(tmp_path):
+    memory = ProjectMemory.for_path(tmp_path)
+    memory.finish_turn("Sudah beres.", "m", [tmp_path / "app.py"], truncated=False, request="perbaiki app",
+                       tools=["read_file", "file_patch", "file_patch"])
+    text = memory.turn_log()
+    assert "changed app.py" in text and "file_patch x2" in text and "perbaiki app" in text
+
+
+def test_older_turns_get_one_line_with_the_first_sentence_only(tmp_path):
+    memory = ProjectMemory.for_path(tmp_path)
+    _chat(memory, 14)
+    text = memory.turn_log()
+    assert "pertanyaan nomor 0 -> Jawaban nomor 0 panjang." in text
+    assert "Kalimat kedua" not in text and "pertanyaan nomor 13" not in text
+
+
+def test_turn_log_stays_inside_its_budget_and_prefers_the_current_topic(tmp_path):
+    memory = ProjectMemory.for_path(tmp_path)
+    memory.finish_turn("Kita sepakat pakai Redis.", "m", [], truncated=False, request="soal cache redis")
+    _chat(memory, 150)
+    text = memory.turn_log(query="balik ke redis tadi", max_chars=300)
+    assert "soal cache redis" in text and len(text) < 500
+
+
+def test_turn_log_keeps_a_fixed_number_of_turns(tmp_path):
+    memory = ProjectMemory.for_path(tmp_path)
+    _chat(memory, 205)
+    assert len(memory.state["turns"]) == 200
+
+
+def test_build_input_carries_the_log_for_a_long_chat(tmp_path):
+    memory = ProjectMemory.for_path(tmp_path)
+    _chat(memory, 12)
+    built = memory.build_input("lanjut soal tadi", False)
+    assert built.index("[EARLIER IN THIS CHAT") < built.index("[USER REQUEST]")
+
+
+def test_markdown_is_stripped_from_the_gist(tmp_path):
+    memory = ProjectMemory.for_path(tmp_path)
+    memory.finish_turn("## **Judul** `kode` di sini. Lanjut.", "m", [], truncated=False, request="x" * 300)
+    turn = memory.state["turns"][0]
+    assert turn["gist"] == "Judul kode di sini." and len(turn["ask"]) <= 90
+
