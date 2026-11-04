@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MT5 Trading</title>
+<link rel="stylesheet" href="/static/trading/trading.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">MT5 Trading</div>
+  <span id="mode" class="pill off">Terputus</span>
+  <span id="ea" class="pill off" title="Status EA MT4">EA: belum dipasang</span>
+  <button id="pairbtn" class="btn">Hubungkan EA</button>
+  <div id="acct" class="acct"></div>
+  <div class="grow"></div>
+  <label class="tokenbox">Token
+    <input id="token" type="password" autocomplete="off" placeholder="MT5_TRADE_TOKEN">
+  </label>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main class="layout">
+  <aside class="left">
+    <section class="card">
+      <h3>Login</h3>
+      <label>Backend
+        <select id="backend">
+          <option value="sim">Simulasi (offline, tanpa broker)</option>
+          <option value="mt5">MT5 terminal (Windows / Wine)</option>
+          <option value="mt4">MT4 (EA bridge, M5 saja)</option>
+        </select>
+      </label>
+      <label>Login <input id="login" type="number" min="0" placeholder="12345678"></label>
+      <label>Password <input id="password" type="password" autocomplete="off"></label>
+      <label>Server <input id="server" type="text" placeholder="Broker-Demo"></label>
+      <label>Path terminal (opsional) <input id="path" type="text" placeholder="C:\\Program Files\\MetaTrader 5\\terminal64.exe"></label>
+      <div class="row">
+        <button id="connect" class="btn primary">Login</button>
+        <button id="disconnect" class="btn" disabled>Logout</button>
+      </div>
+      <p class="hint">Password tidak disimpan di browser. Akun riil butuh <code>MT5_ALLOW_LIVE=1</code>.</p>
+    </section>
+    <section class="card grow-y">
+      <h3>Symbol</h3>
+      <input id="symq" type="search" placeholder="Cari, mis. EUR">
+      <ul id="symlist" class="symlist"></ul>
+    </section>
+  </aside>
+
+  <section class="center">
+    <div class="chartbar">
+      <div>
+        <strong id="sym">—</strong>
+        <span id="bidask" class="px"></span>
+        <span id="ohlc" class="ohlc"></span>
+      </div>
+      <div class="tfs" id="tfs">
+        <button data-tf="M1">M1</button><button data-tf="M5">M5</button><button data-tf="M15">M15</button>
+        <button data-tf="M30">M30</button><button data-tf="H1" class="on">H1</button><button data-tf="H4">H4</button><button data-tf="D1">D1</button>
+      </div>
+    </div>
+    <canvas id="chart"></canvas>
+  </section>
+
+  <aside class="right">
+    <section class="card">
+      <h3>Order</h3>
+      <div class="sides">
+        <button id="side-buy" class="side buy on" data-side="buy">BUY</button>
+        <button id="side-sell" class="side sell" data-side="sell">SELL</button>
+      </div>
+      <label>Volume (lot) <input id="vol" type="number" step="0.01" min="0.01" value="0.01"></label>
+      <label>Stop loss <input id="sl" type="number" step="any" placeholder="wajib jika MT5_REQUIRE_SL=1"></label>
+      <label>Take profit <input id="tp" type="number" step="any"></label>
+      <label>Komentar <input id="comment" type="text" maxlength="31"></label>
+      <div id="riskline" class="riskline" hidden></div>
+      <div class="row">
+        <button id="preview" class="btn primary" disabled>Preview order</button>
+      </div>
+      <div id="previewbox" class="previewbox" hidden></div>
+    </section>
+    <section class="card">
+      <h3>Usulan kuantitatif (M5)</h3>
+      <div class="row"><button id="propose" class="btn" disabled>Lihat usulan</button>
+        <button id="fill" class="btn" disabled>Isi tiket</button></div>
+      <div id="proposal" class="previewbox" hidden></div>
+      <p class="hint">Hanya usulan. Order tetap perlu Preview dan konfirmasi Anda.</p>
+    </section>
+    <section class="card">
+      <h3>Backtest (data terminal, tanpa order)</h3>
+      <label>Bar M5 <select id="bt-count"><option value="2000">2.000</option><option value="5000" selected>5.000</option><option value="10000">10.000</option></select></label>
+      <div class="row"><button id="backtest" class="btn primary" disabled>Jalankan backtest</button></div>
+      <div id="btresult" class="previewbox" hidden></div>
+    </section>
+    <section class="card">
+      <h3>Akun</h3>
+      <dl id="acctdl" class="kv"></dl>
+    </section>
+  </aside>
+
+  <section class="bottom">
+    <div class="tabs">
+      <button data-tab="positions" class="on">Posisi</button>
+      <button data-tab="orders">Order tertunda</button>
+      <button data-tab="history">Riwayat</button>
+      <span class="grow"></span>
+      <label class="inline">Riwayat (hari) <input id="days" type="number" min="1" max="365" value="7"></label>
+    </div>
+    <div class="tablewrap">
+      <table id="table"></table>
+    </div>
+  </section>
+</main>
+
+<div id="pairmodal" class="modal" hidden>
+  <div class="dialog wide">
+    <h3>Hubungkan EA MT4</h3>
+    <p class="hint">Tidak perlu mengetik apa pun. Ikuti langkah ini sekali saja.</p>
+    <ol id="pair-steps" class="steps"></ol>
+    <p class="hint">Preset untuk tab Inputs EA:</p>
+    <div class="row"><button id="pair-download" class="btn primary">Unduh Mt4Bridge.set</button>
+      <button id="pair-copy" class="btn">Salin secret</button>
+      <button id="pair-rotate" class="btn">Buat secret baru</button></div>
+    <p id="pair-msg" class="hint"></p>
+    <div class="row end"><button id="pair-close" class="btn">Tutup</button></div>
+  </div>
+</div>
+
+<div id="modifymodal" class="modal" hidden>
+  <div class="dialog">
+    <h3>Ubah SL / TP</h3>
+    <p id="mod-info" class="hint"></p>
+    <label>Stop loss <input id="mod-sl" type="number" step="any" placeholder="kosong = hapus SL"></label>
+    <label>Take profit <input id="mod-tp" type="number" step="any" placeholder="kosong = hapus TP"></label>
+    <div id="mod-problems" class="previewbox bad" hidden></div>
+    <div class="row end">
+      <button id="mod-cancel" class="btn">Batal</button>
+      <button id="mod-ok" class="btn primary">Pratinjau</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal" class="modal" hidden>
+  <div class="dialog">
+    <h3 id="m-title">Konfirmasi</h3>
+    <p id="m-body"></p>
+    <p id="m-timer" class="hint"></p>
+    <div class="row end">
+      <button id="m-cancel" class="btn">Batal</button>
+      <button id="m-ok" class="btn primary">Kirim</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/trading/trading.js"></script>
+</body>
+</html>
