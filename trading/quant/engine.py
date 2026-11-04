@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+from collections import OrderedDict
 from typing import Any
 
 from trading import strategy as legacy_news
@@ -15,6 +16,7 @@ from trading.quant import features as F
 from trading.quant import model as M
 from trading.quant import risk as R
 from trading.quant.hmm import GaussianHMM, label_states
+from utils.workspace_context import get_active_session
 
 TRAIN_BARS = 2000   # live: one fit on the most recent closed bars per request
 
@@ -36,6 +38,42 @@ def config_from_env() -> R.RiskConfig:
 
 
 _state: dict[str, Any] = {"risk": None}
+
+# Fitted regime model per (session, backend, symbol, last bar time, last close, train size). The
+# backend is in the key because two feeds can share a symbol and a bar time. The close is in the
+# key because the MT4 store replaces a bar when the EA re-sends the same time with new prices.
+# Keyed by session as the per-session isolation rule requires, and bounded so a long run cannot
+# grow it without limit.
+_FIT_CACHE_MAX = 32
+_FitKey = tuple[str, str, str, int, float, int]
+_fit_cache: OrderedDict[_FitKey, tuple[dict[str, int], list[float] | None]] = OrderedDict()
+
+
+def _cached_fit(key: _FitKey) -> tuple[dict[str, int], list[float] | None] | None:
+    hit = _fit_cache.get(key)
+    if hit is not None:
+        _fit_cache.move_to_end(key)
+    return hit
+
+
+def _store_fit(key: _FitKey, value: tuple[dict[str, int], list[float] | None]) -> None:
+    _fit_cache[key] = value
+    _fit_cache.move_to_end(key)
+    while len(_fit_cache) > _FIT_CACHE_MAX:
+        _fit_cache.popitem(last=False)
+
+
+def _spread_of(backend: Any, symbol: str) -> float | None:
+    """Ask minus bid right now, or None when the backend cannot quote (the gate is then skipped and the response says so)."""
+    tick_fn = getattr(backend, "tick", None)
+    if tick_fn is None:
+        return None
+    try:
+        tick = tick_fn(symbol)
+        spread = float(tick["ask"]) - float(tick["bid"])
+    except Exception:  # noqa: BLE001 - a missing quote must not block the rest of the proposal
+        return None
+    return spread if spread >= 0 else None
 
 
 def _risk_state(equity: float, now: dt.datetime) -> R.State:
@@ -73,21 +111,27 @@ def propose(backend: Any, symbol: str, *, news: list[Any] | None = None, count: 
 
     f = F.compute(bars)
     last = len(bars) - 1
-    rows = []
-    for t in range(max(0, last - TRAIN_BARS), last):
-        u = M.feature_vector(f, bars, t)
-        if u is not None:
-            rows.append(u)
-    if len(rows) < 60:
-        return {"symbol": symbol, "side": None, "blocked": "not enough valid feature rows to fit the regime model", "ok": False}
-    hmm = GaussianHMM(3).fit(rows, iters=25)
-    states = label_states(hmm)
-    lo = max(0, last - TRAIN_BARS)
-    seq_idx = [t for t in range(lo, last + 1) if M.feature_vector(f, bars, t) is not None]
-    post = hmm.filter([M.feature_vector(f, bars, t) for t in seq_idx])
-    post_at = dict(zip(seq_idx, post, strict=False))
+    key = (get_active_session(), str(getattr(backend, "name", "")), symbol, int(bars[last]["t"]), float(bars[last]["c"]), TRAIN_BARS)
+    cached = _cached_fit(key)
+    if cached is None:
+        rows = []
+        for t in range(max(0, last - TRAIN_BARS), last):
+            u = M.feature_vector(f, bars, t)
+            if u is not None:
+                rows.append(u)
+        if len(rows) < 60:
+            return {"symbol": symbol, "side": None, "blocked": "not enough valid feature rows to fit the regime model", "ok": False}
+        hmm = GaussianHMM(3).fit(rows, iters=25)
+        states = label_states(hmm)
+        last_u = M.feature_vector(f, bars, last)
+        # Only the posterior at the last bar is needed, so the filter runs once over the window.
+        post_last = hmm.filter(rows + [last_u])[-1] if last_u is not None else None
+        cached = (states, post_last)
+        _store_fit(key, cached)
+    states, post_last = cached
 
-    prop = M.decide(symbol, bars, f, post_at.get(last), states, last)
+    spread = _spread_of(backend, symbol)
+    prop = M.decide(symbol, bars, f, post_last, states, last, spread=spread)
     when = dt.datetime.fromtimestamp(bars[last]["t"], dt.UTC)
     if prop.side and news:
         reason = legacy_news.news_block(symbol, when, news)
@@ -95,7 +139,7 @@ def propose(backend: Any, symbol: str, *, news: list[Any] | None = None, count: 
             prop.blocked = reason
             prop.side = None
     out: dict[str, Any] = {"symbol": symbol, "ok": prop.side is not None, "proposal": prop.as_dict(),
-                           "bar_time": when.isoformat(timespec="minutes"), "equity": equity,
+                           "bar_time": when.isoformat(timespec="minutes"), "equity": equity, "spread": spread,
                            "config": {"risk_per_trade_pct": cfg.risk_per_trade * 100, "max_open": cfg.max_open,
                                       "max_consecutive_losses": cfg.max_consecutive_losses,
                                       "firm_daily_loss_pct": cfg.firm_daily_loss_pct, "firm_max_loss_pct": cfg.firm_max_loss_pct},
@@ -120,4 +164,8 @@ def propose(backend: Any, symbol: str, *, news: list[Any] | None = None, count: 
     return out
 
 
-__all__ = ["propose", "config_from_env", "on_close", "reset_state"]
+def clear_fit_cache() -> None:
+    _fit_cache.clear()
+
+
+__all__ = ["propose", "config_from_env", "on_close", "reset_state", "clear_fit_cache"]

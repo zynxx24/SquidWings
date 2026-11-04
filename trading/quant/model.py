@@ -33,6 +33,9 @@ Z_BACK = -0.5           # Z_t must rise to at least this (BUY)
 Z_BACK_SELL = 0.5       # Z_t must fall to at most this (SELL)
 RR = 1.5
 TREND_EXIT_LOOKBACK = 5
+# Quality gates shared by the live proposal and the backtest, so the backtest tests the same rule.
+SPREAD_MAX_STOP_FRAC = 0.15   # skip when the spread eats more than 15% of the stop distance
+ADX_LOOKBACK = 3              # trend strength must not be fading: ADX_t > ADX_{t-3}
 
 
 @dataclass
@@ -71,9 +74,21 @@ def stop_distance(bars: list[dict[str, float]], i: int, atr: float, side: str) -
     return max(1.2 * atr, extreme - bars[i]["c"] + 0.1 * atr)
 
 
+def adx_rising(f: Features, i: int) -> bool | None:
+    """True when trend strength grew over the last ADX_LOOKBACK bars. None when it cannot be known yet."""
+    j = i - ADX_LOOKBACK
+    if j < 0 or f.adx[i] != f.adx[i] or f.adx[j] != f.adx[j]:
+        return None
+    return f.adx[i] > f.adx[j]
+
+
 def decide(symbol: str, bars: list[dict[str, float]], f: Features, post: list[float] | None,
-           states: dict[str, int] | None, i: int) -> Proposal:
-    """The rule at bar i, given the regime posterior `post` (a list over states) for that bar."""
+           states: dict[str, int] | None, i: int, *, spread: float | None = None) -> Proposal:
+    """The rule at bar i, given the regime posterior `post` (a list over states) for that bar.
+
+    `spread` is the current ask minus bid in price units, when known. A wide spread relative to
+    the stop is a cost the rule does not model, so the entry is skipped.
+    """
     c = bars[i]["c"]
     a = f.atr[i]
     z_now = f.z[i]
@@ -102,18 +117,28 @@ def decide(symbol: str, bars: list[dict[str, float]], f: Features, post: list[fl
     prev = bars[i - 1]
     buy = slope > 0 and c > vwap and z_prev <= Z_LOW and z_now >= Z_BACK and c > prev["h"]
     sell = slope < 0 and c < vwap and z_prev >= Z_HIGH and z_now <= Z_BACK_SELL and c < prev["l"]
-    if buy:
-        d = stop_distance(bars, i, a, "buy")
+    if not (buy or sell):
+        p.blocked = "no entry on this bar"
+        return p
+    side = "buy" if buy else "sell"
+    d = stop_distance(bars, i, a, side)
+    if spread is not None and spread > SPREAD_MAX_STOP_FRAC * d:
+        p.blocked = (f"spread {spread:.5f} is more than {SPREAD_MAX_STOP_FRAC:.0%} of the stop distance {d:.5f}")
+        return p
+    rising = adx_rising(f, i)
+    if rising is False:
+        p.blocked = f"ADX fell over the last {ADX_LOOKBACK} bars: the trend is fading"
+        return p
+    if side == "buy":
         p.side, p.sl, p.tp = "buy", c - d, c + RR * d
         p.reasons += ["slope positive", "close above VWAP", f"Z {z_prev:.2f} -> {z_now:.2f} crossed up",
                       "close above previous high"]
-    elif sell:
-        d = stop_distance(bars, i, a, "sell")
+    else:
         p.side, p.sl, p.tp = "sell", c + d, c - RR * d
         p.reasons += ["slope negative", "close below VWAP", f"Z {z_prev:.2f} -> {z_now:.2f} crossed down",
                       "close below previous low"]
-    else:
-        p.blocked = "no entry on this bar"
+    if rising:
+        p.reasons.append(f"ADX rising over {ADX_LOOKBACK} bars")
     return p
 
 

@@ -7,6 +7,7 @@ terminal's own rules (margin, stop levels, market hours) still apply.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from trading.mt5_adapter import TradingError
@@ -75,10 +76,10 @@ class Mt4BridgeBackend:
 
     def rates(self, symbol: str, timeframe: str, count: int) -> list[dict[str, Any]]:
         self._live_or_fail()
-        if timeframe != "M5":
-            raise TradingError("The MT4 bridge streams M5 bars only. Pick M5.")
+        if timeframe not in ("M1", "M5"):
+            raise TradingError("The MT4 bridge streams M1 and M5 bars. The panel builds the higher timeframes.")
         with store.lock:
-            bars = list(store.bars.get(symbol, []))
+            bars = list((store.bars_m1 if timeframe == "M1" else store.bars).get(symbol, []))
         if not bars:
             raise TradingError(f"No bars for {symbol} from the EA yet.")
         return [{"t": b["t"], "o": b["o"], "h": b["h"], "l": b["l"], "c": b["c"], "v": b["v"]} for b in bars[-count:]]
@@ -98,11 +99,21 @@ class Mt4BridgeBackend:
 
     def orders(self) -> list[dict[str, Any]]:
         self._live_or_fail()
-        return []   # pending orders are not streamed yet
+        with store.lock:
+            items = list(store.orders)
+        return [{"ticket": int(o["ticket"]), "symbol": o["symbol"], "side": o["side"], "volume": float(o["volume"]),
+                 "price": float(o["price"]), "sl": float(o["sl"]) or None, "tp": float(o["tp"]) or None,
+                 "time": int(o["time"]), "comment": o.get("comment", "")} for o in items]
 
     def history(self, days: int) -> list[dict[str, Any]]:
         self._live_or_fail()
-        return []   # closed-trade history is not streamed yet
+        with store.lock:
+            items = list(store.deals)
+        since = time.time() - days * 86400
+        deals = [{"ticket": int(d["ticket"]), "symbol": d["symbol"], "side": d["side"], "volume": float(d["volume"]),
+                  "price": float(d["price"]), "profit": float(d["profit"]), "time": int(d["time"]),
+                  "comment": d.get("comment", "")} for d in items]
+        return [d for d in deals if d["time"] >= since]
 
     def check(self, order: dict[str, Any]) -> dict[str, Any]:
         self._live_or_fail()
@@ -122,15 +133,25 @@ class Mt4BridgeBackend:
         return self._outcome(cid)
 
     def risk_per_lot(self, symbol: str, side: str, entry: float, sl: float) -> float:
-        # Approximation: the EA sends no profit calculator. Assumes the quote currency is the account currency.
-        spec = self.symbol_spec(symbol)
-        return spec["contract_size"] * abs(entry - sl)
+        with store.lock:
+            t = dict(store.ticks.get(symbol) or {})
+        tick_value, tick_size = float(t.get("tick_value") or 0), float(t.get("tick_size") or 0)
+        if tick_value > 0 and tick_size > 0:      # already in the account currency, so USDCHF is right too
+            return abs(entry - sl) / tick_size * tick_value
+        # An older EA sends no tick value: this assumes the quote currency is the account currency.
+        return self.symbol_spec(symbol)["contract_size"] * abs(entry - sl)
 
     def modify(self, ticket: int, sl: float | None, tp: float | None) -> dict[str, Any]:
-        raise TradingError("Changing SL/TP on an open trade is not supported through the MT4 bridge yet. Use the MT4 terminal.")
+        self._live_or_fail()
+        cid = store.enqueue({"action": "modify", "symbol": "", "side": "", "volume": "", "sl": sl or "", "tp": tp or "",
+                             "comment": "", "ticket": ticket})
+        return self._outcome(cid)
 
     def cancel(self, ticket: int) -> dict[str, Any]:
-        raise TradingError("Cancelling pending orders is not supported through the MT4 bridge yet. Use the MT4 terminal.")
+        self._live_or_fail()
+        cid = store.enqueue({"action": "cancel", "symbol": "", "side": "", "volume": "", "sl": "", "tp": "",
+                             "comment": "", "ticket": ticket})
+        return self._outcome(cid)
 
     @staticmethod
     def _outcome(cid: str) -> dict[str, Any]:

@@ -277,3 +277,64 @@ def test_backtest_endpoint_runs_on_history_and_places_no_orders(monkeypatch):
         assert b.positions() == []     # nothing was sent
     finally:
         mt5_api._state.update(backend=None, live=False)
+
+
+# ---------------------------------------------------------------- bridge: what the EA streams and accepts
+
+
+def _bridge_with_ea():
+    from trading import mt4_backend as backend_module
+    from web import mt4_bridge as bridge
+
+    store = bridge.Store()
+    store.ingest([{"type": "account", "login": 1, "positions": [], "orders": [
+        {"ticket": 7, "symbol": "EURUSD", "side": "buy", "volume": "0.10", "price": "1.1", "sl": "0", "tp": "1.2", "time": 5, "comment": "x"}]}])
+    return bridge, backend_module, store
+
+
+def test_pending_orders_and_history_reach_the_panel(monkeypatch):
+    import time as _time
+
+    bridge, backend_module, store = _bridge_with_ea()
+    monkeypatch.setattr(backend_module, "store", store)
+    now = int(_time.time())
+    store.ingest([{"type": "history", "deals": [
+        {"ticket": 8, "symbol": "EURUSD", "side": "sell", "volume": "0.1", "price": "1.2", "profit": "5", "time": now, "comment": ""},
+        {"ticket": 9, "symbol": "EURUSD", "side": "sell", "volume": "0.1", "price": "1.2", "profit": "5", "time": now - 90 * 86400, "comment": ""}]}])
+    backend = backend_module.Mt4BridgeBackend()
+    order = backend.orders()[0]
+    assert order["ticket"] == 7 and order["sl"] is None and order["tp"] == 1.2
+    assert [d["ticket"] for d in backend.history(7)] == [8]
+
+
+def test_modify_and_cancel_are_queued_for_the_ea(monkeypatch):
+    bridge, backend_module, store = _bridge_with_ea()
+    monkeypatch.setattr(backend_module, "store", store)
+    monkeypatch.setattr(backend_module.Mt4BridgeBackend, "_outcome", staticmethod(lambda cid: {"ok": True, "cid": cid}))
+    backend = backend_module.Mt4BridgeBackend()
+    backend.modify(11, 1.05, None)
+    backend.cancel(7)
+    first, second = store.pop_commands()
+    assert (first["action"], first["ticket"], first["sl"], first["tp"]) == ("modify", 11, 1.05, "")
+    assert (second["action"], second["ticket"]) == ("cancel", 7)
+
+
+def test_lot_risk_uses_the_tick_value_for_cross_currency_pairs(monkeypatch):
+    bridge, backend_module, store = _bridge_with_ea()
+    monkeypatch.setattr(backend_module, "store", store)
+    store.ingest([{"type": "tick", "symbol": "USDCHF", "bid": 0.8, "ask": 0.8, "time": 1, "digits": 5, "point": 0.00001,
+                   "volume_min": 0.01, "volume_max": 100, "volume_step": 0.01, "contract_size": 100000,
+                   "tick_value": "1.25", "tick_size": "0.00001"}])
+    assert backend_module.Mt4BridgeBackend().risk_per_lot("USDCHF", "buy", 0.8, 0.799) == pytest.approx(125.0)
+
+
+def test_a_restarted_server_asks_the_ea_for_its_history_once_a_minute():
+    from web import mt4_bridge as bridge
+
+    store = bridge.Store()
+    store.ingest([{"type": "tick", "symbol": "EURUSD", "bid": 1, "ask": 1}])
+    assert store.wants_history() is True
+    assert store.wants_history() is False
+    store.resync_at = 0.0
+    store.ingest([{"type": "bar", "symbol": "EURUSD", "time": 1, "o": 1, "h": 1, "l": 1, "c": 1}])
+    assert store.wants_history() is False

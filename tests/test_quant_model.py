@@ -94,7 +94,8 @@ def test_state_labels_pick_highvol_then_trend():
 # ---------------------------------------------------------------- entry rule
 
 
-def _decide_with(post, bars=None, z=(-1.0, -0.2), slope=1.0, c_above_vwap=True, last_high=None):
+def _decide_with(post, bars=None, z=(-1.0, -0.2), slope=1.0, c_above_vwap=True, last_high=None,
+                 adx_rising=True, spread=None):
     bars = bars or _walk(120)
     f = F.compute(bars)
     i = len(bars) - 1
@@ -102,8 +103,110 @@ def _decide_with(post, bars=None, z=(-1.0, -0.2), slope=1.0, c_above_vwap=True, 
     f.slope[i] = slope
     f.vwap[i] = bars[i]["c"] - 0.001 if c_above_vwap else bars[i]["c"] + 0.001
     bars[i]["c"] = max(bars[i]["c"], bars[i - 1]["h"] + 0.0005)
+    # The rule needs ADX to be rising: set it explicitly so the fixture does not depend on the random walk.
+    j = i - M.ADX_LOOKBACK
+    f.adx[j], f.adx[i] = (20.0, 30.0) if adx_rising else (40.0, 30.0)
     states = {"trend": 0, "range": 1, "highvol": 2}
-    return M.decide("EURUSD", bars, f, post, states, i)
+    return M.decide("EURUSD", bars, f, post, states, i, spread=spread)
+
+
+def test_falling_adx_blocks_the_entry():
+    p = _decide_with([0.8, 0.1, 0.1], adx_rising=False)
+    assert p.side is None and "ADX fell" in p.blocked
+
+
+def test_wide_spread_relative_to_the_stop_blocks_the_entry():
+    p = _decide_with([0.8, 0.1, 0.1], spread=0.01)   # 100 pips: far more than 15% of any stop here
+    assert p.side is None and "spread" in p.blocked
+
+
+def test_a_tight_spread_still_allows_the_entry():
+    ok = _decide_with([0.8, 0.1, 0.1], spread=0.00002)
+    assert ok.side == "buy" and "ADX rising" in " ".join(ok.reasons)
+
+
+def test_engine_fit_is_cached_per_bar_and_session(monkeypatch):
+    E.reset_state()
+    E.clear_fit_cache()
+    bars = _walk(2600, seed=21)
+    backend = _NoOrders(bars)
+    calls = {"fit": 0}
+    real_fit = GaussianHMM.fit
+
+    def counting_fit(self, data, iters=25):
+        calls["fit"] += 1
+        return real_fit(self, data, iters=iters)
+
+    monkeypatch.setattr(GaussianHMM, "fit", counting_fit)
+    cfg = R.RiskConfig()
+    now = dt.datetime(2026, 11, 4, 9, 0, tzinfo=dt.UTC)
+    first = E.propose(backend, "EURUSD", cfg=cfg, now=now)
+    second = E.propose(backend, "EURUSD", cfg=cfg, now=now)
+    assert calls["fit"] == 1, "a repeat request on the same closed bar must reuse the fit"
+    assert first["proposal"]["regime"] == second["proposal"]["regime"]
+    assert first["proposal"]["p_trend"] == pytest.approx(second["proposal"]["p_trend"])
+
+
+def _count_fits(monkeypatch):
+    fits = {"n": 0}
+    real_fit = GaussianHMM.fit
+
+    def counting_fit(self, data, iters=25):
+        fits["n"] += 1
+        return real_fit(self, data, iters=iters)
+
+    monkeypatch.setattr(GaussianHMM, "fit", counting_fit)
+    return fits
+
+
+def test_engine_fit_is_not_shared_between_backends(monkeypatch):
+    E.reset_state()
+    E.clear_fit_cache()
+    fits = _count_fits(monkeypatch)
+    now = dt.datetime(2026, 11, 4, 9, 0, tzinfo=dt.UTC)
+    first, second = _NoOrders(_walk(2600, seed=21)), _NoOrders(_walk(2600, seed=21))
+    second.name = "mt4"
+    E.propose(first, "EURUSD", cfg=R.RiskConfig(), now=now)
+    E.propose(second, "EURUSD", cfg=R.RiskConfig(), now=now)
+    assert fits["n"] == 2, "a fit from one feed must not answer for another"
+
+
+def test_engine_refits_when_a_bar_is_resent_with_new_prices(monkeypatch):
+    E.reset_state()
+    E.clear_fit_cache()
+    fits = _count_fits(monkeypatch)
+    now = dt.datetime(2026, 11, 4, 9, 0, tzinfo=dt.UTC)
+    bars = _walk(2600, seed=21)
+    backend = _NoOrders(bars)
+    E.propose(backend, "EURUSD", cfg=R.RiskConfig(), now=now)
+    bars[-1]["c"] += 0.0003     # same bar time, new price: the MT4 store replaces a re-sent bar
+    E.propose(backend, "EURUSD", cfg=R.RiskConfig(), now=now)
+    assert fits["n"] == 2
+
+
+def test_engine_fit_cache_is_keyed_by_session(monkeypatch):
+    from utils import workspace_context as wc
+
+    E.reset_state()
+    E.clear_fit_cache()
+    bars = _walk(2600, seed=21)
+    backend = _NoOrders(bars)
+    fits = {"n": 0}
+    real_fit = GaussianHMM.fit
+
+    def counting_fit(self, data, iters=25):
+        fits["n"] += 1
+        return real_fit(self, data, iters=iters)
+
+    monkeypatch.setattr(GaussianHMM, "fit", counting_fit)
+    now = dt.datetime(2026, 11, 4, 9, 0, tzinfo=dt.UTC)
+    for session in ("session-a", "session-b"):
+        token = wc._active_session.set(session)
+        try:
+            E.propose(backend, "EURUSD", cfg=R.RiskConfig(), now=now)
+        finally:
+            wc._active_session.reset(token)
+    assert fits["n"] == 2, "two sessions must not share one cached fit"
 
 
 def test_buy_requires_trend_above_threshold_and_levels_are_one_to_one_point_five():

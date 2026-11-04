@@ -3,102 +3,63 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MT5 Trading</title>
+<title>Trading · SquidWings</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d7a6f'/%3E%3Cpath d='M16 6c-4 0-7 3-7 7 0 3 2 5 3 6l-3 7m7-20c4 0 7 3 7 7 0 3-2 5-3 6l3 7m-7-13v13' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/trading/trading.css">
 </head>
 <body>
 <header class="top">
-  <div class="brand">MT5 Trading</div>
+  <a id="to-chat" class="brand" href="/" title="Kembali ke chat"><span class="brand-mark" aria-hidden="true">S</span><span>SquidWings</span></a>
+  <div class="ticker">
+    <strong id="sym" class="ticker-sym">—</strong>
+    <span id="last" class="ticker-price">—</span>
+    <span id="chg" class="ticker-chg"></span>
+  </div>
+  <dl class="stats">
+    <div><dt>Bid</dt><dd id="s-bid">—</dd></div>
+    <div><dt>Ask</dt><dd id="s-ask">—</dd></div>
+    <div><dt>Spread</dt><dd id="s-spread">—</dd></div>
+    <div><dt>Ekuitas</dt><dd id="s-equity">—</dd></div>
+    <div><dt>P/L</dt><dd id="s-pnl">—</dd></div>
+    <div><dt>Margin bebas</dt><dd id="s-free">—</dd></div>
+  </dl>
+  <div class="grow"></div>
   <span id="mode" class="pill off">Terputus</span>
   <span id="ea" class="pill off" title="Status EA MT4">EA: belum dipasang</span>
-  <button id="pairbtn" class="btn">Hubungkan EA</button>
-  <div id="acct" class="acct"></div>
-  <div class="grow"></div>
-  <label class="tokenbox">Token
-    <input id="token" type="password" autocomplete="off" placeholder="MT5_TRADE_TOKEN">
-  </label>
+  <button id="connbtn" class="btn">Koneksi</button>
+  <button id="themebtn" class="btn" title="Ganti tema">Tema</button>
 </header>
 
 <div id="banner" class="banner" hidden></div>
 
-<main class="layout">
+<main class="layout" id="layout">
   <aside class="left">
-    <section class="card">
-      <h3>Login</h3>
-      <label>Backend
-        <select id="backend">
-          <option value="sim">Simulasi (offline, tanpa broker)</option>
-          <option value="mt5">MT5 terminal (Windows / Wine)</option>
-          <option value="mt4">MT4 (EA bridge, M5 saja)</option>
-        </select>
-      </label>
-      <label>Login <input id="login" type="number" min="0" placeholder="12345678"></label>
-      <label>Password <input id="password" type="password" autocomplete="off"></label>
-      <label>Server <input id="server" type="text" placeholder="Broker-Demo"></label>
-      <label>Path terminal (opsional) <input id="path" type="text" placeholder="C:\\Program Files\\MetaTrader 5\\terminal64.exe"></label>
-      <div class="row">
-        <button id="connect" class="btn primary">Login</button>
-        <button id="disconnect" class="btn" disabled>Logout</button>
-      </div>
-      <p class="hint">Password tidak disimpan di browser. Akun riil butuh <code>MT5_ALLOW_LIVE=1</code>.</p>
-    </section>
-    <section class="card grow-y">
-      <h3>Symbol</h3>
-      <input id="symq" type="search" placeholder="Cari, mis. EUR">
+    <section class="pane grow-y">
+      <h3>Pasar</h3>
+      <input id="symq" type="search" placeholder="Cari simbol">
       <ul id="symlist" class="symlist"></ul>
     </section>
   </aside>
 
   <section class="center">
     <div class="chartbar">
-      <div>
-        <strong id="sym">—</strong>
-        <span id="bidask" class="px"></span>
-        <span id="ohlc" class="ohlc"></span>
-      </div>
       <div class="tfs" id="tfs">
-        <button data-tf="M1">M1</button><button data-tf="M5">M5</button><button data-tf="M15">M15</button>
-        <button data-tf="M30">M30</button><button data-tf="H1" class="on">H1</button><button data-tf="H4">H4</button><button data-tf="D1">D1</button>
+        <button data-tf="M1">1m</button><button data-tf="M5" class="on">5m</button><button data-tf="M15">15m</button>
+        <button data-tf="M30">30m</button><button data-tf="H1">1H</button><button data-tf="H4">4H</button><button data-tf="D1">1D</button>
       </div>
+      <span id="ohlc" class="ohlc"></span>
+      <span class="grow"></span>
+      <button id="z-ema" class="tool on" title="Tampilkan EMA 20 dan 50">EMA</button>
+      <button id="z-out" class="tool" title="Perkecil (-)" aria-label="Perkecil">−</button>
+      <button id="z-in" class="tool" title="Perbesar (+)" aria-label="Perbesar">+</button>
+      <button id="z-latest" class="tool" title="Kembali ke bar terbaru (0)" hidden>Terbaru</button>
+      <button id="z-focus" class="tool" title="Layar penuh chart (F)">Fokus</button>
     </div>
-    <canvas id="chart"></canvas>
+    <div class="chartwrap"><canvas id="chart"></canvas></div>
   </section>
 
-  <aside class="right">
-    <section class="card">
-      <h3>Order</h3>
-      <div class="sides">
-        <button id="side-buy" class="side buy on" data-side="buy">BUY</button>
-        <button id="side-sell" class="side sell" data-side="sell">SELL</button>
-      </div>
-      <label>Volume (lot) <input id="vol" type="number" step="0.01" min="0.01" value="0.01"></label>
-      <label>Stop loss <input id="sl" type="number" step="any" placeholder="wajib jika MT5_REQUIRE_SL=1"></label>
-      <label>Take profit <input id="tp" type="number" step="any"></label>
-      <label>Komentar <input id="comment" type="text" maxlength="31"></label>
-      <div id="riskline" class="riskline" hidden></div>
-      <div class="row">
-        <button id="preview" class="btn primary" disabled>Preview order</button>
-      </div>
-      <div id="previewbox" class="previewbox" hidden></div>
-    </section>
-    <section class="card">
-      <h3>Usulan kuantitatif (M5)</h3>
-      <div class="row"><button id="propose" class="btn" disabled>Lihat usulan</button>
-        <button id="fill" class="btn" disabled>Isi tiket</button></div>
-      <div id="proposal" class="previewbox" hidden></div>
-      <p class="hint">Hanya usulan. Order tetap perlu Preview dan konfirmasi Anda.</p>
-    </section>
-    <section class="card">
-      <h3>Backtest (data terminal, tanpa order)</h3>
-      <label>Bar M5 <select id="bt-count"><option value="2000">2.000</option><option value="5000" selected>5.000</option><option value="10000">10.000</option></select></label>
-      <div class="row"><button id="backtest" class="btn primary" disabled>Jalankan backtest</button></div>
-      <div id="btresult" class="previewbox" hidden></div>
-    </section>
-    <section class="card">
-      <h3>Akun</h3>
-      <dl id="acctdl" class="kv"></dl>
-    </section>
-  </aside>
+  <div id="splitter" class="splitter" role="separator" aria-orientation="horizontal" title="Seret untuk mengubah tinggi"></div>
 
   <section class="bottom">
     <div class="tabs">
@@ -106,18 +67,98 @@
       <button data-tab="orders">Order tertunda</button>
       <button data-tab="history">Riwayat</button>
       <span class="grow"></span>
-      <label class="inline">Riwayat (hari) <input id="days" type="number" min="1" max="365" value="7"></label>
+      <label class="inline">Hari <input id="days" type="number" min="1" max="365" value="7"></label>
     </div>
-    <div class="tablewrap">
-      <table id="table"></table>
-    </div>
+    <div class="tablewrap"><table id="table"></table></div>
   </section>
+
+  <aside class="right">
+    <section class="pane">
+      <div class="quote">
+        <button id="q-sell" class="quote-side sell"><small>Jual</small><b id="tk-bid">—</b></button>
+        <button id="q-buy" class="quote-side buy"><small>Beli</small><b id="tk-ask">—</b></button>
+      </div>
+      <div class="sides">
+        <button id="side-buy" class="side buy on" data-side="buy">BUY</button>
+        <button id="side-sell" class="side sell" data-side="sell">SELL</button>
+      </div>
+      <label>Volume (lot)
+        <span class="stepper">
+          <button class="step" data-step="-1" aria-label="Kurangi volume">−</button>
+          <input id="vol" type="number" step="0.01" min="0.01" value="0.01">
+          <button class="step" data-step="1" aria-label="Tambah volume">+</button>
+        </span>
+      </label>
+      <div class="chips" id="lots">
+        <button data-lot="0.01">0.01</button><button data-lot="0.05">0.05</button><button data-lot="0.1">0.10</button>
+      </div>
+      <div class="two">
+        <label>Stop loss <input id="sl" type="number" step="any" placeholder="wajib"></label>
+        <label>Take profit <input id="tp" type="number" step="any" placeholder="opsional"></label>
+      </div>
+      <label>Komentar <input id="comment" type="text" maxlength="31"></label>
+      <div id="riskline" class="riskline" hidden></div>
+      <button id="preview" class="btn action buy" disabled>Preview BUY</button>
+      <div id="previewbox" class="previewbox" hidden></div>
+    </section>
+    <details class="pane" open>
+      <summary>Usulan kuantitatif (M5)</summary>
+      <div class="row"><button id="propose" class="btn" disabled>Lihat usulan</button>
+        <button id="fill" class="btn" disabled>Isi tiket</button></div>
+      <div id="proposal" class="previewbox" hidden></div>
+      <p class="hint">Hanya usulan. Order tetap perlu Preview dan konfirmasi.</p>
+    </details>
+    <details class="pane">
+      <summary>Backtest</summary>
+      <label>Bar M5 <select id="bt-count"><option value="2000">2.000</option><option value="5000" selected>5.000</option><option value="10000">10.000</option></select></label>
+      <div class="row"><button id="backtest" class="btn" disabled>Jalankan backtest</button></div>
+      <div id="btresult" class="previewbox" hidden></div>
+      <div class="row">
+        <button id="scalp" class="btn" disabled>Scalp 30 detik · 5 posisi</button>
+        <label class="check"><input id="scalp-llm" type="checkbox"> Atur oleh LLM</label>
+      </div>
+      <div id="scalpresult" class="previewbox" hidden></div>
+    </details>
+    <details class="pane">
+      <summary>Akun</summary>
+      <p id="acct" class="hint"></p>
+      <dl id="acctdl" class="kv"></dl>
+    </details>
+  </aside>
 </main>
+
+<div id="connmodal" class="modal" hidden>
+  <div class="dialog">
+    <h3>Koneksi</h3>
+    <label>Backend
+      <select id="backend">
+        <option value="mt4">MT4 (EA bridge)</option>
+        <option value="sim">Simulasi (tanpa broker)</option>
+        <option value="mt5">MT5 terminal (Windows)</option>
+      </select>
+    </label>
+    <div id="mt5-fields" hidden>
+      <label>Login <input id="login" type="number" min="0" placeholder="12345678"></label>
+      <label>Password <input id="password" type="password" autocomplete="off"></label>
+      <label>Server <input id="server" type="text" placeholder="Broker-Demo"></label>
+      <label>Path terminal (opsional) <input id="path" type="text" placeholder="C:\Program Files\MetaTrader 5\terminal64.exe"></label>
+    </div>
+    <label>Token <input id="token" type="password" autocomplete="off" placeholder="Hanya untuk akses dari luar mesin ini"></label>
+    <p class="hint">Password tidak disimpan di browser. Akun riil butuh <code>MT5_ALLOW_LIVE=1</code>.</p>
+    <div class="row">
+      <button id="connect" class="btn primary">Hubungkan</button>
+      <button id="disconnect" class="btn" disabled>Putuskan</button>
+      <button id="pairbtn" class="btn">Pasang EA</button>
+      <span class="grow"></span>
+      <button id="conn-close" class="btn">Tutup</button>
+    </div>
+  </div>
+</div>
 
 <div id="pairmodal" class="modal" hidden>
   <div class="dialog wide">
-    <h3>Hubungkan EA MT4</h3>
-    <p class="hint">Tidak perlu mengetik apa pun. Ikuti langkah ini sekali saja.</p>
+    <h3>Pasang EA MT4</h3>
+    <p class="hint">Ikuti langkah ini sekali saja.</p>
     <ol id="pair-steps" class="steps"></ol>
     <p class="hint">Preset untuk tab Inputs EA:</p>
     <div class="row"><button id="pair-download" class="btn primary">Unduh Mt4Bridge.set</button>
@@ -145,7 +186,7 @@
 <div id="modal" class="modal" hidden>
   <div class="dialog">
     <h3 id="m-title">Konfirmasi</h3>
-    <p id="m-body"></p>
+    <div id="m-body" class="m-body"></div>
     <p id="m-timer" class="hint"></p>
     <div class="row end">
       <button id="m-cancel" class="btn">Batal</button>
@@ -154,6 +195,10 @@
   </div>
 </div>
 
+<script src="/static/trading/chart.js"></script>
+<script src="/static/trading/panel-core.js"></script>
+<script src="/static/trading/panel-tables.js"></script>
+<script src="/static/trading/panel-ticket.js"></script>
 <script src="/static/trading/trading.js"></script>
 </body>
 </html>

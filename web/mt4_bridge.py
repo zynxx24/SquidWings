@@ -24,6 +24,7 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
+from trading.quant import ticks
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,6 +32,7 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/mt4", tags=["mt4"])
 
 BAR_KEEP = 6000
+RESYNC_EVERY = 60        # seconds between requests for the EA to send its history again
 EA_TIMEOUT = 15          # seconds without a message before the EA counts as gone
 RESULT_WAIT = 8          # seconds to wait for the EA to report an order's outcome
 
@@ -42,9 +44,13 @@ class Store:
         self.lock = threading.Lock()
         self.ticks: dict[str, dict[str, Any]] = {}
         self.bars: dict[str, deque[dict[str, Any]]] = {}
+        self.bars_m1: dict[str, deque[dict[str, Any]]] = {}
         self.account: dict[str, Any] | None = None
         self.account_seen = 0.0
         self.positions: list[dict[str, Any]] = []
+        self.orders: list[dict[str, Any]] = []
+        self.deals: list[dict[str, Any]] = []
+        self.resync_at = 0.0
         self.commands: deque[dict[str, Any]] = deque()
         self.results: dict[str, str] = {}
 
@@ -54,8 +60,10 @@ class Store:
                 kind = item.get("type")
                 if kind == "tick":
                     self.ticks[item["symbol"]] = {**item, "seen": time.time()}
+                    self._record_tick(item)
                 elif kind == "bar":
-                    series = self.bars.setdefault(item["symbol"], deque(maxlen=BAR_KEEP))
+                    book = self.bars_m1 if item.get("tf") == "M1" else self.bars
+                    series = book.setdefault(item["symbol"], deque(maxlen=BAR_KEEP))
                     bar = {"t": int(item["time"]), "o": float(item["o"]), "h": float(item["h"]),
                            "l": float(item["l"]), "c": float(item["c"]), "v": int(item.get("v", 0))}
                     if not series or series[-1]["t"] < bar["t"]:
@@ -66,7 +74,28 @@ class Store:
                     self.account = {k: v for k, v in item.items() if k not in ("type", "positions")}
                     self.account_seen = time.time()
                     self.positions = list(item.get("positions", []))
+                    self.orders = list(item.get("orders", []))
+                elif kind == "history":
+                    self.deals = list(item.get("deals", []))
             return len(items)
+
+    @staticmethod
+    def _record_tick(item: dict[str, Any]) -> None:
+        if os.getenv("MT4_RECORD_TICKS", "1").strip() == "0":
+            return
+        try:
+            ticks.append(item["symbol"], time.time(), float(item["bid"]), float(item["ask"]))
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            logger.debug(f"[mt4] tick not recorded: {exc}")
+
+    def wants_history(self) -> bool:
+        """True when a streamed symbol has no bars, as after a server restart. At most once a minute."""
+        with self.lock:
+            missing = any(not self.bars.get(symbol) for symbol in self.ticks)
+            if not missing or time.time() - self.resync_at < RESYNC_EVERY:
+                return False
+            self.resync_at = time.time()
+            return True
 
     def alive(self) -> bool:
         return self.account is not None and time.time() - self.account_seen < EA_TIMEOUT
@@ -152,7 +181,7 @@ async def ingest(request: Request, x_bridge_secret: str | None = Header(default=
 @router.get("/commands", response_class=PlainTextResponse)
 def commands(ea: str = "", x_bridge_secret: str | None = Header(default=None)) -> str:
     _secret_ok(x_bridge_secret)
-    lines = []
+    lines = ["resync"] if store.wants_history() else []
     for c in store.pop_commands():
         lines.append("|".join(str(c.get(k, "")) for k in
                               ("id", "action", "symbol", "side", "volume", "sl", "tp", "comment", "ticket")))

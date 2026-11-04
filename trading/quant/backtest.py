@@ -64,7 +64,7 @@ def run(bars: list[dict[str, float]], *, symbol: str = "XXXYYY", train: int = 20
         for t in range(s, end):
             if t < next_free or t + 1 >= len(bars):
                 continue
-            prop = M.decide(symbol, bars, f, post_all.get(t), states, t)
+            prop = M.decide(symbol, bars, f, post_all.get(t), states, t, spread=spread)
             if prop.regime in regime_counts:
                 regime_counts[prop.regime] += 1
             if prop.side is None or M.sanity(prop):

@@ -187,7 +187,7 @@ def symbol(symbol: str = Query(..., max_length=32)) -> dict[str, Any]:
 
 @router.get("/rates", dependencies=[Depends(guard)])
 def rates(symbol: str = Query(..., max_length=32), tf: str = Query("H1", max_length=4),
-          count: int = Query(200, ge=10, le=1000)) -> dict[str, Any]:
+          count: int = Query(200, ge=10, le=6000)) -> dict[str, Any]:
     if tf not in ("M1", "M5", "M15", "M30", "H1", "H4", "D1"):
         raise HTTPException(400, f"Unknown timeframe {tf}")
     return {"bars": _run(_backend().rates, symbol, tf, count)}
@@ -301,7 +301,7 @@ def confirm_order(body: ConfirmIn) -> dict[str, Any]:
     if problems:
         raise HTTPException(422, {"problems": problems})
     result = _run(b.send, order)
-    logger.info(f"[mt5] order {order['side']} {order['volume']} {order['symbol']} ok={result.get('ok')} retcode={result.get('retcode')}")
+    logger.info(f"[mt5] order {order['side']} {order['volume']} {order['symbol']} ok={result.get('ok')} retcode={result.get('retcode')} comment={result.get('comment')}")
     if result.get("ok"):
         journal.record({"event": "order", "ticket": result.get("order") or result.get("deal"), "symbol": order["symbol"],
                         "side": order["side"], "volume": order["volume"], "sl": order.get("sl"), "tp": order.get("tp"),
@@ -316,7 +316,7 @@ def confirm_close(body: ConfirmIn) -> dict[str, Any]:
     # The position's profit just before closing; the close result does not always carry it.
     pos = next((p for p in _run(b.positions) if p["ticket"] == item["ticket"]), {})
     result = _run(b.close, item["ticket"], item["volume"])
-    logger.info(f"[mt5] close ticket={item['ticket']} volume={item['volume']} ok={result.get('ok')}")
+    logger.info(f"[mt5] close ticket={item['ticket']} volume={item['volume']} ok={result.get('ok')} comment={result.get('comment')}")
     if result.get("ok"):
         profit = result.get("profit", pos.get("profit", 0.0))
         journal.record({"event": "close", "ticket": item["ticket"], "symbol": pos.get("symbol"),
@@ -367,7 +367,7 @@ def confirm_modify(body: ConfirmIn) -> dict[str, Any]:
     if problems:
         raise HTTPException(422, {"problems": problems})
     result = _run(b.modify, change["ticket"], change["sl"], change["tp"])
-    logger.info(f"[mt5] modify ticket={change['ticket']} ok={result.get('ok')} retcode={result.get('retcode')}")
+    logger.info(f"[mt5] modify ticket={change['ticket']} ok={result.get('ok')} retcode={result.get('retcode')} comment={result.get('comment')}")
     if result.get("ok"):
         journal.record({"event": "modify", "ticket": change["ticket"], "symbol": pos["symbol"], "side": pos["side"],
                         "sl": change["sl"], "tp": change["tp"], "backend": b.name})

@@ -25,6 +25,7 @@ from trading.quant import risk as R
 from web.mt5_api import _backend, guard
 
 router = APIRouter(prefix="/api/quant", tags=["quant"])
+SCALP_MIN_BARS = 400
 
 
 def _news() -> list[strategy.NewsEvent]:
@@ -111,7 +112,9 @@ def bridge_status() -> dict[str, Any]:
     from web.mt4_bridge import bridge_secret, store
     with store.lock:
         symbols = sorted(store.ticks)
-        seen = max((t.get("seen", 0) for t in store.ticks.values()), default=0)
+        # The EA skips unchanged quotes, so a quiet market has old tick times. The account heartbeat
+        # (sent every few seconds) is the real "last message" time.
+        seen = max([store.account_seen, *(t.get("seen", 0) for t in store.ticks.values())])
     return {
         "paired": bool(bridge_secret()),
         "ea_online": store.alive(),
@@ -140,6 +143,61 @@ def bridge_pair(request: Request, rotate: bool = False) -> dict[str, Any]:
             "Pasang Mt4Bridge di chart EURUSD (satu chart saja). Di tab Common, centang 'Allow live trading' hanya jika memang mau kirim order.",
             "Di tab Inputs, tekan Load lalu pilih Mt4Bridge.set yang diunduh dari halaman ini.",
         ],
+    }
+
+
+def _scalp_reviewer(use_llm: bool) -> tuple[Any, dict[str, int]]:
+    from trading.quant import scalp_review as review
+
+    if not use_llm:
+        return review.rule_reviewer, {"llm_calls": 0, "llm_failures": 0}
+    from config.secrets import get_secrets
+    from config.settings import get_settings
+    from model.connection.api_client import APIClient
+
+    settings = get_settings()
+    client = APIClient(settings.api_base_url, get_secrets().api_key, int(settings.timeout_seconds))
+    return review.llm_reviewer(client, os.getenv("SCALP_LLM_MODEL", "").strip() or settings.default_model)
+
+
+def _scalp_data(symbol: str) -> tuple[list[dict[str, float]], float, str]:
+    """Recorded ticks when there are enough, else M1 bars, else nothing usable."""
+    from trading.quant import ticks
+
+    bars, spread = ticks.load_bars(symbol)
+    if len(bars) >= SCALP_MIN_BARS:
+        return bars, spread, f"recorded ticks in {ticks.BAR_SECONDS}s bars"
+    backend = _backend()
+    minute = backend.rates(symbol, "M1", 6000)
+    if getattr(backend, "name", "") == "mt5" and minute:
+        minute = minute[:-1]
+    tick = backend.tick(symbol)
+    return minute, max(0.0, float(tick["ask"]) - float(tick["bid"])), "M1 bars"
+
+
+@router.get("/scalp/backtest", dependencies=[Depends(guard)])
+def scalp_backtest(
+    symbol: str = Query(..., min_length=1, max_length=32, pattern=r"^[A-Za-z0-9._-]+$"),
+    llm: bool = False,
+) -> dict[str, Any]:
+    """Five-position, 30-second basket backtest, next to the same run with random entries. Places no orders."""
+    from trading.quant import scalp
+
+    try:
+        bars, spread, source = _scalp_data(symbol)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - shown to the user, as the other backtest does
+        raise HTTPException(502, f"Could not read data for {symbol}: {exc}") from exc
+    if len(bars) < SCALP_MIN_BARS:
+        raise HTTPException(422, f"Only {len(bars)} short bars available; this backtest needs at least {SCALP_MIN_BARS}.")
+    reviewer, usage = _scalp_reviewer(llm)
+    result = scalp.run(bars, spread=spread, reviewer=reviewer)
+    baseline = scalp.run(bars, spread=spread, random_entries=True)
+    return {
+        "symbol": symbol, "source": source, "bars": len(bars), "summary": result["summary"], "reviews": result["reviews"][-10:],
+        "random_entries": baseline["summary"], "llm": {"used": llm, **usage},
+        "warning": "A high win rate alone is not profit: compare the expectancy and the random-entry row. Past results do not show future ones.",
     }
 
 

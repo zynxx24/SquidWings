@@ -208,7 +208,7 @@ def test_a_close_preview_cannot_confirm_an_order(client):
 def test_trading_page_is_served(client):
     r = client.get("/trading")
     assert r.status_code == 200
-    assert "MT5 Trading" in r.text
+    assert "SquidWings" in r.text
     assert "/static/trading/trading.js" in r.text
 
 
