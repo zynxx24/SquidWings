@@ -37,6 +37,7 @@ class TeamInput(BaseModel):
     lead_id: str | None = None
     reviewer_id: str | None = None
     schedule: dict[str, Any] = Field(default_factory=dict)
+    mode: str = Field(default="standard", max_length=20)
 
 
 class RunInput(BaseModel):
@@ -97,7 +98,7 @@ async def create_team(payload: TeamInput, request: Request) -> dict[str, Any]:
     try:
         team = service(request).create_team(
             payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id,
-            payload.reviewer_id, payload.schedule,
+            payload.reviewer_id, payload.schedule, payload.mode,
         )
         return asdict(team)
     except ValueError as exc:
@@ -109,7 +110,7 @@ async def update_team(team_id: str, payload: TeamInput, request: Request) -> dic
     try:
         team = await service(request).update_team(
             team_id, payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id,
-            payload.reviewer_id, payload.schedule,
+            payload.reviewer_id, payload.schedule, payload.mode,
         )
         return asdict(team)
     except KeyError as exc:

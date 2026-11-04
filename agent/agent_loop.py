@@ -89,6 +89,8 @@ class LoopResult:
     content_parts: list[str] = field(default_factory=list)
     parsed_response: ParsedResponse | None = None
     notes: str = ""
+    # Files handed to the user with share_file, as Markdown to put under the answer.
+    shared: list[str] = field(default_factory=list)
 
     @property
     def total_tokens(self) -> int:
@@ -312,6 +314,13 @@ class AgentLoop:
                     outcomes = [await self._run_tool(c, harness) for c in calls]
 
                 for tool_call, tool_result in zip(calls, outcomes, strict=True):
+                    payload = tool_result.get("result")
+                    if (
+                        self._tool_registry.resolve_name(str(tool_result.get("tool_name") or "")) == "share_file"
+                        and isinstance(payload, dict)
+                        and payload.get("ok") and payload.get("markdown") not in result.shared
+                    ):
+                        result.shared.append(str(payload["markdown"]))
                     result.tool_calls_history.append({
                         "tool_call": tool_call,
                         "result": tool_result,
@@ -629,6 +638,8 @@ class AgentLoop:
             return f"{int(payload.get('total_chars') or 0) // 1000} rb karakter"
         if name == "run_checks" and payload.get("passed") is not None:
             return "lulus" if payload["passed"] else "gagal"
+        if name == "share_file" and payload.get("name"):
+            return str(payload["name"])
         if name == "aislop_scan" and payload.get("score") is not None:
             return f"skor {payload['score']}"
         return ""
