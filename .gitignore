@@ -3,6 +3,7 @@
 # tool/execute/execute_local_memory/vault/, which is source code.
 
 # === Secrets ===
+task/
 .env
 .env.*
 !.env.example

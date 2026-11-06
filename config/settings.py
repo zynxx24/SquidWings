@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     # auto uses bubblewrap, then Docker, and refuses commands if neither works.
     sandbox_mode: str = "auto"
     sandbox_enabled: bool = True
-    sandbox_network: bool = False
+    sandbox_network: bool = True
     sandbox_memory_mb: int = 0
     sandbox_cpu_seconds: int = 900
     sandbox_file_size_mb: int = 1024
@@ -95,12 +95,12 @@ class Settings(BaseSettings):
     web_search_max_cache_entries: int = 200
 
     # --- Obsidian local memory ---
-    web_search_obsidian_enabled: bool = False
+    web_search_obsidian_enabled: bool = True
     obsidian_vault_path: str = ""
     obsidian_search_folder: str = "SquidWings/Web Search"
 
     # --- Graphify local memory ---
-    graphify_memory_enabled: bool = False
+    graphify_memory_enabled: bool = True
     graphify_memory_endpoint: str = ""
     graphify_memory_timeout_seconds: float = 5.0
 
