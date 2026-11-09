@@ -139,3 +139,14 @@ def test_rail_links_switch_views_in_place():
     for view in ("chat", "trading", "router"):
         assert f'data-view="{view}"' in html
     assert 'target="_blank"' not in html.split('id="nav-trading"')[1].split("</a>")[0]
+
+
+def test_chat_model_picker_follows_router_changes():
+    # The chat page used to fetch models once; providers added on the router page never showed.
+    router = (STATIC / "router/router.js").read_text(encoding="utf-8")
+    page = (STATIC / "js/page.js").read_text(encoding="utf-8")
+    app = (STATIC / "js/app.js").read_text(encoding="utf-8")
+    assert "notify('sq-models')" in router
+    assert "BroadcastChannel('squidwings')" in page and "BroadcastChannel('squidwings')" in app
+    assert "e.data.type === 'sq-models') refreshModels(true)" in app
+    assert app.count("refreshModels(true)") >= 4   # frame, other tab, tab focus, back to chat

@@ -158,5 +158,14 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready, { once: true });
   else ready();
 
-  window.SquidPage = { begin, end, hold, track, embedded };
+  /** Tell the chat page (around this frame, or in another tab) that something it shows changed. */
+  let channel = null;
+  try { channel = new BroadcastChannel('squidwings'); } catch { /* old browser */ }
+  function notify(type) {
+    const message = { type };
+    if (embedded) window.parent.postMessage(message, '*');
+    if (channel) channel.postMessage(message);
+  }
+
+  window.SquidPage = { begin, end, hold, track, notify, embedded };
 })();

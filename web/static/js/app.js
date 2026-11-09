@@ -189,11 +189,46 @@
     S.model = saved === 'auto' || S.byId[saved] ? saved : data.default_model;
     fillModelOptions($('model-select'), S.model, true);
 
+    S.modelsAt = Date.now();
+
     // If the registry was empty (API still starting), retry after a short delay.
     if (!S.models.length && retries > 0) {
       setTimeout(() => loadModels(retries - 1).catch(() => {}), 2500);
     }
   }
+
+  // Providers change on the router page while this page stays open, so the list is fetched
+  // again when the router says so, when the chat comes back into view, and when the tab returns.
+  async function refreshModels(announce = false) {
+    if (S.booting || S.refreshingModels) return;
+    S.refreshingModels = true;
+    const before = new Set(S.models.map(m => m.id));
+    const chosen = S.model;
+    try {
+      await loadModels(0);
+      if (S.model !== chosen && S.session) {
+        post('/api/model/select', { session_id: S.session, model_id: S.model }).catch(() => {});
+        if (chosen !== 'auto') toast(`Model ${chosen} tidak tersedia lagi. Chat memakai ${S.model}.`);
+      }
+      const added = S.models.filter(m => !before.has(m.id)).length;
+      const gone = [...before].filter(id => !S.byId[id]).length;
+      if (announce && (added || gone)) {
+        toast(`Daftar model diperbarui: ${S.models.length} model${added ? `, ${added} baru` : ''}${gone ? `, ${gone} hilang` : ''}.`);
+      }
+      // Only when the list really changed: a re-render would drop what is being typed there.
+      if ((added || gone) && S.view === 'team' && !document.activeElement?.closest('#member-panel')) renderMember();
+    } catch { /* the next trigger tries again */ } finally {
+      S.refreshingModels = false;
+    }
+  }
+  try {
+    // A router page open in another tab says so here.
+    S.channel = new BroadcastChannel('squidwings');
+    S.channel.onmessage = e => { if (e.data && e.data.type === 'sq-models') refreshModels(true); };
+  } catch { /* old browser: focus and view changes still refresh */ }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && Date.now() - (S.modelsAt || 0) > 30000) refreshModels(true);
+  });
 
   $('model-select').onchange = async e => {
     S.model = e.target.value;
@@ -943,6 +978,7 @@
     $('chat-title').textContent = name === 'team' ? 'Tim agent' : app ? app.title : sessionTitle();
     document.title = app ? `${app.title} · SquidWings` : 'SquidWings';
     if (name === 'team') loadTeams();
+    if (was && was !== name && !app && Date.now() - (S.modelsAt || 0) > 3000) refreshModels(true);
     if (name !== 'chat') closeDrawers();
     if (app) openApp(name);
     Object.entries(frames).forEach(([key, f]) => {
@@ -1027,6 +1063,7 @@
     const f = Object.values(frames).find(x => x.frame.contentWindow === e.source);
     if (!f || !e.data || typeof e.data !== 'object') return;
     if (e.data.type === 'sq-ready') readyApp(f);
+    else if (e.data.type === 'sq-models') refreshModels(true);
     else if (e.data.type === 'sq-nav' && (e.data.view === 'chat' || APPS[e.data.view])) showView(e.data.view);
   });
   window.addEventListener('popstate', () => showView(viewFromPath() || 'chat', { fromHistory: true }));

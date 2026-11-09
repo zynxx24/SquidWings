@@ -331,6 +331,8 @@
   async function loadModels() {
     try {
       const r = await api('/api/router/models');
+      // The chat page's model picker follows this list.
+      if (window.SquidPage) window.SquidPage.notify('sq-models');
       const select = $('default-model');
       const all = r.groups.flatMap(g => g.models);
       select.replaceChildren(h('option', { value: '' }, 'Otomatis (DEFAULT_MODEL atau model pertama)'),
