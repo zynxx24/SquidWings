@@ -25,12 +25,13 @@ class Secrets:
     api_key: str
 
     def __post_init__(self) -> None:
-        """Validate the API key on construction."""
-        if not self.api_key or self.api_key == "your-api-key-here":
-            raise ValueError(
-                "API_KEY is not set or is still the placeholder value. "
-                "Please set a valid API_KEY in your .env file."
-            )
+        """An empty key is allowed: providers and keys can live on the Router page (/router) instead of .env."""
+        if self.api_key == "your-api-key-here":
+            object.__setattr__(self, "api_key", "")
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.api_key)
 
     @property
     def masked_key(self) -> str:

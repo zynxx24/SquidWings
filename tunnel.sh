@@ -4,11 +4,19 @@
 # Exposes local web server (default port 8080) to the internet securely via HTTPS
 # ==============================================================================
 
+# One tunnel per port, so the agent UI (8080) and the trading panel (80) can be open together:
+#   ./tunnel.sh start          agent UI
+#   ./tunnel.sh start 80       trading panel (or: python main.py trading --tunnel)
 PORT="${2:-8080}"
 ACTION="${1:-start}"
-PID_FILE="/tmp/agent_router_tunnel.pid"
-LOG_FILE="$(pwd)/tunnel.log"
-URL_FILE="/tmp/agent_router_tunnel.url"
+if [ "$PORT" = "8080" ]; then
+    SUFFIX=""
+else
+    SUFFIX="_${PORT}"
+fi
+PID_FILE="/tmp/agent_router_tunnel${SUFFIX}.pid"
+LOG_FILE="$(pwd)/tunnel${SUFFIX//_/-}.log"
+URL_FILE="/tmp/agent_router_tunnel${SUFFIX}.url"
 
 # Locate cloudflared binary
 CLOUDFLARED_BIN=""

@@ -16,6 +16,7 @@ import contextlib
 import json
 import os
 import re
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -24,6 +25,8 @@ from dotenv import load_dotenv
 
 from model.connection.base_client import BaseClient
 from model.connection.providers import Provider, load_providers
+from model.router import dispatch as router_dispatch
+from model.router import usage as router_usage
 from model.settings.rate_limiter import RateLimiter, get_default_rate_limiter
 from utils.exceptions import (
     ConnectionError,  # noqa: A004
@@ -90,11 +93,31 @@ class APIClient(BaseClient):
 
     @property
     def provider_ids(self) -> list[str]:
-        """Providers that can serve requests right now."""
-        return [self._main_provider.id, *(p.id for p in self._providers if p.key)]
+        """Providers that can serve requests right now, Router-page ones included."""
+        from model.router.store import get_store
+        extra = [p.id for p in get_store().providers() if p.enabled and any(a.enabled for a in p.accounts)]
+        return [self._main_provider.id, *(p.id for p in self._providers if p.key), *extra]
 
     def provider_of(self, model: str) -> str:
-        return self._route(model)[0].id
+        routed = router_dispatch.route(model)
+        return routed.id if routed else self._route(model)[0].id
+
+    def _require_key(self, provider: Provider, model: str) -> None:
+        if provider is self._main_provider and not provider.api_key:
+            raise ModelError(
+                message=("Belum ada provider model. Buka /router di web (lokal atau lewat tunnel), "
+                         "tambahkan URL dan API key, lalu modelnya langsung muncul."),
+                model_id=model, status_code=401,
+            )
+
+    @staticmethod
+    def _log_usage(provider: Provider, model: str, usage: Any, started: float, *, ok: bool = True,
+                   stream: bool = False, error: str = "") -> None:
+        """Every request through the .env router or providers.yaml, for the Router page's token counts."""
+        from utils.workspace_context import get_active_session
+        router_usage.record(provider=provider.id, model=model, usage=usage if isinstance(usage, dict) else None,
+                            latency_ms=(time.monotonic() - started) * 1000, ok=ok, stream=stream, error=error[:300],
+                            session=get_active_session() or "")
 
     def _client_for(self, provider: Provider) -> httpx.AsyncClient:
         if provider is self._main_provider:
@@ -244,7 +267,12 @@ class APIClient(BaseClient):
         Returns:
             Full parsed response dict from the API.
         """
+        routed = router_dispatch.route(model)
+        if routed is not None:
+            return await router_dispatch.chat(routed, model, messages, temperature=temperature, max_tokens=max_tokens,
+                                              tools=tools, **kwargs)
         provider, api_model = self._route(model)
+        self._require_key(provider, model)
 
         payload: dict[str, Any] = {
             "model": api_model,
@@ -258,7 +286,19 @@ class APIClient(BaseClient):
             payload["tools"] = tools
 
         payload.update(kwargs)
+        started = time.monotonic()
+        try:
+            result = await self._chat_attempts(provider, api_model, model, payload, messages, temperature, max_tokens)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self._log_usage(provider, model, None, started, ok=False, error=str(exc))
+            raise
+        self._log_usage(provider, model, result.get("usage"), started)
+        return result
 
+    async def _chat_attempts(self, provider: Provider, api_model: str, model: str, payload: dict[str, Any],
+                             messages: list[dict[str, Any]], temperature: float, max_tokens: int) -> dict[str, Any]:
         attempt = 0
         while True:
             attempt += 1
@@ -372,7 +412,16 @@ class APIClient(BaseClient):
 
         Yields parsed JSON chunks from the SSE stream.
         """
+        routed = router_dispatch.route(model)
+        if routed is not None:
+            async for chunk in router_dispatch.chat_stream(routed, model, messages, temperature=temperature,
+                                                           max_tokens=max_tokens, tools=tools, **kwargs):
+                yield chunk
+            return
         provider, api_model = self._route(model)
+        self._require_key(provider, model)
+        started = time.monotonic()
+        seen_usage: dict[str, Any] | None = None
 
         payload: dict[str, Any] = {
             "model": api_model,
@@ -419,12 +468,16 @@ class APIClient(BaseClient):
                                 try:
                                     chunk = json.loads(data_str)
                                     yielded = True
+                                    if isinstance(chunk, dict) and isinstance(chunk.get("usage"), dict):
+                                        seen_usage = chunk["usage"]
                                     yield chunk
                                 except json.JSONDecodeError:
                                     logger.warning(f"[api] Failed to parse SSE chunk: {data_str[:100]}")
                     except GeneratorExit:
                         logger.debug(f"[api] Stream generator exited cleanly for {model}")
+                        self._log_usage(provider, model, seen_usage, started, stream=True)
                         return
+                self._log_usage(provider, model, seen_usage, started, stream=True)
                 return
 
             except asyncio.CancelledError:
@@ -537,8 +590,15 @@ class APIClient(BaseClient):
             Mapping of provider id to number of models registered.
         """
         counts: dict[str, int] = {}
-        fetchers: list[tuple[Provider, Any]] = [(self._main_provider, self.list_models)]
+        from model.router.store import get_store
+
+        fetchers: list[tuple[Any, Any]] = []
+        store_default = get_store().default_provider()
+        if self._main_provider.api_key and not (store_default and store_default.usable):
+            fetchers.append((self._main_provider, self.list_models))
         fetchers += [(p, lambda p=p: self.list_provider_models(p)) for p in self._providers]
+        fetchers += [(p, lambda p=p: router_dispatch.list_models(p))
+                     for p in get_store().providers() if p.enabled and (p.accounts or p.models)]
 
         async def _fetch_one(provider: Provider, fetch: Any) -> tuple[Provider, list[dict[str, Any]]]:
             try:
@@ -547,7 +607,7 @@ class APIClient(BaseClient):
             except Exception as e:  # noqa: BLE001
                 logger.warning(
                     f"[api] Auto-sync '{provider.id}' failed: {e!r}  "
-                    f"(url={provider.url})"
+                    f"(url={getattr(provider, 'url', None) or getattr(provider, 'base_url', '')})"
                 )
                 return provider, []
 
@@ -563,7 +623,7 @@ class APIClient(BaseClient):
                 for mid in list(registry.model_ids):
                     if mid in pinned or mid in current_ids:
                         continue
-                    if self._route(mid)[0].id == provider.id:
+                    if self.provider_of(mid) == provider.id:
                         registry.unregister(mid)
             if items:
                 registry.register_from_api_models(items)
@@ -599,3 +659,4 @@ class APIClient(BaseClient):
         for client, _, _ in self._provider_clients.values():
             if not client.is_closed:
                 await client.aclose()
+        await router_dispatch.close()

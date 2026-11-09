@@ -54,6 +54,29 @@ def is_loopback_host(host: str) -> bool:
     return host.strip("[]").lower() in LOOPBACK_HOSTS
 
 
+# Headers a proxy or tunnel adds. cloudflared connects from loopback, so the client address alone
+# cannot tell a phone on the tunnel from the browser on this machine.
+FORWARDED_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-forwarded-host", "forwarded", "x-real-ip")
+
+
+def is_local_request(request: object) -> bool:
+    """This machine only: a loopback client that no proxy or tunnel relayed.
+
+    ``request`` is a Starlette/FastAPI Request. In public mode (tunnel or non-local bind) the
+    server takes any Host, so the Host must be a loopback name too. Outside it the Host check
+    has already refused unknown hostnames.
+    """
+    client = getattr(request, "client", None)
+    headers = getattr(request, "headers", None)
+    if client is None or headers is None or not is_loopback_host(str(client.host)):
+        return False
+    if any(headers.get(name) for name in FORWARDED_HEADERS):
+        return False
+    if is_public_mode():
+        return is_loopback_host(urlsplit("//" + (headers.get("host") or "")).hostname or "")
+    return True
+
+
 class CapacityFullError(RuntimeError):
     """Raised when all web-user slots are occupied."""
 

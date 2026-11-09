@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Router model</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/router/router.css">
+<link rel="stylesheet" href="/static/css/soft.css">
+</head>
+<body class="page-router">
+<header class="top">
+  <div>
+    <h1>Router model</h1>
+    <p class="sub">Endpoint OpenAI-compatible dan Claude-compatible milikmu, banyak akun per provider, rotasi pintar, dan pemakaian token.</p>
+  </div>
+  <div class="top-actions">
+    <button id="sync" class="btn">Sinkron daftar model</button>
+    <a class="btn ghost" href="/">Kembali ke chat</a>
+  </div>
+</header>
+<div id="banner" class="banner" hidden></div>
+<form id="pin-bar" class="banner pin-bar" hidden>
+  <span>Halaman ini dikunci PIN untuk akses dari luar komputer ini. Masukkan PIN untuk mengubah provider dan API key.</span>
+  <input id="pin-input" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" aria-label="PIN router" maxlength="64">
+  <button class="btn primary" type="submit">Buka</button>
+</form>
+
+<main>
+  <section class="card" aria-labelledby="usage-title">
+    <div class="section-head">
+      <h2 id="usage-title">Pemakaian token</h2>
+      <div class="seg" id="periods" role="tablist" aria-label="Periode">
+        <button data-period="1h">1 jam</button>
+        <button data-period="24h" class="on">24 jam</button>
+        <button data-period="7d">1 minggu</button>
+        <button data-period="30d">1 bulan</button>
+        <button data-period="all">Semua</button>
+      </div>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <figure class="chart">
+      <figcaption>
+        <span class="chart-title" id="chart-title">Token per jam</span>
+        <span class="legend" aria-label="Legenda">
+          <span><i class="sw s1"></i>Input baru</span>
+          <span><i class="sw s2"></i>Input dari cache</span>
+          <span><i class="sw s3"></i>Output</span>
+        </span>
+      </figcaption>
+      <div class="chart-box" id="chart"></div>
+      <div class="tip" id="tip" hidden></div>
+    </figure>
+    <div class="section-head small">
+      <h3>Rincian</h3>
+      <div class="seg" id="groups" role="tablist" aria-label="Kelompokkan">
+        <button data-group="provider" class="on">Provider</button>
+        <button data-group="account">Akun</button>
+        <button data-group="model">Model</button>
+      </div>
+    </div>
+    <div class="table-wrap"><table class="grid" id="usage-table"></table></div>
+    <p class="hint">Input sudah termasuk token cached. Cached = dibaca dari cache provider (lebih murah). Request stream tanpa laporan usage tetap dihitung, tanpa token.</p>
+  </section>
+
+  <section class="card" aria-labelledby="prov-title">
+    <div class="section-head">
+      <div>
+        <h2 id="prov-title">Provider</h2>
+        <p class="sub">URL dan API key diatur di sini, lokal maupun lewat tunnel. Model langsung diambil setelah provider atau key ditambahkan.</p>
+      </div>
+      <div class="top-actions">
+        <button id="import-env" class="btn" hidden title="Salin API_BASE_URL/API_KEY dan pasangan lain seperti BANSOS_* dari .env">Impor dari .env</button>
+        <button id="show-add" class="btn primary">Tambah provider</button>
+      </div>
+    </div>
+    <form id="add-form" class="add-form" hidden>
+      <div class="row">
+        <label>Nama <input name="name" required maxlength="60" placeholder="9router lokal"></label>
+        <label>Jenis
+          <select name="kind">
+            <option value="openai">OpenAI-compatible (/chat/completions)</option>
+            <option value="anthropic">Claude-compatible (/v1/messages)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label class="grow">Base URL <input name="base_url" required placeholder="https://api.openai.com/v1" list="presets"></label>
+        <label>Prefix model <input name="prefix" maxlength="32" placeholder="otomatis, mis. 9r/"></label>
+      </div>
+      <datalist id="presets">
+        <option value="https://api.openai.com/v1">OpenAI</option>
+        <option value="https://api.anthropic.com">Anthropic (Claude)</option>
+        <option value="https://openrouter.ai/api/v1">OpenRouter</option>
+        <option value="https://api.groq.com/openai/v1">Groq</option>
+        <option value="https://api.deepseek.com/v1">DeepSeek</option>
+        <option value="https://generativelanguage.googleapis.com/v1beta/openai">Gemini (OpenAI-compatible)</option>
+        <option value="http://127.0.0.1:20128/v1">Router lokal</option>
+      </datalist>
+      <div class="row">
+        <label>Rotasi
+          <select name="strategy">
+            <option value="smart">Smart round robin (disarankan)</option>
+            <option value="round_robin">Round robin biasa</option>
+            <option value="fill_first">Isi akun pertama dulu</option>
+          </select>
+        </label>
+        <label class="grow">Model tambahan (opsional, pisahkan koma) <input name="models" placeholder="claude-sonnet-4-5, gpt-4.1-mini"></label>
+      </div>
+      <label class="check-row"><input type="checkbox" name="default"> Provider default: modelnya dipakai tanpa prefix (menggantikan API_BASE_URL di .env)</label>
+      <label>API key, satu per baris (tiap baris jadi satu akun)
+        <textarea name="api_keys" rows="3" autocomplete="off" spellcheck="false" placeholder="sk-..."></textarea>
+      </label>
+      <div class="row end">
+        <button type="button" id="cancel-add" class="btn ghost">Batal</button>
+        <button type="submit" class="btn primary">Simpan provider</button>
+      </div>
+    </form>
+    <div id="providers"></div>
+    <p class="hint" id="empty" hidden>Belum ada provider. Tambahkan satu, lalu modelnya muncul di pemilih model chat dengan prefix-nya, misalnya <code>9r/gpt-4.1</code>.</p>
+  </section>
+
+  <section class="card" aria-labelledby="models-title">
+    <div class="section-head">
+      <div>
+        <h2 id="models-title">Model</h2>
+        <p class="sub">Semua model yang bisa dipakai chat dan tim, per provider. Model default dipakai chat baru.</p>
+      </div>
+      <label class="inline-field">Model default
+        <select id="default-model" aria-label="Model default"></select>
+      </label>
+    </div>
+    <div id="model-groups" class="model-groups"></div>
+  </section>
+
+  <section class="card" aria-labelledby="pin-title">
+    <h2 id="pin-title">Keamanan tunnel</h2>
+    <p class="sub" id="pin-status"></p>
+    <form id="pin-form" class="row pin-form">
+      <label>PIN baru (4–64 karakter, kosongkan lalu simpan untuk menghapus)
+        <input id="pin-new" type="password" autocomplete="new-password" maxlength="64">
+      </label>
+      <div class="row end"><button class="btn primary" type="submit">Simpan PIN</button></div>
+    </form>
+  </section>
+
+  <section class="card explain">
+    <h2>Cara rotasi pintar memilih akun</h2>
+    <ul>
+      <li><b>Istirahat otomatis.</b> Akun yang kena 429 istirahat sesuai Retry-After (atau 5, 10, 20 detik, dst.), key ditolak 30 menit, kuota habis 1 jam, error server berulang sebentar. Request langsung pindah ke akun lain.</li>
+      <li><b>Bobot ikut kesehatan.</b> Porsi tiap akun mengikuti bobotmu × tingkat sukses terbaru × kecepatan dibanding akun lain ÷ jumlah request yang sedang jalan.</li>
+      <li><b>Sesi menempel.</b> Satu chat tetap di akun yang sama selama akun itu sehat, karena cache prompt tersimpan per akun. Inilah yang menaikkan token cached. Chat lain tetap tersebar.</li>
+      <li><b>Merata, tidak beruntun.</b> Smooth weighted round robin: akun berbobot besar lebih sering dipilih tanpa dipilih berkali-kali berturut-turut.</li>
+    </ul>
+  </section>
+</main>
+<script src="/static/router/router.js"></script>
+</body>
+</html>

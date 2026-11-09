@@ -1,0 +1,92 @@
+/*
+ * Soft card layer for the chat, trading and router pages. Same colours as tokens.css: the change
+ * is gentler edges (hairline borders mixed toward transparent), layered low-contrast shadows,
+ * rounder corners and calmer motion. Built with Tailwind (see tailwind.config.js); each page
+ * scopes its rules by a body class, so a class name shared by two pages cannot leak.
+ */
+@tailwind base;       /* preflight is off: this only adds Tailwind's variable defaults */
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --soft-line: color-mix(in srgb, var(--line) 72%, transparent);
+  --soft-line-strong: color-mix(in srgb, var(--line-strong) 70%, transparent);
+  --soft-shadow: 0 1px 1px rgb(30 25 15 / 3%), 0 2px 6px -2px rgb(30 25 15 / 5%), 0 10px 24px -14px rgb(30 25 15 / 12%);
+  --soft-shadow-lift: 0 1px 2px rgb(30 25 15 / 4%), 0 6px 14px -6px rgb(30 25 15 / 9%), 0 18px 36px -18px rgb(30 25 15 / 18%);
+  --soft-ring: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --soft-shadow: 0 1px 1px rgb(0 0 0 / 18%), 0 8px 22px -14px rgb(0 0 0 / 55%);
+    --soft-shadow-lift: 0 2px 4px rgb(0 0 0 / 22%), 0 16px 34px -16px rgb(0 0 0 / 65%);
+  }
+}
+:root[data-theme="dark"] {
+  --soft-shadow: 0 1px 1px rgb(0 0 0 / 18%), 0 8px 22px -14px rgb(0 0 0 / 55%);
+  --soft-shadow-lift: 0 2px 4px rgb(0 0 0 / 22%), 0 16px 34px -16px rgb(0 0 0 / 65%);
+}
+
+@layer components {
+  .soft-card { @apply tw-rounded-card tw-bg-surface tw-shadow-soft; border: 1px solid var(--soft-line); }
+  .soft-hover { @apply tw-transition tw-duration-200 tw-ease-soft; }
+  .soft-hover:hover { @apply tw-shadow-lift; border-color: var(--soft-line-strong); }
+}
+
+body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+@media (prefers-reduced-motion: reduce) { .soft-hover, .soft-hover:hover { transition: none; transform: none; } }
+
+/* ── Chat ─────────────────────────────────────────── */
+.page-chat .bubble { @apply tw-shadow-soft; border: 1px solid var(--soft-line); border-radius: 18px 18px 6px 18px; padding: 10px 15px; }
+.page-chat .composer { @apply tw-rounded-[20px] tw-shadow-soft; border-color: var(--soft-line-strong); }
+.page-chat .composer:focus-within { box-shadow: var(--soft-shadow-lift), var(--soft-ring); }
+.page-chat .suggestion { @apply tw-shadow-soft soft-hover; border-color: var(--soft-line); }
+.page-chat .suggestion:hover { @apply -tw-translate-y-px; }
+.page-chat .code { @apply tw-rounded-soft tw-shadow-soft; }
+.page-chat .notice { @apply tw-rounded-soft; }
+.page-chat .card-head { @apply tw-rounded-soft; }
+.page-chat .card[open] { @apply tw-rounded-soft; box-shadow: inset 0 0 0 1px var(--soft-line); }
+.page-chat .chip { @apply tw-rounded-lg; box-shadow: inset 0 0 0 1px var(--soft-line); }
+.page-chat .path { @apply tw-rounded-lg; border-color: var(--soft-line); }
+.page-chat .shared-file video, .page-chat .shared-file img { @apply tw-rounded-soft tw-shadow-soft; }
+.page-chat .node { @apply tw-rounded-card tw-shadow-soft; border-color: var(--soft-line-strong); transition: border-color .2s, box-shadow .2s; }
+.page-chat .node:hover { @apply tw-shadow-lift; }
+.page-chat .node.selected { border-color: var(--accent); box-shadow: var(--soft-shadow), var(--soft-ring); }
+.page-chat .condition { @apply tw-rounded-soft; border-color: var(--soft-line); }
+.page-chat .toast { @apply tw-rounded-soft tw-shadow-lift; }
+.page-chat .session-open { @apply tw-rounded-[10px]; }
+.page-chat .btn-ghost { border-color: var(--soft-line-strong); }
+.page-chat .inspector, .page-chat .member-panel, .page-chat .team-run { border-color: var(--soft-line); }
+
+/* ── Trading ──────────────────────────────────────── */
+.page-trading .top { @apply soft-card; margin: 8px 8px 0; border-radius: 14px; }
+.page-trading .banner { @apply tw-rounded-soft; margin: 8px 8px 0; border: 1px solid var(--soft-line); }
+.page-trading .layout { gap: 8px; padding: 8px; background: var(--bg); }
+.page-trading .left, .page-trading .center, .page-trading .bottom, .page-trading .right { @apply soft-card; border-radius: 14px; }
+.page-trading .left, .page-trading .center, .page-trading .bottom { overflow: hidden; }
+.page-trading .splitter { background: transparent; border-radius: 999px; margin: 0 40%; }
+.page-trading .splitter:hover, .page-trading .splitter.drag { background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.page-trading .pane { border-bottom-color: var(--soft-line); }
+.page-trading .pane:last-child { border-bottom: 0; }
+.page-trading .dialog { @apply tw-shadow-lift; border-radius: 18px; border-color: var(--soft-line); }
+.page-trading .modal { backdrop-filter: blur(2px); }
+.page-trading .previewbox { @apply tw-rounded-soft; border-color: var(--soft-line); }
+.page-trading input, .page-trading select { border-radius: 10px; border-color: var(--soft-line-strong); }
+.page-trading input:focus, .page-trading select:focus { box-shadow: var(--soft-ring); }
+.page-trading th, .page-trading td { border-bottom-color: var(--soft-line); }
+@media (max-width: 1000px) { .page-trading .layout { padding: 8px; } }
+
+/* ── Router ───────────────────────────────────────── */
+.page-router .card { @apply soft-card; padding: 18px 20px; }
+.page-router .kpi { @apply tw-rounded-soft tw-bg-surface soft-hover; border-color: var(--soft-line); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--surface) 60%, transparent); }
+.page-router .kpi:hover { @apply tw-shadow-soft; }
+.page-router .provider { @apply tw-rounded-soft soft-hover; border-color: var(--soft-line); }
+.page-router .add-form { @apply tw-rounded-soft; border-color: var(--soft-line-strong); background: color-mix(in srgb, var(--surface-2) 45%, var(--surface)); }
+.page-router .seg { @apply tw-rounded-[10px]; border-color: var(--soft-line); }
+.page-router .btn { @apply tw-rounded-[10px]; border-color: var(--soft-line-strong); transition: background .15s, box-shadow .15s; }
+.page-router .btn.primary { @apply tw-shadow-soft; border-color: transparent; }
+.page-router .btn.ghost { border-color: transparent; }
+.page-router input, .page-router select, .page-router textarea { @apply tw-rounded-[10px]; border-color: var(--soft-line-strong); transition: border-color .15s, box-shadow .15s; }
+.page-router input:focus, .page-router select:focus, .page-router textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--soft-ring); }
+.page-router table.grid th, .page-router table.grid td { border-bottom-color: var(--soft-line); }
+.page-router .tip { @apply tw-rounded-soft tw-shadow-lift; border-color: var(--soft-line); }
+.page-router .banner { @apply tw-rounded-soft; border: 1px solid var(--soft-line); }

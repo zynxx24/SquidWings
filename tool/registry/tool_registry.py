@@ -70,6 +70,14 @@ _TOOL_ALIASES: dict[str, str] = {
     "delete_file": "file_delete",
     "stat": "file_stat",
     "mkdir": "dir_create",
+    "glob": "file_find",
+    "find_files": "file_find",
+    "read_files": "file_read_many",
+    "read_many": "file_read_many",
+    "cp": "file_copy",
+    "copy": "file_copy",
+    "copy_file": "file_copy",
+    "replace_all": "file_replace_all",
     "websearch": "web_search",
 }
 
@@ -85,6 +93,7 @@ WORKSPACE_TOOLS: dict[str, str] = {
             "vault_health", "vault_search", "vault_read", "vault_recall", "vault_write",
             "project_overview", "code_outline", "find_symbol", "run_checks", "code_graph", "aislop_scan",
             "web_research", "extract_files",
+            "file_find", "file_read_many", "file_copy", "file_replace_all", "archive", "media_convert",
         ),
         "workspace_path",
     ),
@@ -98,7 +107,7 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset({
     "git_diff", "json_query", "web_search", "time_now", "vault_search", "vault_read",
     "vault_recall", "vault_neighbours", "vault_explain", "memory_recall", "memory_rank_files",
     "graphify_query", "project_overview", "code_outline", "find_symbol", "load_skill",
-    "web_research", "web_read",
+    "web_research", "web_read", "file_find", "file_read_many", "trading_snapshot",
 })
 
 

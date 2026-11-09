@@ -24,6 +24,9 @@ os.environ["TOOLS_AUTO_UPDATE"] = "false"   # no network or global installs duri
 import tempfile as _tempfile  # noqa: E402
 
 os.environ["MODEL_STATS_PATH"] = os.path.join(_tempfile.mkdtemp(prefix="model-stats-"), "stats.json")
+# Router providers and the token log must not touch the real web/data/router.
+os.environ["ROUTER_STORE_DIR"] = _tempfile.mkdtemp(prefix="router-store-")
+os.environ["ROUTER_IMPORT_ENV"] = "0"      # the server's start-up must not copy .env endpoints into it
 
 import pytest
 

@@ -1592,6 +1592,7 @@ Examples:
   python main.py health                   Check API health
   python main.py web                      Local Web GUI at http://127.0.0.1:8080
   python main.py web --tunnel             Web GUI with optional public tunnel
+  python main.py trading --tunnel         Trading panel + MT4 bridge, watchable from a phone
         """,
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -1636,6 +1637,10 @@ Examples:
     trading_parser = subparsers.add_parser("trading", help="Start the trading backend and MT4 bridge on their own")
     trading_parser.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
     trading_parser.add_argument("--port", "-p", type=int, default=80, help="Port (default: 80, what MT4 reaches)")
+    trading_parser.add_argument(
+        "--tunnel", action=argparse.BooleanOptionalAction, default=False,
+        help="Open the trading panel through a Cloudflare Tunnel, to watch it from a phone (no token to view)",
+    )
 
     args = parser.parse_args()
 
@@ -1654,7 +1659,7 @@ Examples:
     elif args.command == "trading":
         from web.trading_server import run as run_trading
 
-        sys.exit(run_trading(args.host, args.port))
+        sys.exit(run_trading(args.host, args.port, tunnel=getattr(args, "tunnel", False)))
     elif args.command == "web":
         from rich.panel import Panel
 

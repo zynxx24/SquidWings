@@ -29,6 +29,9 @@ ignore = ["E501"]
 # Renaming them would make the code harder to check against the formulas.
 "trading/quant/**" = ["N806", "N803", "N812"]
 "tests/test_quant_model.py" = ["N806", "N803", "N812"]
+"tests/test_quant_intelligence.py" = ["N806", "N803", "N812"]
+"tests/test_trading_snapshot.py" = ["N812"]
+"tests/test_model_router.py" = ["N812"]
 "web/quant_api.py" = ["N812"]
 
 [tool.pytest.ini_options]

@@ -98,3 +98,6 @@ uv.lock
 
 # MT5/MT4 trade journal (user data)
 trading/data/
+
+# Per-port tunnel logs (tunnel.sh, main.py trading --tunnel)
+tunnel-*.log

@@ -143,3 +143,26 @@ def test_files_missing_from_an_answer_are_appended(session: Path) -> None:
     url = shared_files.url_for("chat-a", "pieces/demo/renders/share.mp4")
     assert shared_files.missing_from(session, "chat-a", "Revisi tanpa video") == f"\n\n![share.mp4]({url})"
     assert shared_files.missing_from(session, "chat-a", f"Sudah ada ![v]({url})") == ""
+
+
+def test_a_render_nobody_shared_is_found_newest_first(tmp_path):
+    import os
+    import time
+
+    from utils import shared_files
+
+    start = time.time()
+    real = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 4096
+    old = tmp_path / "kit" / "examples" / "demo.mp4"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(real)
+    os.utime(old, (start - 3600, start - 3600))           # copied from the kit, older than the run
+    (tmp_path / "renders").mkdir()
+    (tmp_path / "renders" / "draft.mp4").write_bytes(real)
+    (tmp_path / "renders" / "share.mp4").write_bytes(real)
+    (tmp_path / "renders" / "broken.mp4").write_bytes(b"not a video" * 200)
+    (tmp_path / ".agent_memory").mkdir()
+    (tmp_path / ".agent_memory" / "x.mp4").write_bytes(real)
+    found = shared_files.find_new_videos(tmp_path, start)
+    assert found[0] == "renders/share.mp4"
+    assert set(found) == {"renders/share.mp4", "renders/draft.mp4"}

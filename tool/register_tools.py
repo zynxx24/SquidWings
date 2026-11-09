@@ -58,10 +58,20 @@ from tool.execute.execute_local_ops.local_ops_tool import (
     text_transform,
     time_now,
 )
+from tool.execute.execute_local_ops.power_tools import (
+    archive,
+    file_copy,
+    file_find,
+    file_read_many,
+    file_replace_all,
+    media_convert,
+)
 from tool.execute.execute_share_file.share_tool import share_file
 from tool.execute.execute_skills.skill_tool import load_skill
 from tool.execute.execute_upload_file.extract_tool import extract_files
 from tool.execute.execute_upload_file.read_file_tool import list_directory, read_file
+from tool.execute.execute_trading.snapshot_tool import SECTIONS as TRADING_SECTIONS
+from tool.execute.execute_trading.snapshot_tool import trading_snapshot
 from tool.execute.execute_web_search.web_reader import web_read, web_research
 from tool.execute.execute_web_search.web_search_tool import web_search
 from tool.registry.tool_registry import ToolRegistry
@@ -427,6 +437,181 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         file_stat,
     )
 
+    # --- local ops: file_find ---
+    reg.register(
+        ToolSchema(
+            name="file_find",
+            description=(
+                "Find files or folders by glob and filters, newest first. '*.mp4' matches the name in any "
+                "folder; '**' crosses folders, e.g. 'renders/**/*.png'. Skips .git, node_modules, .venv and caches."
+            ),
+            parameters=[
+                ToolParameter(name="pattern", param_type=ParamType.STRING,
+                              description="Glob, e.g. '**/*.mp4' or '*.py' (default '*').", required=False, default="*"),
+                ToolParameter(name="path", param_type=ParamType.STRING,
+                              description="Folder to search from (default the workspace).", required=False, default="."),
+                ToolParameter(name="name_contains", param_type=ParamType.STRING,
+                              description="Only names containing this text (any case).", required=False),
+                ToolParameter(name="kind", param_type=ParamType.STRING, description="file, dir or any (default file).",
+                              required=False, default="file", enum=["file", "dir", "any"]),
+                ToolParameter(name="min_size", param_type=ParamType.INTEGER,
+                              description="Minimum size in bytes.", required=False),
+                ToolParameter(name="max_size", param_type=ParamType.INTEGER,
+                              description="Maximum size in bytes.", required=False),
+                ToolParameter(name="modified_within_minutes", param_type=ParamType.NUMBER,
+                              description="Only items changed in the last N minutes.", required=False),
+                ToolParameter(name="max_results", param_type=ParamType.INTEGER,
+                              description="Max results (default 200).", required=False, default=200),
+                ToolParameter(name="workspace_path", param_type=ParamType.STRING,
+                              description="Workspace root.", required=False),
+            ],
+        ),
+        file_find,
+    )
+
+    # --- local ops: file_read_many ---
+    reg.register(
+        ToolSchema(
+            name="file_read_many",
+            description=(
+                "Read up to 20 text files in one call. Each is cut at max_chars_per_file and all together at "
+                "120000 characters; binary files are reported as skipped."
+            ),
+            parameters=[
+                ToolParameter(name="paths", param_type=ParamType.ARRAY, items={"type": "string"},
+                              description="File paths inside the workspace.", required=True),
+                ToolParameter(name="max_chars_per_file", param_type=ParamType.INTEGER,
+                              description="Characters per file (default 20000).", required=False, default=20000),
+                ToolParameter(name="max_total_chars", param_type=ParamType.INTEGER,
+                              description="Characters for all files (default and max 120000).", required=False),
+                ToolParameter(name="workspace_path", param_type=ParamType.STRING,
+                              description="Workspace root.", required=False),
+            ],
+        ),
+        file_read_many,
+    )
+
+    # --- local ops: file_copy ---
+    reg.register(
+        ToolSchema(
+            name="file_copy",
+            description=(
+                "Copy a file or a whole folder inside the workspace. A file copied onto an existing folder goes "
+                "into it. Refuses to replace anything unless overwrite is true."
+            ),
+            parameters=[
+                ToolParameter(name="source", param_type=ParamType.STRING,
+                              description="File or folder to copy.", required=True),
+                ToolParameter(name="destination", param_type=ParamType.STRING,
+                              description="Path of the copy.", required=True),
+                ToolParameter(name="overwrite", param_type=ParamType.BOOLEAN,
+                              description="Replace existing files (default false).", required=False, default=False),
+                ToolParameter(name="workspace_path", param_type=ParamType.STRING,
+                              description="Workspace root.", required=False),
+            ],
+        ),
+        file_copy,
+    )
+
+    # --- local ops: file_replace_all ---
+    reg.register(
+        ToolSchema(
+            name="file_replace_all",
+            description=(
+                "Find and replace text across every file matching a glob. dry_run is true by default and only "
+                "reports matches per file with sample lines; call again with dry_run=false to apply. Backs up "
+                "each changed file. Skips binary and large files."
+            ),
+            parameters=[
+                ToolParameter(name="find", param_type=ParamType.STRING,
+                              description="Text to find (a regex when use_regex is true).", required=True),
+                ToolParameter(name="replace", param_type=ParamType.STRING,
+                              description="Replacement. With use_regex, \\1 inserts a group.", required=True),
+                ToolParameter(name="glob", param_type=ParamType.STRING,
+                              description="Which files, e.g. '*.py' or 'src/**/*.ts'.", required=True),
+                ToolParameter(name="path", param_type=ParamType.STRING,
+                              description="Folder to work in (default the workspace).", required=False, default="."),
+                ToolParameter(name="use_regex", param_type=ParamType.BOOLEAN,
+                              description="Treat find as a regex (default false).", required=False, default=False),
+                ToolParameter(name="case_sensitive", param_type=ParamType.BOOLEAN,
+                              description="Match case (default true).", required=False, default=True),
+                ToolParameter(name="dry_run", param_type=ParamType.BOOLEAN,
+                              description="Only report, change nothing (default true).", required=False, default=True),
+                ToolParameter(name="max_files", param_type=ParamType.INTEGER,
+                              description="Max files to change (default 200).", required=False, default=200),
+                ToolParameter(name="workspace_path", param_type=ParamType.STRING,
+                              description="Workspace root.", required=False),
+            ],
+        ),
+        file_replace_all,
+    )
+
+    # --- local ops: archive ---
+    reg.register(
+        ToolSchema(
+            name="archive",
+            description=(
+                "Make or unpack a zip inside the workspace. zip: put paths into archive_path. unzip: unpack "
+                "archive_path into destination. Refuses entries that leave the destination, symlinks, and "
+                "archives over 10000 entries or 500 MB."
+            ),
+            parameters=[
+                ToolParameter(name="action", param_type=ParamType.STRING, description="zip or unzip.",
+                              required=True, enum=["zip", "unzip"]),
+                ToolParameter(name="archive_path", param_type=ParamType.STRING,
+                              description="The .zip file to write or read.", required=True),
+                ToolParameter(name="paths", param_type=ParamType.ARRAY, items={"type": "string"},
+                              description="zip: files and folders to include.", required=False),
+                ToolParameter(name="destination", param_type=ParamType.STRING,
+                              description="unzip: folder to unpack into (default the workspace).", required=False,
+                              default="."),
+                ToolParameter(name="overwrite", param_type=ParamType.BOOLEAN,
+                              description="Replace existing files (default false).", required=False, default=False),
+                ToolParameter(name="workspace_path", param_type=ParamType.STRING,
+                              description="Workspace root.", required=False),
+            ],
+        ),
+        archive,
+    )
+
+    # --- local ops: media_convert ---
+    reg.register(
+        ToolSchema(
+            name="media_convert",
+            description=(
+                "Convert video or images with ffmpeg. Presets: mp4 (H.264/AAC, plays in every browser), webm, "
+                "gif, webp (animated), poster (one PNG frame at at_second). The output extension must match the "
+                "preset. Then use share_file to show the result."
+            ),
+            parameters=[
+                ToolParameter(name="source", param_type=ParamType.STRING,
+                              description="Input video, image or audio file.", required=True),
+                ToolParameter(name="output", param_type=ParamType.STRING,
+                              description="Output path, e.g. renders/share.mp4.", required=True),
+                ToolParameter(name="preset", param_type=ParamType.STRING, description="Output kind.",
+                              required=True, enum=["mp4", "webm", "gif", "webp", "poster"]),
+                ToolParameter(name="fps", param_type=ParamType.INTEGER,
+                              description="Frame rate (gif/webp default 12).", required=False),
+                ToolParameter(name="width", param_type=ParamType.INTEGER,
+                              description="Output width in pixels; height keeps the ratio (gif/webp default 480).",
+                              required=False),
+                ToolParameter(name="start", param_type=ParamType.NUMBER,
+                              description="Start at this second.", required=False),
+                ToolParameter(name="duration", param_type=ParamType.NUMBER,
+                              description="Seconds to keep.", required=False),
+                ToolParameter(name="at_second", param_type=ParamType.NUMBER,
+                              description="poster: which second to grab (default 0).", required=False),
+                ToolParameter(name="overwrite", param_type=ParamType.BOOLEAN,
+                              description="Replace an existing output (default false).", required=False, default=False),
+                ToolParameter(name="timeout", param_type=ParamType.INTEGER,
+                              description="Seconds before ffmpeg is stopped (default 600).", required=False, default=600),
+                ToolParameter(name="workspace_path", param_type=ParamType.STRING,
+                              description="Workspace root.", required=False),
+            ],
+        ),
+        media_convert,
+    )
+
     # --- local ops: count_lines ---
     reg.register(
         ToolSchema(
@@ -776,6 +961,30 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         web_read,
     )
 
+    # --- trading: read-only snapshot of the local trading server ---
+    reg.register(
+        ToolSchema(
+            name="trading_snapshot",
+            description=(
+                "Read the local MT4/MT5 trading server: account, open positions, pending orders, history, the "
+                "quant rule's proposal for a symbol (side, entry, SL, TP, score, every reason it passed or was "
+                "blocked), stop-loss management suggestions, the risk state, the EA bridge, and a walk-forward "
+                "backtest. Read-only: it cannot send, close or modify orders. Use it before giving any trading view."
+            ),
+            parameters=[
+                ToolParameter(name="symbol", param_type=ParamType.STRING,
+                              description="Symbol for the proposal and backtest, e.g. XAUUSD.", required=False),
+                ToolParameter(name="sections", param_type=ParamType.ARRAY,
+                              description="Any of: " + ", ".join(TRADING_SECTIONS) + ". Default: status, account, "
+                                          "positions, proposal, manage, risk_state. backtest is slow (up to 2 min).",
+                              required=False),
+                ToolParameter(name="history_days", param_type=ParamType.INTEGER,
+                              description="Days of closed deals for 'history' (1-90, default 7).", required=False),
+            ],
+        ),
+        trading_snapshot,
+    )
+
     reg.register(
         ToolSchema(
             name="load_skill",
@@ -797,8 +1006,11 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         ToolSchema(
             name="share_file",
             description=(
-                "Give the user a file you made in this session: a video or image plays in the chat, anything "
-                "else becomes a download. Use it for finished results such as renders/share.mp4."
+                "Give the user a file you made in this session: a video, image or audio file plays in the chat, "
+                "anything else becomes a download. Use it for finished results such as renders/share.mp4. This is "
+                "the only way to show a file: never start a web server, http.server or a tunnel (cloudflared, "
+                "ngrok) to show one, because every command runs in a fresh sandbox and those processes die when "
+                "the command ends."
             ),
             parameters=[
                 ToolParameter(name="path", param_type=ParamType.STRING, description="File path inside the session folder.", required=True),

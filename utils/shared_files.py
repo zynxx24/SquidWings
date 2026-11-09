@@ -74,6 +74,61 @@ def missing_from(workspace: str | Path, session_id: str, text: str) -> str:
     return "".join(f"\n\n{link}" for link in links)
 
 
+VIDEO_SUFFIXES = (".mp4", ".webm", ".mov")
+# Folders a render never lands in, and that are big enough to make a walk slow.
+_SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", *PRIVATE_DIRS}
+_MIN_VIDEO_BYTES = 1024
+
+
+def _looks_like_video(path: Path) -> bool:
+    """A real container, not an empty or half-written file named .mp4."""
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(12)
+    except OSError:
+        return False
+    if path.suffix.lower() == ".webm":
+        return head[:4] == b"\x1a\x45\xdf\xa3"
+    if path.suffix.lower() == ".mov":
+        return head[4:8] in {b"ftyp", b"moov", b"wide", b"mdat", b"free"}   # older QuickTime starts with an atom
+    return head[4:8] == b"ftyp"
+
+
+def find_new_videos(workspace: str | Path, since: float, limit: int = 20000) -> list[str]:
+    """Videos made in the folder at or after ``since``, best first: newest, and ``share.*`` before a draft.
+
+    For runs whose agents rendered a video but forgot to call share_file. Kit examples copied
+    into the folder keep their old modification times, so they are not picked up.
+    """
+    root = Path(workspace).resolve()
+    if not root.is_dir():
+        return []
+    found: list[tuple[bool, float, str]] = []
+    seen = 0
+    for directory, dirs, files in root.walk():
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+        for name in files:
+            seen += 1
+            if seen > limit:
+                break
+            path = directory / name
+            if path.suffix.lower() not in VIDEO_SUFFIXES or path.is_symlink():
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if stat.st_mtime + 1 < since or stat.st_size < _MIN_VIDEO_BYTES or stat.st_size > MAX_SHARE_BYTES:
+                continue
+            if not _looks_like_video(path):
+                continue
+            found.append((path.stem.lower() == "share", stat.st_mtime, path.relative_to(root).as_posix()))
+        if seen > limit:
+            break
+    found.sort(reverse=True)
+    return [relative for _, _, relative in found]
+
+
 def resolve(workspace: str | Path, relative: str) -> Path | None:
     """The file behind a shared path, or None if it was not shared or has gone."""
     if relative not in shared(workspace):

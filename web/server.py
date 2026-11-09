@@ -78,6 +78,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         get_orchestrator()
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning(f"[web] eager orchestrator init failed: {exc}")
+    # Endpoints in .env move to the Router page once; from then on they are managed there.
+    try:
+        from model.router.store import get_store
+
+        imported = get_store().import_env() if os.getenv("ROUTER_IMPORT_ENV", "1").strip() != "0" else []
+        if imported:
+            logger.info(f"[web] imported {len(imported)} provider(s) from .env into the Router page")
+    except Exception as exc:  # noqa: BLE001 - a broken store must not stop the server
+        logger.warning(f"[web] .env import into the Router page failed: {exc}")
     # Daily, in the background: keeps graphify and aislop on their latest release.
     from tool.execute.execute_code_intel import tool_updates
 
@@ -117,8 +126,28 @@ from web.mt4_bridge import router as mt4_router  # noqa: E402
 
 app.include_router(mt4_router)
 from web.quant_api import router as quant_router  # noqa: E402
+from web.router_api import router as model_router_api  # noqa: E402
+
+
+def _router_models_sink(provider_id: str, models: list[dict[str, Any]] | None) -> int:
+    """Put a Router-page provider's freshly fetched models in the registry, and drop the ones it no longer lists."""
+    registry = get_orchestrator().registry
+    keep = {m["id"] for m in models or []}
+    pinned: set[str] = getattr(registry, "_static_ids", set())
+    for model in list(registry.get_all()):
+        if model.provider == provider_id and model.id not in keep and model.id not in pinned:
+            registry.unregister(model.id)
+    if models:
+        registry.register_from_api_models(models)
+    return len(models or [])
+
+
+from model.router import sync as _router_sync  # noqa: E402
+
+_router_sync.set_registry_sink(_router_models_sink)
 
 app.include_router(quant_router)
+app.include_router(model_router_api)
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -209,6 +238,17 @@ async def serve_trading() -> HTMLResponse:
     page = STATIC_DIR / "trading" / "index.html"
     if not page.exists():
         raise HTTPException(status_code=404, detail="trading page not found")
+    resp = HTMLResponse(content=page.read_text(encoding="utf-8"))
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return resp
+
+
+@app.get("/router", response_class=HTMLResponse)
+async def serve_router() -> HTMLResponse:
+    """The model router: your own OpenAI- and Claude-compatible providers, their keys, and token usage."""
+    page = STATIC_DIR / "router" / "index.html"
+    if not page.exists():
+        raise HTTPException(status_code=404, detail="router page not found")
     resp = HTMLResponse(content=page.read_text(encoding="utf-8"))
     resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
     return resp
@@ -307,11 +347,13 @@ async def ensure_models(force: bool = False) -> dict[str, int]:
 
 
 def default_model_id() -> str:
-    """Configured default if registered, otherwise the first known model."""
+    """The model chosen on the Router page, else DEFAULT_MODEL, if registered; otherwise the first known model."""
+    from model.router.store import get_store
+
     orch = get_orchestrator()
-    configured = get_settings().default_model
-    if configured and orch.registry.get(configured):
-        return configured
+    for configured in (get_store().meta("default_model", ""), get_settings().default_model):
+        if configured and orch.registry.get(configured):
+            return configured
     ids = orch.registry.model_ids
     ids = ids() if callable(ids) else ids
     return next((mid for mid in ids if is_chat_model(mid)), "")
@@ -740,14 +782,21 @@ async def update_session_stack(session_id: str, payload: dict[str, Any]) -> dict
     return await asyncio.to_thread(stack.status)
 
 
-# Images a session's files reference (``![chart](plot.png)``). Only raster images, only from this
-# session's own folder, and only through the path guard, so a link cannot reach another chat or
-# the rest of the disk.
+# Media a session's files reference (``![chart](plot.png)``, ``![video](renders/share.mp4)``).
+# Only raster images, video and audio, only from this session's own folder, and only through the
+# path guard, so a link cannot reach another chat or the rest of the disk. Video and audio play
+# in the chat (FileResponse answers Range requests, so seeking works); HTML or SVG never does,
+# because served from this origin it could run script.
 _SESSION_IMAGE_TYPES = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
     ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
 }
+_SESSION_MEDIA_TYPES = {
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime",
+    ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".m4a": "audio/mp4",
+}
 _SESSION_IMAGE_MAX_BYTES = 10 * 1024 * 1024
+_SESSION_MEDIA_MAX_BYTES = shared_files.MAX_SHARE_BYTES
 _SESSION_FILE_HEADERS = {
     "Cache-Control": "private, max-age=300",
     "X-Content-Type-Options": "nosniff",
@@ -764,11 +813,20 @@ async def session_image(session_id: str, path: str = Query(..., min_length=1, ma
         target = resolve_inside(workspace, path, must_exist=True)
     except PathGuardError as exc:
         raise HTTPException(status_code=404, detail="file not found in this session") from exc
-    media = _SESSION_IMAGE_TYPES.get(target.suffix.lower())
+    relative = target.relative_to(workspace).parts
+    if relative and relative[0] in shared_files.PRIVATE_DIRS:
+        raise HTTPException(status_code=404, detail="file not found in this session")
+    suffix = target.suffix.lower()
+    image = _SESSION_IMAGE_TYPES.get(suffix)
+    media = image or _SESSION_MEDIA_TYPES.get(suffix)
     if media is None or not target.is_file():
-        raise HTTPException(status_code=415, detail="only png, jpg, gif, webp and bmp images can be shown")
-    if target.stat().st_size > _SESSION_IMAGE_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="image larger than 10 MB")
+        raise HTTPException(
+            status_code=415,
+            detail="only images (png, jpg, gif, webp, bmp), video (mp4, webm, mov) and audio (mp3, wav, ogg, m4a) can be shown",
+        )
+    limit = _SESSION_IMAGE_MAX_BYTES if image else _SESSION_MEDIA_MAX_BYTES
+    if target.stat().st_size > limit:
+        raise HTTPException(status_code=413, detail=f"file larger than {limit // (1024 * 1024)} MB")
     return FileResponse(target, media_type=media, headers=_SESSION_FILE_HEADERS)
 
 

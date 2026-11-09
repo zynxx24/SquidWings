@@ -85,11 +85,14 @@ _TOOL_VERBS = {
     "file_patch": "Mengedit", "file_move": "Memindahkan", "file_delete": "Menghapus",
     "dir_create": "Membuat folder", "execute_command": "Menjalankan", "run_checks": "Menjalankan tes",
     "web_research": "Mencari dan membaca web", "web_search": "Mencari di web", "web_read": "Membuka",
+    "trading_snapshot": "Membaca data trading",
     "git_status": "Melihat status git", "git_diff": "Melihat perubahan", "code_graph": "Menelusuri graph kode",
     "aislop_scan": "Memeriksa kualitas kode", "project_overview": "Mempelajari proyek",
     "load_skill": "Membuka panduan", "share_file": "Mengirim file", "vault_search": "Mencari catatan", "vault_read": "Membaca catatan",
     "vault_write": "Menulis catatan", "vault_recall": "Mengingat catatan", "memory_recall": "Mengingat",
     "memory_remember": "Menyimpan ke memori", "memory_forget": "Menghapus dari memori", "time_now": "Melihat waktu",
+    "file_find": "Mencari file", "file_read_many": "Membaca beberapa file", "file_copy": "Menyalin",
+    "file_replace_all": "Mengganti teks di banyak file", "archive": "Mengarsipkan", "media_convert": "Mengonversi media",
 }
 
 

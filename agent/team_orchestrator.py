@@ -789,13 +789,23 @@ class TeamOrchestrator:
             for layer in execution_layers([m for m in team.members if m.id in after]):
                 await asyncio.gather(*(self._run_node(run, team, m, mode="after") for m in layer))
             self._finish_result(run, team)
+            if team.mode == "video" and not self._has_video(stack.workspace):
+                # The render worked but nobody called share_file. Hand over the newest render
+                # rather than failing a run that did make its video.
+                rendered = shared_files.find_new_videos(stack.workspace, run.started_at or 0.0)
+                if rendered:
+                    shared_files.add(stack.workspace, rendered[0])
+                    logger.info("[teams] Run %s: shared %s, which no agent had shared", run_id, rendered[0])
             # A revision or a fallback answer can drop the video an agent shared earlier in the run.
             run.result = f"{run.result}{shared_files.missing_from(stack.workspace, run.id, run.result)}".strip()
             run.status = "completed"
             if team.mode == "video" and not self._has_video(stack.workspace):
                 # Agents can finish with a report and no file. That is not a finished video.
                 run.status = "failed"
-                run.error = "Tim selesai tanpa video: tidak ada file video yang dibagikan dengan share_file."
+                run.error = (
+                    "Tim selesai tanpa video: tidak ada file video yang dibagikan dengan share_file, dan tidak ada "
+                    "render baru (.mp4, .webm, .mov) di folder run. Cek log render animator."
+                )
         except asyncio.CancelledError:
             run.status = "cancelled"
             run.error = "Run cancelled by user."

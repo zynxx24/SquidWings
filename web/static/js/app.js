@@ -304,15 +304,28 @@
   }
 
   /* Files the agent shared come as Markdown images or links. Videos and audio need their own players. */
+  // A relative link (![video](renders/share.mp4)) goes through the session file endpoint instead;
+  // its file name is in the ?path= query, so the extension is read from there.
   const SHARED_FILE = /^\/api\/session\/[^/]+\/files\//;
+  const SESSION_FILE = /^\/api\/session\/[^/]+\/file\?/;
+  const mediaExt = src => {
+    let name = src.split('?')[0];
+    if (SESSION_FILE.test(src)) {
+      try { name = new URLSearchParams(src.split('?')[1]).get('path') || ''; } catch { name = ''; }
+    }
+    return (name.match(/\.(\w+)$/) || [])[1]?.toLowerCase();
+  };
   function enhanceMedia(container) {
     container.querySelectorAll('img').forEach(img => {
       const src = img.getAttribute('src') || '';
-      if (!SHARED_FILE.test(src)) return;
-      const ext = (src.split('?')[0].match(/\.(\w+)$/) || [])[1]?.toLowerCase();
+      const shared = SHARED_FILE.test(src);
+      if (!shared && !SESSION_FILE.test(src)) return;
+      const ext = mediaExt(src);
+      // An ordinary image from the session folder is already fine as an <img>.
+      if (!shared && !['mp4', 'm4v', 'webm', 'mov', 'mp3', 'wav', 'ogg', 'm4a'].includes(ext)) return;
       const label = img.getAttribute('alt') || '';
       let player = null;
-      if (['mp4', 'webm', 'mov'].includes(ext)) {
+      if (['mp4', 'm4v', 'webm', 'mov'].includes(ext)) {
         player = document.createElement('video');
         player.controls = true;
         player.playsInline = true;

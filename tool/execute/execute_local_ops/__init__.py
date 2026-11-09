@@ -13,6 +13,14 @@ from tool.execute.execute_local_ops.local_ops_tool import (
     text_transform,
     time_now,
 )
+from tool.execute.execute_local_ops.power_tools import (
+    archive,
+    file_copy,
+    file_find,
+    file_read_many,
+    file_replace_all,
+    media_convert,
+)
 
 __all__ = [
     "file_search",
@@ -28,4 +36,10 @@ __all__ = [
     "json_query",
     "text_transform",
     "time_now",
+    "file_find",
+    "file_read_many",
+    "file_copy",
+    "file_replace_all",
+    "archive",
+    "media_convert",
 ]

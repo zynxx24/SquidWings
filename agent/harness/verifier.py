@@ -26,7 +26,10 @@ from .guards import tool_failed
 
 logger = get_logger(__name__)
 
-_WRITE_TOOLS = {"file_write", "file_patch", "file_move", "dir_create", "vault_write", "memory_remember"}
+_WRITE_TOOLS = {
+    "file_write", "file_patch", "file_move", "dir_create", "vault_write", "memory_remember",
+    "file_copy", "file_replace_all", "archive", "media_convert",
+}
 _ACTION_TOOLS = _WRITE_TOOLS | {"execute_command", "file_delete"}
 _PATH_ARGS = ("path", "file_path", "destination", "dest")
 _TEST_TIMEOUT = 60

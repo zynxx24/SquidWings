@@ -9,7 +9,7 @@ git clone https://github.com/zynxx24/SquidWings.git
 cd SquidWings
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env        # isi API_BASE_URL dan API_KEY, lihat Menghubungkan provider
+cp .env.example .env        # opsional: provider dan API key bisa diatur di http://127.0.0.1:8080/router
 sudo apt install bubblewrap
 python main.py doctor       # memastikan sandbox benar-benar mengisolasi
 python main.py web          # buka http://127.0.0.1:8080
@@ -23,6 +23,7 @@ python main.py web          # buka http://127.0.0.1:8080
 | [Mengunggah dokumen](#mengunggah-dokumen) | Cara kerja PDF dari guru dan file lain |
 | [Tim agent](docs/tim-agent.md) | Kanvas alur, jadwal, Telegram, dan database |
 | [Panel trading](docs/trading.md) | MT4, chart, prosedur praktik, dan backtest |
+| [Router model](docs/router.md) | Atur provider, URL, dan API key dari web atau tunnel; rotasi pintar, model default, dan pemakaian token |
 | [Cara kerja agent](docs/cara-kerja-agent.md) | Harness, tier model, dan skill |
 
 ## Fitur
@@ -142,7 +143,7 @@ Semua pengaturan ada di `.env`, dengan contoh lengkap di [.env.example](.env.exa
 | Tim agent | `TEAM_RUN_SECONDS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TEAM_DB_POSTGRES_URL`, `TEAM_DB_MYSQL_URL`, `TEAM_DB_MONGODB_URL` |
 | Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `UPLOAD_INLINE_CHARS`, `DOCUMENT_OCR`, `OCR_MAX_IMAGES`, `MAX_CHAT_IMAGES`, `IMAGE_MAX_SIDE` |
 | Alat lokal | `GRAPHIFY_AUTO`, `AISLOP_AUTO`, `TOOLS_AUTO_UPDATE` |
-| Trading | `MT5_TRADE_TOKEN`, `MT5_MAX_VOLUME`, `MT5_REQUIRE_SL`, `MT5_ALLOW_LIVE`, `MT4_BRIDGE_SECRET`, `QUANT_RISK_PER_TRADE`, `TRADE_NEWS_FILE` |
+| Trading | `MT5_TRADE_TOKEN`, `TRADING_REMOTE_NO_TOKEN`, `QUANT_BLOCK_HOURS_UTC`, `QUANT_MIN_SCORE`, `MT5_MAX_VOLUME`, `MT5_REQUIRE_SL`, `MT5_ALLOW_LIVE`, `MT4_BRIDGE_SECRET`, `QUANT_RISK_PER_TRADE`, `TRADE_NEWS_FILE` |
 
 ### Pilihan model
 
@@ -232,10 +233,16 @@ Jangan pernah meng-commit `.env`. Key disimpan di sana, dan `.env.example` hanya
 | EA MT4 tampil offline | Masukkan URL server ke daftar WebRequest di MT4, lalu cek secret di preset EA |
 | Perubahan kode trading tidak terasa | Restart server. Hanya file statis yang langsung terbaca |
 
-## Dukung pengembangan
+## Lisensi dan pembelian
 
-SquidWings dikembangkan terus dan terbuka untuk donasi. Hubungi aguswiraw60@gmail.com untuk berdonasi atau bertanya soal cara mendukung proyek ini.
+SquidWings adalah perangkat lunak **berbayar (proprietary)** di bawah SquidWings Commercial License. Kode yang terlihat di repositori ini tidak otomatis boleh dipakai, disalin, atau dijual: hak pakai diperoleh dengan membeli lisensi. Syarat lengkap ada di [LICENSE](LICENSE), dan komponen pihak ketiga di [NOTICE](NOTICE).
 
-## Lisensi
+Ringkasan (bukan pengganti teks lisensi):
 
-SquidWings adalah perangkat lunak berbayar (proprietary). Penggunaan memerlukan lisensi yang dibeli. Lihat [LICENSE](LICENSE) untuk syarat lengkap.
+- **Pakai** sesuai jumlah pengguna, instalasi, dan jangka waktu yang dibeli.
+- **Jual beli** lisensi hanya oleh pemilik hak cipta atau penjual resmi yang ditunjuk tertulis. Pembeli tidak boleh menjual kembali, menyewakan, membagikan, atau mensublisensikan tanpa izin tertulis.
+- **Tidak boleh** membagikan kode sumber, menghapus pemberitahuan hak cipta, atau menawarkan SquidWings sebagai layanan untuk pihak lain tanpa izin.
+- Disediakan **tanpa garansi**. Fitur trading tidak menjamin keuntungan.
+- Komponen pihak ketiga (antara lain skill `animate` dan `humanizer-indonesia`, lisensi MIT) tetap memakai lisensinya sendiri.
+
+Pembelian lisensi, perpanjangan, atau izin khusus: **aguswiraw60@gmail.com**.
