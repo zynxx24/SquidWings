@@ -1,21 +1,28 @@
 SquidWings
-Copyright (C) 2026 zynxx24
+Copyright (c) 2025-2026 zynxx24. All rights reserved.
 
-Proyek ini dilisensikan di bawah GNU Affero General Public License v3.0
-(AGPL-3.0-only). Teks lengkapnya ada di berkas LICENSE.
+SquidWings adalah perangkat lunak berbayar (proprietary) di bawah SquidWings
+Commercial License. Teks lengkapnya ada di berkas LICENSE. Pemakaian, penjualan,
+dan distribusi memerlukan lisensi atau izin tertulis dari pemilik hak cipta.
 
-Pemberitahuan atribusi (Additional Terms berdasarkan AGPL-3.0 bagian 7(b)):
+Pembelian lisensi dan izin khusus: aguswiraw60@gmail.com
+Repositori resmi: https://github.com/zynxx24/SquidWings
 
-  Setiap salinan, fork, atau karya turunan dari SquidWings, dalam bentuk
-  sumber maupun biner, wajib mempertahankan:
+Komponen pihak ketiga
+---------------------
+Komponen berikut tetap tunduk pada lisensinya sendiri. Pemberitahuan hak cipta
+dan teks lisensinya wajib dipertahankan di setiap salinan.
 
-  1. pemberitahuan hak cipta di atas;
-  2. berkas LICENSE dan berkas NOTICE ini;
-  3. tautan ke repositori asli: https://github.com/zynxx24/SquidWings
-     pada README atau halaman "Tentang" produk turunan tersebut.
-
-  Karya turunan tidak boleh menyatakan atau menyiratkan bahwa ia adalah
-  produk resmi SquidWings atau didukung oleh pembuat aslinya, kecuali
-  dengan izin tertulis.
-
-Kontak: aguswiraw60@gmail.com
+  - brain/skills/animate/
+      cth9191/animate, lisensi MIT (brain/skills/animate/LICENSE)
+  - brain/skills/humanizer-indonesia/
+      adhiprib/humanizer-indonesia, (c) 2026 Pribadi Mumpuni Adhi, lisensi MIT
+      (brain/skills/humanizer-indonesia/LICENSE)
+  - web/static/js/marked.min.js
+      marked, (c) 2011-2025 Christopher Jeffrey, lisensi MIT
+  - web/static/js/purify.min.js
+      DOMPurify, (c) Cure53 dan kontributor, Apache License 2.0 / MPL 2.0
+  - web/static/js/highlight.min.js
+      highlight.js, lisensi BSD-3-Clause
+  - web/static/css/soft.css
+      dibangun dengan Tailwind CSS (lisensi MIT)
