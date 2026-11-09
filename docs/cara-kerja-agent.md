@@ -45,7 +45,7 @@ Model murah sering salah kalau menghitung atau mengonversi di kepala. `tool/exec
 | `dev` | `url_parse`, `http_status`, `semver`, `ip_cidr`, `color_contrast` (WCAG), `syntax_check`, `python_inspect`, `dependencies_list` |
 | `finance`, `indonesia` | `loan_payment` (anuitas, bunga flat, efektif), `compound_interest`, `npv_irr`, `zakat_calc`, `terbilang`, `rupiah`, `phone_id`, `plat_nomor` |
 | `maps` | `gmaps_import`, `places_search`, `places_stats`, `places_export`, `geo_distance`, `maps_link`, `geocode`, `osm_nearby`, `gmaps_scrape` |
-| `office` | `doc_create` (Word dari Markdown: judul, daftar, tabel, gambar, nomor halaman, margin akademik), `slides_create` (PowerPoint 16:9 dengan catatan pembicara), `sheet_create` (Excel dengan format Rupiah, total, rumus; atau CSV), `office_to_pdf` (lewat LibreOffice) |
+| `office` | `doc_create` (Word dari Markdown: judul, daftar, tabel, gambar, nomor halaman, margin akademik), `slides_create` (PowerPoint 16:9 dengan catatan pembicara), `sheet_create` (Excel dengan format Rupiah, total, rumus; atau CSV), `office_to_pdf` (lewat LibreOffice). Ketiganya memakai 12 tema (warna, font, gaya judul, dekorasi slide) plus `formal`; tanpa `theme`, setiap file memakai tema yang belum dipakai di chat itu |
 | `tradecalc`, `health`, `live` | `position_size`, `risk_reward`, `drawdown_stats`, `bmi_calc`, `weather`, `currency_convert`, `public_holidays`, `wiki_summary` |
 
 Tidak ada satu pun yang dikirim secara bawaan, juga ke model frontier, jadi prompt tetap hemat. Sebuah tool toolbox ditawarkan kalau:

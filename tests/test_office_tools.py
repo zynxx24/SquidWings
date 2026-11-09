@@ -308,3 +308,78 @@ def test_document_requests_wake_the_skill_and_its_tools():
         assert {"doc_create", "slides_create", "sheet_create"} <= offered
     assert skills.woken("buat parser csv di python", "code") == []
     assert skills.woken("baca pdf ini", "activity") == []
+
+
+# ---------------------------------------------------------------- themes: every file looks different
+
+
+def test_files_in_a_row_never_repeat_a_look(chat):
+    from tool.execute.execute_toolbox import _themes
+
+    seen = [ok("doc_create", output=f"d{i}.docx", markdown="# A\n\nisi")["theme"] for i in range(_themes.RECENT_KEEP)]
+    assert len(set(seen)) == len(seen), seen
+    assert all(name in _themes.THEMES for name in seen)
+    slides = ok("slides_create", output="s.pptx", slides=[{"title": "x"}])
+    assert slides["theme"] not in seen[-_themes.RECENT_KEEP + 1:]
+    assert "theme=" in slides["theme_note"]
+
+
+def test_a_set_can_share_one_theme_and_times_means_formal(chat):
+    doc = ok("doc_create", output="a.docx", markdown="isi", theme="batik")
+    deck = ok("slides_create", output="a.pptx", slides=[{"title": "x"}], theme=doc["theme"])
+    sheet = ok("sheet_create", output="a.xlsx", sheets=[{"headers": ["a"], "rows": [[1]]}], theme="BATIK")
+    assert doc["theme"] == deck["theme"] == sheet["theme"] == "batik"
+    assert ok("doc_create", output="m.docx", markdown="isi", font="Times New Roman")["theme"] == "formal"
+
+
+def test_theme_colours_reach_the_files(chat):
+    from docx import Document
+    from openpyxl import load_workbook
+    from pptx import Presentation
+
+    from tool.execute.execute_toolbox._themes import THEMES
+
+    t = THEMES["hutan"]
+    ok("doc_create", output="h.docx", markdown="# Bab\n\n| a | b |\n|---|---|\n| 1 | 2 |\n", title="Judul", theme="hutan")
+    doc = Document(str(chat / "h.docx"))
+    assert str(doc.styles["Heading 1"].font.color.rgb) == t.primary
+    assert t.primary in doc.tables[0]._tbl.xml        # the header row is filled with the theme colour
+    ok("sheet_create", output="h.xlsx", sheets=[{"headers": ["a"], "rows": [[1], [2]]}], theme="hutan")
+    ws = load_workbook(chat / "h.xlsx").active
+    assert ws["A1"].fill.fgColor.rgb.endswith(t.primary) and ws["A3"].fill.fgColor.rgb.endswith(t.light)
+    ok("slides_create", output="h.pptx", slides=[{"title": "Judul"}, {"title": "Isi", "bullets": ["a"]}], theme="hutan")
+    deck = Presentation(str(chat / "h.pptx"))
+    assert str(deck.slides[1].background.fill.fore_color.rgb) == t.slide_bg
+
+
+def test_slide_text_boxes_keep_their_place_on_16_9(chat):
+    """Regression: stretching the 4:3 placeholders stacked every text box at the top of the slide."""
+    from pptx import Presentation
+
+    ok("slides_create", output="p.pptx", slides=[{"title": "Judul", "subtitle": "Sub"},
+                                                  {"title": "Isi", "bullets": ["satu", "dua"]}])
+    deck = Presentation(str(chat / "p.pptx"))
+    title_slide, body_slide = deck.slides[0], deck.slides[1]
+    title, subtitle = list(title_slide.placeholders)[:2]
+    assert subtitle.top > title.top + title.height // 2
+    body = [ph for ph in body_slide.placeholders if ph.placeholder_format.idx != 0][0]
+    assert body.top > body_slide.shapes.title.top and body.height > 0
+    assert body.width > deck.slide_width * 0.8           # uses the 16:9 width, not the left 75%
+
+
+def test_light_accents_are_darkened_for_text():
+    from tool.execute.execute_toolbox.office_tools import _luminance, _readable
+
+    darker = _readable("F2C14E")                            # grafit's yellow, unreadable on white as is
+    assert darker != "F2C14E"
+    assert (1.05) / (_luminance(darker) + 0.05) >= 4.5
+    assert _readable("1F3A5F") == "1F3A5F"
+
+
+def test_rupiah_columns_are_wide_enough(chat):
+    from openpyxl import load_workbook
+
+    ok("sheet_create", output="r.xlsx", sheets=[{"headers": ["Biaya"], "rows": [[221000000]],
+                                                 "number_formats": {"Biaya": "rupiah"}}])
+    ws = load_workbook(chat / "r.xlsx").active
+    assert ws.column_dimensions["A"].width >= len("Rp221.000.000")

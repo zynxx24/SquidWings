@@ -23,11 +23,29 @@ Pengguna minta file, bukan teks di chat. Tulis isinya dengan baik, lalu biarkan 
 
 Semua tool ini menampilkan file di chat sendiri (`share` bawaan true). Jangan panggil `share_file` lagi untuk file yang sama, dan jangan tempel ulang isi dokumen di jawaban.
 
+## Gaya: setiap file tampil beda
+
+`doc_create`, `slides_create`, dan `sheet_create` punya `theme`. Tanpa `theme`, tool memilih tema yang belum dipakai
+di chat ini, jadi file berikutnya otomatis berbeda warna, font, gaya judul, dan bentuk dekorasi slide. Hasil tool
+menyebut tema yang dipakai (`theme`).
+
+- Biarkan `theme`, `accent_color`, dan `font` kosong, kecuali pengguna meminta warna, font, atau gaya tertentu.
+- Satu set file untuk tugas yang sama (laporan + presentasinya + lampiran Excel): pakai `theme` dari hasil file
+  pertama untuk file berikutnya, supaya serasi.
+- Pengguna minta "beda", "ganti gaya", atau membuat ulang: jangan isi `theme`, atau pilih tema lain dari daftar:
+  samudra, senja, hutan, grafit, lavender, terakota, kopi, malam (slide gelap), batik, mint, sakura, klasik.
+- Makalah, skripsi, laporan resmi sekolah atau kampus: `theme="formal"` (hitam putih), atau `font="Times New Roman"`
+  yang otomatis memilih formal.
+- Variasikan juga susunannya, bukan hanya warna: urutan slide (pembuka dengan pertanyaan, data, perbandingan dua
+  kolom, kesimpulan), slide section sebagai jeda antar bagian, tabel atau dua kolom bila cocok.
+
+CSV tidak punya gaya; kalau pengguna ingin tabel yang menarik, buat `.xlsx`.
+
 ## Word
 
 - Tulis seluruh isi sebagai Markdown: `#` judul bab, `##` subbab, daftar `-` dan `1.`, tabel Markdown, `**tebal**`. Gambar dari workspace: `![Grafik](grafik.png)`. Ganti halaman: baris `---`.
 - Judul dokumen lewat `title`; nama, NIM, kelas, tanggal lewat `subtitle` (satu baris per item). `cover_page=true` untuk halaman sampul.
-- Format akademik Indonesia kalau diminta "sesuai format kampus/sekolah" atau tidak disebut untuk makalah/skripsi: `font="Times New Roman"`, `font_size=12`, `line_spacing=1.5`, `margins_cm=[3, 3, 3, 4]`, `justify=true`. Surat dan dokumen kantor: Calibri 11, spasi 1.15.
+- Format akademik Indonesia kalau diminta "sesuai format kampus/sekolah" atau tidak disebut untuk makalah/skripsi: `font="Times New Roman"`, `font_size=12`, `line_spacing=1.5`, `margins_cm=[3, 3, 3, 4]`, `justify=true`. Surat dan dokumen kantor: biarkan font dari tema, ukuran 11, spasi 1.15.
 - Isi harus lengkap dan benar. Kalau ini tugas sekolah, ikuti juga panduan `jawab-tugas` untuk gaya bahasanya.
 
 ## PowerPoint
