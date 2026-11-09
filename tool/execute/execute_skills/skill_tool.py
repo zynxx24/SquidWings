@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from brain.skills import install, load_all
+from brain.skills import install, load_all, visible
 from utils import session_settings
 from utils.workspace_context import get_active_session, get_active_workspace
 
@@ -13,9 +13,14 @@ from utils.workspace_context import get_active_session, get_active_workspace
 async def load_skill(name: str, file: str = "", install_files: bool = False) -> dict[str, Any]:
     """Return a skill's guide, one of its companion guides, or install its files into the project."""
     skills = load_all()
-    skill = skills.get(name.strip().lower())
+    key = (name or "").strip().lower().removesuffix(".md").replace("_", "-").replace(" ", "-")
+    skill = skills.get(key)
     if skill is None:
-        return {"ok": False, "error": f"Unknown skill '{name}'. Available: {', '.join(sorted(skills))}"}
+        # Name only what the model may see: dormant skills stay out until their context wakes them.
+        workspace = get_active_workspace()
+        active = session_settings.load(workspace).skills if workspace else []
+        shown = sorted(s.name for s in visible(active))
+        return {"ok": False, "error": f"Unknown skill '{name}'. Available: {', '.join(shown)}"}
     result: dict[str, Any] = {"ok": True, "name": skill.name}
     # Asking for a dormant skill by name wakes it, for this session only.
     if skill.scope == "contextual" and (workspace := get_active_workspace()):

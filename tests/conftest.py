@@ -19,6 +19,7 @@ os.environ["AISLOP_AUTO"] = "false"
 os.environ["MT4_RECORD_TICKS"] = "0"     # bridge tests must not write into trading/data
 os.environ["QUANT_WORKER"] = "0"          # keep backtests in the test process
 os.environ["DOCUMENT_OCR"] = "false"      # each image would be a model call
+os.environ["SEND_IMAGES"] = "false"       # a developer .env with SEND_IMAGES=true must not change upload tests
 os.environ["TOOLS_AUTO_UPDATE"] = "false"   # no network or global installs during tests
 # Learned model stats must not land in the real .agent_memory: every test run would add fake failures.
 import tempfile as _tempfile  # noqa: E402

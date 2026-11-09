@@ -363,8 +363,27 @@ def test_billing_failure_cools_down_only_that_provider() -> None:
 
 
 def test_billing_failure_with_one_provider_has_no_alternative() -> None:
-    orch = SimpleNamespace(_api_client=SimpleNamespace(provider_ids=["a"]))
+    marked: list[str] = []
+    orch = SimpleNamespace(
+        _api_client=SimpleNamespace(provider_ids=["a"], provider_of=lambda m: "a"),
+        _registry=SimpleNamespace(get_all=lambda: [SimpleNamespace(id=i) for i in ("a/1", "a/2")]),
+        _health_checker=SimpleNamespace(mark_unavailable=lambda m, _s: marked.append(m)),
+    )
     assert Orchestrator._cool_down_provider(orch, SimpleNamespace(id="a/1")) is False  # type: ignore[arg-type]
+
+
+def test_a_spent_upstream_behind_a_router_rests_only_its_own_models() -> None:
+    """localhost:20128 serves kg/*, gemini/* and vk/*: kagiro's empty budget must not stop Gemini."""
+    marked: list[str] = []
+    orch = SimpleNamespace(
+        _api_client=SimpleNamespace(provider_ids=["default", "bansos"],
+                                    provider_of=lambda m: "bansos" if m.startswith("bansos/") else "default"),
+        _registry=SimpleNamespace(get_all=lambda: [SimpleNamespace(id=i) for i in (
+            "kg/minimax-m2.7", "kg/deepseek-v4-pro", "gemini/gemma-4-31b-it", "vk/openai/gpt-6-luna", "bansos/glm")]),
+        _health_checker=SimpleNamespace(mark_unavailable=lambda m, _s: marked.append(m)),
+    )
+    assert Orchestrator._cool_down_provider(orch, SimpleNamespace(id="kg/minimax-m2.7")) is True  # type: ignore[arg-type]
+    assert marked == ["kg/minimax-m2.7", "kg/deepseek-v4-pro"]
 
 
 def _response(status: int, message: str) -> httpx.Response:

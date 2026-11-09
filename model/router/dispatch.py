@@ -126,11 +126,11 @@ def _payload(provider: ProviderConfig, model: str, messages: list[dict[str, Any]
     return payload
 
 
-async def _choose(provider: ProviderConfig, session: str, tried: set[str]) -> Account:
+async def _choose(provider: ProviderConfig, session: str, tried: set[str], model: str = "") -> Account:
     deadline = time.monotonic() + WAIT_FOR_ACCOUNT_S
     while True:
         try:
-            return get_rotator().pick(provider, session, frozenset(tried)).account
+            return get_rotator().pick(provider, session, frozenset(tried), model=model).account
         except NoAccountError as exc:
             if exc.retry_after is None or time.monotonic() + exc.retry_after > deadline:
                 raise RateLimitError(message=str(exc), retry_after=exc.retry_after, model_id=provider.id) from None
@@ -163,7 +163,7 @@ async def chat(provider: ProviderConfig, model: str, messages: list[dict[str, An
     tried: set[str] = set()
     last: _UpstreamError | None = None
     for _ in range(min(MAX_ATTEMPTS, max(1, len(provider.accounts)))):
-        account = await _choose(provider, session, tried)
+        account = await _choose(provider, session, tried, provider.api_model(model))
         tried.add(account.id)
         started = time.monotonic()
         try:
@@ -191,7 +191,7 @@ async def chat(provider: ProviderConfig, model: str, messages: list[dict[str, An
                 raise ModelError(message=f"Model '{model}' returned error: {failed.message}", model_id=model,
                                  status_code=failed.status) from None
             rest = rotator.failure(provider.id, account.id, status=failed.status, retry_after=failed.retry_after,
-                                   message=failed.message)
+                                   message=failed.message, model=provider.api_model(model))
             logger.warning(f"[router] {provider.id}/{account.label}: {failed.status} {failed.message[:120]}"
                            f"{f' (rest {rest:.0f}s)' if rest else ''}; trying another account")
         finally:
@@ -223,7 +223,7 @@ async def chat_stream(provider: ProviderConfig, model: str, messages: list[dict[
     tried: set[str] = set()
     last: _UpstreamError | None = None
     for _ in range(min(MAX_ATTEMPTS, max(1, len(provider.accounts)))):
-        account = await _choose(provider, session, tried)
+        account = await _choose(provider, session, tried, provider.api_model(model))
         tried.add(account.id)
         started = time.monotonic()
         yielded = False
@@ -261,7 +261,7 @@ async def chat_stream(provider: ProviderConfig, model: str, messages: list[dict[
             last = failed
             _record(provider, account, model, usage, started, ok=False, stream=True, error=failed.message)
             rest = rotator.failure(provider.id, account.id, status=failed.status, retry_after=failed.retry_after,
-                                   message=failed.message) if failed.status not in _NO_RETRY else 0
+                                   message=failed.message, model=provider.api_model(model)) if failed.status not in _NO_RETRY else 0
             if failed.status in _NO_RETRY or yielded:
                 # Text already reached the user, so another account would repeat it.
                 raise _final_error(provider, model, failed) from None

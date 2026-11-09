@@ -134,12 +134,14 @@ def _score(skill: Skill, text: str) -> int:
     return _hits(skill.triggers, text)
 
 
-def woken(user_input: str) -> list[str]:
-    """Contextual skills this request calls for."""
+def woken(user_input: str, task: str = "") -> list[str]:
+    """Contextual skills this request calls for. A skill limited to other tasks stays asleep:
+    "buat parser csv" in a coding request must not wake the document skill."""
     text = user_input.lower()
     return [
         s.name for s in load_all().values()
         if s.scope == "contextual" and _score(s, text) and (not s.context or _hits(s.context, text))
+        and not (task and s.tasks and task not in s.tasks)
     ]
 
 
@@ -150,7 +152,7 @@ def select(user_input: str, limit: int = 2, active: tuple[str, ...] | list[str] 
     request wakes it.
     """
     text = user_input.lower()
-    awake = set(active) | set(woken(user_input))
+    awake = set(active) | set(woken(user_input, task))
     scored: list[tuple[int, Skill]] = []
     for skill in load_all().values():
         if skill.scope == "contextual" and skill.name not in awake:
@@ -170,9 +172,25 @@ def tools_for(active: tuple[str, ...] | list[str]) -> list[str]:
     return [tool for name in active if name in found for tool in found[name].tools]
 
 
-def index_text(active: tuple[str, ...] | list[str] = ()) -> str:
-    """One line per skill, so the model knows what it can ask for. Dormant skills are left out."""
-    skills = [s for s in load_all().values() if s.scope == "core" or s.name in active]
+def visible(active: tuple[str, ...] | list[str] = (), task: str = "") -> list[Skill]:
+    """Skills the model is told about: core ones meant for this task, plus contextual ones awake in the session."""
+    out = []
+    for s in load_all().values():
+        if s.scope == "contextual" and s.name not in active:
+            continue
+        if task and s.tasks and task not in s.tasks and s.name not in active:
+            continue
+        out.append(s)
+    return out
+
+
+def index_text(active: tuple[str, ...] | list[str] = (), task: str = "") -> str:
+    """One line per skill, so the model knows what it can ask for.
+
+    Dormant skills are left out, and so are core skills meant for other kinds of task:
+    a heart-to-heart does not need the backend checklist in its prompt.
+    """
+    skills = visible(active, task)
     if not skills:
         return ""
     lines = []
@@ -201,4 +219,4 @@ def install(skill: Skill, workspace: Path, session_id: str) -> Path:
     return target
 
 
-__all__ = ["Skill", "index_text", "install", "load_all", "select", "tools_for", "woken"]
+__all__ = ["Skill", "index_text", "install", "load_all", "select", "tools_for", "visible", "woken"]

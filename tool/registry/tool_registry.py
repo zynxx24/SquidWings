@@ -79,6 +79,55 @@ _TOOL_ALIASES: dict[str, str] = {
     "copy_file": "file_copy",
     "replace_all": "file_replace_all",
     "websearch": "web_search",
+    # Toolbox inventions: a small model reaches for a generic verb before it reads the list.
+    "calculator": "calc",
+    "calculate": "calc",
+    "math": "calc",
+    "eval": "calc",
+    "evaluate": "calc",
+    "compute": "calc",
+    "hitung": "calc",
+    "convert_units": "unit_convert",
+    "convert_unit": "unit_convert",
+    "unit_conversion": "unit_convert",
+    "currency": "currency_convert",
+    "exchange_rate": "currency_convert",
+    "kurs": "currency_convert",
+    "distance": "geo_distance",
+    "haversine": "geo_distance",
+    "geocoding": "geocode",
+    "maps_search": "places_search",
+    "search_places": "places_search",
+    "google_maps": "places_search",
+    "gmaps": "places_search",
+    "nearby": "osm_nearby",
+    "get_weather": "weather",
+    "forecast": "weather",
+    "word_count": "text_stats",
+    "count_words": "text_stats",
+    "regex": "regex_test",
+    "base64": "encode_decode",
+    "hash": "hash_text",
+    "uuid": "uuid_generate",
+    "password": "password_generate",
+    "random": "random_pick",
+    "date": "date_info",
+    "date_difference": "date_diff",
+    "days_between": "date_diff",
+    "timezone": "timezone_convert",
+    "csv": "table_inspect",
+    "read_csv": "table_inspect",
+    "query_table": "table_query",
+    "sql": "sqlite_query",
+    "statistics": "stats_describe",
+    "stats": "stats_describe",
+    "loan": "loan_payment",
+    "rupiah_format": "rupiah",
+    "number_to_words": "terbilang",
+    "lot_size": "position_size",
+    "search_tools": "find_tools",
+    "tool_search": "find_tools",
+    "list_tools": "find_tools",
 }
 
 
@@ -102,6 +151,7 @@ WORKSPACE_TOOLS: dict[str, str] = {
 }
 
 # Safe to run at the same time when a model asks for several in one turn.
+# Toolbox tools add themselves through mark_read_only(); read them with is_read_only().
 READ_ONLY_TOOLS: frozenset[str] = frozenset({
     "read_file", "list_directory", "file_search", "file_stat", "count_lines", "git_status",
     "git_diff", "json_query", "web_search", "time_now", "vault_search", "vault_read",
@@ -109,6 +159,18 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset({
     "graphify_query", "project_overview", "code_outline", "find_symbol", "load_skill",
     "web_research", "web_read", "file_find", "file_read_many", "trading_snapshot",
 })
+
+
+_EXTRA_READ_ONLY: set[str] = set()
+
+
+def mark_read_only(names: frozenset[str] | set[str]) -> None:
+    """Declare more tools safe to run in parallel (the toolbox registers its own)."""
+    _EXTRA_READ_ONLY.update(names)
+
+
+def is_read_only(name: str) -> bool:
+    return name in READ_ONLY_TOOLS or name in _EXTRA_READ_ONLY
 
 
 class _ToolEntry:
@@ -170,7 +232,7 @@ class ToolRegistry:
             )
 
         self._tools[schema.name] = _ToolEntry(schema, executor)
-        logger.info(f"[tool_registry] Registered tool: {schema.name}")
+        logger.debug(f"[tool_registry] Registered tool: {schema.name}")
 
     def tool(
         self,
@@ -282,7 +344,9 @@ class ToolRegistry:
             import difflib
 
             close = difflib.get_close_matches(tool_name, list(self._tools), n=3, cutoff=0.5)
-            hint = f" Available tools: {', '.join(close)}" if close else ""
+            hint = f" Available tools: {', '.join(close)}." if close else ""
+            if "find_tools" in self._tools:
+                hint += " Call find_tools with what you need to discover the right tool."
             raise ToolError(
                 message=f"Unknown tool: {tool_name}.{hint}",
                 tool_name=tool_name,

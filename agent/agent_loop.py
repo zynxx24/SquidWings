@@ -33,7 +33,7 @@ from model.connection.api_client import APIClient
 from model.connection.response_handler import ParsedResponse, ResponseHandler
 from model.parser.tool_call_parser import ToolCallParser
 from model.stream.stream_handler import StreamAggregator
-from tool.registry.tool_registry import READ_ONLY_TOOLS, WORKSPACE_TOOLS, ToolRegistry
+from tool.registry.tool_registry import WORKSPACE_TOOLS, ToolRegistry, is_read_only
 from utils.exceptions import ReasoningBudgetError, ToolError
 from utils.logger import get_logger
 
@@ -307,7 +307,7 @@ class AgentLoop:
                 # anything that changes state keeps the order the model chose.
                 calls = parsed.tool_calls
                 if harness and len(calls) > 1 and all(
-                    self._tool_registry.resolve_name(c.get("name", "")) in READ_ONLY_TOOLS for c in calls
+                    is_read_only(self._tool_registry.resolve_name(c.get("name", ""))) for c in calls
                 ):
                     outcomes = list(await asyncio.gather(*(self._run_tool(c, harness) for c in calls)))
                 else:
@@ -315,10 +315,13 @@ class AgentLoop:
 
                 for tool_call, tool_result in zip(calls, outcomes, strict=True):
                     payload = tool_result.get("result")
+                    # share_file, and any tool that shared its own output (doc_create, sheet_create...).
                     if (
-                        self._tool_registry.resolve_name(str(tool_result.get("tool_name") or "")) == "share_file"
-                        and isinstance(payload, dict)
-                        and payload.get("ok") and payload.get("markdown") not in result.shared
+                        isinstance(payload, dict)
+                        and payload.get("ok") and payload.get("markdown")
+                        and (payload.get("shared") is True
+                             or self._tool_registry.resolve_name(str(tool_result.get("tool_name") or "")) == "share_file")
+                        and payload.get("markdown") not in result.shared
                     ):
                         result.shared.append(str(payload["markdown"]))
                     result.tool_calls_history.append({
@@ -654,6 +657,7 @@ class AgentLoop:
             )
         tool_result = await self._execute_tool_call(tool_call)
         if harness:
+            self._offer_unlocked(harness, tool_result)
             harness.emit(
                 type="tool", phase="end",
                 name=tool_call.get("name", ""),
@@ -664,6 +668,30 @@ class AgentLoop:
                 meta=self._result_meta(tool_call, tool_result),
             )
         return tool_result
+
+    # Room find_tools may add on top of the tier's limit, so the next request can call what it found.
+    _UNLOCK_ROOM = 8
+
+    def _offer_unlocked(self, harness: Harness, tool_result: dict[str, Any]) -> None:
+        """After find_tools, offer the unlocked tools natively from the next request on."""
+        if self._tool_registry.resolve_name(str(tool_result.get("tool_name") or "")) != "find_tools":
+            return
+        payload = tool_result.get("result")
+        if not harness.tools or not isinstance(payload, dict):
+            return
+        from agent.harness.tool_select import _for_model
+
+        offered = {t.get("function", {}).get("name") for t in harness.tools}
+        limit = (harness.scaffold.max_tools or len(harness.tools)) + self._UNLOCK_ROOM
+        for name in payload.get("unlocked") or []:
+            if name in offered or name in harness.disabled_tools or len(harness.tools) >= limit:
+                continue
+            schema = self._tool_registry.get_schema(str(name))
+            if schema is None:
+                continue
+            harness.tools.append(_for_model(schema.to_openai_schema()))
+            offered.add(name)
+            harness.stats.tools_offered = len(harness.tools)
 
     async def _consult(self, harness: Harness, result: LoopResult, problem: str) -> str:
         """Ask the advisor model, if there is one, and count the call."""
@@ -763,18 +791,20 @@ class AgentLoop:
             tool_call["arguments"] = dict(arguments)
             self._apply_workspace(resolved_name, arguments, harness.workspace)
 
-        # Ensure workspace-aware tools receive an explicit workspace
+        # Ensure workspace-aware tools receive an explicit workspace. An alias ("grep")
+        # must get it too, so look up the name the registry will actually run.
+        workspace_key = WORKSPACE_TOOLS.get(self._tool_registry.resolve_name(tool_name))
         if (
-            tool_name in WORKSPACE_TOOLS
+            workspace_key
             and isinstance(arguments, dict)
-            and not arguments.get(WORKSPACE_TOOLS[tool_name])
+            and not arguments.get(workspace_key)
         ):
             import os as _os
 
             from utils.workspace_context import get_active_workspace as _gaw
             _ws = _gaw() or _os.getenv("SQUIDWINGS_WORKSPACE", "").strip()
             if _ws:
-                arguments[WORKSPACE_TOOLS[tool_name]] = _ws
+                arguments[workspace_key] = _ws
 
         # Execute
         logger.info(f"[agent_loop] Executing tool: {tool_name}")

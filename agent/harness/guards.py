@@ -54,17 +54,60 @@ def repair_json_arguments(raw: Any) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+_TRUE = {"true", "yes", "ya", "y", "1", "on", "benar", "iya"}
+_FALSE = {"false", "no", "tidak", "n", "0", "off", "salah", "nggak", "gak"}
+
+
 def _coerce(value: Any, expected: str) -> Any:
-    """Fix the scalar type confusions small models make ("5" for 5)."""
+    """Fix the type confusions small models make: "5" for 5, "[1,2]" or "a, b" for a list, "{...}" for an object."""
+    if expected == "array" and not isinstance(value, list):
+        if isinstance(value, str):
+            text = value.strip()
+            if text.startswith("["):
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return parsed
+            if "\n" in text:
+                return [line.strip() for line in text.splitlines() if line.strip()]
+            if "," in text and not text.startswith("{"):
+                return [part.strip() for part in text.split(",") if part.strip()]
+            return [text] if text else []
+        if isinstance(value, (int, float, dict)):
+            return [value]
+        return value
+    if expected == "object" and isinstance(value, str) and value.strip().startswith("{"):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        return parsed if isinstance(parsed, dict) else value
+    if expected == "string" and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return str(value)
+    if expected == "integer" and isinstance(value, float) and value.is_integer():
+        return int(value)
+    if expected in ("integer", "number") and isinstance(value, bool):
+        return value
     if not isinstance(value, str):
         return value
     lowered = value.strip().lower()
-    if expected == "integer" and re.fullmatch(r"-?\d+", lowered):
-        return int(lowered)
-    if expected == "number" and re.fullmatch(r"-?\d+(\.\d+)?", lowered):
-        return float(lowered)
-    if expected == "boolean" and lowered in {"true", "false"}:
-        return lowered == "true"
+    if expected == "integer" and re.fullmatch(r"-?\d+(\.0+)?", lowered):
+        return int(float(lowered))
+    if expected == "number":
+        if re.fullmatch(r"-?\d+(\.\d+)?(e-?\d+)?", lowered):
+            return float(lowered)
+        # "1,5" is a decimal comma; "1.250.000" is Indonesian thousands.
+        if re.fullmatch(r"-?\d+,\d+", lowered):
+            return float(lowered.replace(",", "."))
+        if re.fullmatch(r"-?\d{1,3}(\.\d{3})+", lowered):
+            return float(lowered.replace(".", ""))
+    if expected == "boolean":
+        if lowered in _TRUE:
+            return True
+        if lowered in _FALSE:
+            return False
     return value
 
 
@@ -93,6 +136,12 @@ def normalize_arguments(
                 break
 
     unknown = [k for k in fixed if k not in properties]
+    missing_now = [n for n in parameters.get("required") or [] if n not in fixed]
+    # One unknown argument and one missing required one: the model used another name.
+    if len(unknown) == 1 and len(missing_now) == 1:
+        fixed[missing_now[0]] = fixed.pop(unknown[0])
+        unknown = []
+        repaired = True
     for key in unknown:
         del fixed[key]
         repaired = True

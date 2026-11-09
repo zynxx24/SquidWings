@@ -1,6 +1,7 @@
 ---
 name: fix-bug
 description: Find the real cause of a bug and fix it with the smallest change.
+tasks: code, activity
 triggers: bug, error, perbaiki, fix, gagal, crash, traceback, exception, rusak, tidak jalan, ga jalan, nggak jalan, salah, debug, failing, broken
 ---
 # Fixing a bug

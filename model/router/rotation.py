@@ -8,6 +8,10 @@ Three strategies, chosen per provider:
 * ``smart``        (default) round robin that pays attention:
     - Accounts that answered 429, ran out of quota or failed are rested for a while (cooldown)
       instead of being hit again; a bad key (401/403) rests for 30 minutes.
+    - A quota or rate limit rests only the model family it hit ("kg" in "kg/minimax-m2.7"). One
+      account can be a router in front of several upstreams, and an empty kagiro budget says
+      nothing about the Gemini key behind the same URL. A bad key or a failing server rests the
+      whole account.
     - Each account's share follows its health: recent success rate, speed compared with the
       other accounts, and how many requests it is serving now. A slow or flaky key gets less
       traffic, not none, so it can show it has recovered.
@@ -73,11 +77,22 @@ class NoAccountError(RuntimeError):
         self.retry_after = retry_after
 
 
+def family_of(model: str) -> str:
+    """The upstream a model id belongs to: "kg" for "kg/minimax-m2.7", "" for a bare id."""
+    return model.split("/", 1)[0].strip().lower() if "/" in (model or "") else ""
+
+
+# Reasons that belong to one upstream behind the account, not to the account itself.
+_FAMILY_REASONS = frozenset({"kuota habis", "rate limit"})
+
+
 class Rotator:
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._clock = clock
         self._lock = threading.Lock()
         self._health: dict[tuple[str, str], Health] = {}
+        # (provider, account, family) -> (rest until, reason)
+        self._family_rest: dict[tuple[str, str, str], tuple[float, str]] = {}
         self._sticky: OrderedDict[tuple[str, str], tuple[str, float]] = OrderedDict()
         self._turn: dict[str, int] = {}
 
@@ -90,20 +105,30 @@ class Rotator:
 
     # ------------------------------------------------------------ choosing
 
-    def pick(self, provider: ProviderConfig, session: str = "", exclude: set[str] | frozenset[str] = frozenset()) -> Pick:
+    def _rest_until(self, provider_id: str, account_id: str, family: str) -> float:
+        until = self.health(provider_id, account_id).cooldown_until
+        if family:
+            until = max(until, self._family_rest.get((provider_id, account_id, family), (0.0, ""))[0])
+        return until
+
+    def pick(self, provider: ProviderConfig, session: str = "", exclude: set[str] | frozenset[str] = frozenset(),
+             model: str = "") -> Pick:
+        family = family_of(model)
         with self._lock:
             now = self._clock()
             enabled = [a for a in provider.accounts if a.enabled and a.id not in exclude]
             if not enabled:
                 tried = " lain" if exclude else ""
                 raise NoAccountError(f"Provider {provider.name} tidak punya akun{tried} yang aktif.")
-            ready = [a for a in enabled if not self.health(provider.id, a.id).cooling(now)
+            ready = [a for a in enabled if self._rest_until(provider.id, a.id, family) <= now
                      and (a.max_concurrency <= 0 or self.health(provider.id, a.id).inflight < a.max_concurrency)]
             if not ready:
-                waits = [self.health(provider.id, a.id).cooldown_until - now for a in enabled
-                         if self.health(provider.id, a.id).cooling(now)]
+                waits = [self._rest_until(provider.id, a.id, family) - now for a in enabled
+                         if self._rest_until(provider.id, a.id, family) > now]
                 wait = max(1.0, min(waits)) if waits else 1.0
-                raise NoAccountError(f"Semua akun {provider.name} sedang istirahat atau penuh.", retry_after=wait)
+                scope = f" untuk model {family}/*" if family and any(
+                    self._family_rest.get((provider.id, a.id, family), (0.0, ""))[0] > now for a in enabled) else ""
+                raise NoAccountError(f"Semua akun {provider.name} sedang istirahat atau penuh{scope}.", retry_after=wait)
 
             if provider.strategy == "fill_first":
                 return self._take(provider, ready[0], now)
@@ -176,8 +201,12 @@ class Rotator:
                 h.cooldown_reason = ""
 
     def failure(self, provider_id: str, account_id: str, *, status: int = 0, retry_after: float | None = None,
-                message: str = "") -> float:
-        """Record a failed request. Returns the cooldown it caused, in seconds (0 = none)."""
+                message: str = "", model: str = "") -> float:
+        """Record a failed request. Returns the cooldown it caused, in seconds (0 = none).
+
+        With ``model``, a quota or rate limit rests only that model's family on this account.
+        """
+        family = family_of(model)
         with self._lock:
             now = self._clock()
             h = self.health(provider_id, account_id)
@@ -198,6 +227,13 @@ class Rotator:
                 h.failures += 1
                 if h.failures >= FAILURES_BEFORE_REST:
                     rest, h.cooldown_reason = min(120.0, 10.0 * h.failures), "sering gagal"
+            if rest and family and h.cooldown_reason in _FAMILY_REASONS:
+                family_key = (provider_id, account_id, family)
+                until = max(self._family_rest.get(family_key, (0.0, ""))[0], now + rest)
+                self._family_rest[family_key] = (until, h.cooldown_reason)
+                # The account itself is fine for other upstreams; its record shows why one family rests.
+                h.cooldown_reason = ""
+                return rest
             if rest:
                 h.cooldown_until = max(h.cooldown_until, now + rest)
                 # A resting account must not hold sessions; they move to a healthy one.
@@ -209,6 +245,8 @@ class Rotator:
         with self._lock:
             for key in [k for k in self._health if k[0] == provider_id and (account_id is None or k[1] == account_id)]:
                 self._health[key] = Health()
+            for rest_key in [k for k in self._family_rest if k[0] == provider_id and (account_id is None or k[1] == account_id)]:
+                self._family_rest.pop(rest_key, None)
 
     # ------------------------------------------------------------ for the page
 
@@ -226,6 +264,9 @@ class Rotator:
                     "cooldown_reason": h.cooldown_reason if cooling else "",
                     "last_error": h.last_error,
                     "sessions": sum(1 for k, v in self._sticky.items() if k[0] == provider.id and v[0] == a.id),
+                    "resting_families": {k[2]: {"seconds": round(v[0] - now), "reason": v[1]}
+                                         for k, v in self._family_rest.items()
+                                         if k[0] == provider.id and k[1] == a.id and v[0] > now},
                     "status": ("mati" if not a.enabled else "istirahat" if cooling else
                                "penuh" if a.max_concurrency and h.inflight >= a.max_concurrency else "siap"),
                 }
@@ -239,4 +280,4 @@ def get_rotator() -> Rotator:
     return _rotator
 
 
-__all__ = ["Rotator", "Health", "Pick", "NoAccountError", "get_rotator"]
+__all__ = ["Rotator", "Health", "Pick", "NoAccountError", "family_of", "get_rotator"]

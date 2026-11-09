@@ -9,10 +9,20 @@ agent did not choose to share.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from urllib.parse import quote
 
-MAX_SHARE_BYTES = 500 * 1024 * 1024
+
+def _limit_mb() -> int:
+    try:
+        return max(1, int(os.getenv("SHARE_MAX_MB", "500")))
+    except ValueError:
+        return 500
+
+
+# Largest file the agent can hand to the chat (videos included). SHARE_MAX_MB changes it.
+MAX_SHARE_BYTES = _limit_mb() * 1024 * 1024
 # Agent state in the session folder. Never served, even through a symlink.
 PRIVATE_DIRS = {".agent_memory", ".vault"}
 # Shown in the chat. Everything else is offered as a download, never opened inline,

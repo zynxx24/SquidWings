@@ -1,6 +1,7 @@
 ---
 name: clean-code
 description: Avoid the patterns AI agents leave behind, based on the aislop rules, and fix what aislop reports.
+tasks: code, activity
 triggers: slop, aislop, rapikan, bersihkan, clean, cleanup, review, refactor, kualitas, quality
 ---
 # Writing code without AI slop

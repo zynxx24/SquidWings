@@ -1,6 +1,7 @@
 ---
 name: add-feature
 description: Add a feature that fits the existing code and is verified to work.
+tasks: code, activity
 triggers: fitur, feature, tambah, tambahkan, implement, implementasi, implementasikan, buat fitur, endpoint baru, halaman baru, add
 ---
 # Adding a feature

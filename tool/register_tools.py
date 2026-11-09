@@ -11,6 +11,7 @@ Dipanggil saat startup. Mendaftarkan semua tool yang AI bisa pakai:
 from __future__ import annotations
 
 from config.settings import get_settings
+from tool.execute import execute_toolbox
 from tool.execute.execute_auto_generate.auto_generate_tool import auto_generate
 from tool.execute.execute_code_intel.code_intel_tool import (
     code_outline,
@@ -68,10 +69,10 @@ from tool.execute.execute_local_ops.power_tools import (
 )
 from tool.execute.execute_share_file.share_tool import share_file
 from tool.execute.execute_skills.skill_tool import load_skill
-from tool.execute.execute_upload_file.extract_tool import extract_files
-from tool.execute.execute_upload_file.read_file_tool import list_directory, read_file
 from tool.execute.execute_trading.snapshot_tool import SECTIONS as TRADING_SECTIONS
 from tool.execute.execute_trading.snapshot_tool import trading_snapshot
+from tool.execute.execute_upload_file.extract_tool import extract_files
+from tool.execute.execute_upload_file.read_file_tool import list_directory, read_file
 from tool.execute.execute_web_search.web_reader import web_read, web_research
 from tool.execute.execute_web_search.web_search_tool import web_search
 from tool.registry.tool_registry import ToolRegistry
@@ -703,10 +704,13 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
     reg.register(
         ToolSchema(
             name="time_now",
-            description="Return current time (local or UTC).",
+            description=(
+                "Current date and time with the weekday (English and Indonesian). Use it for 'hari ini', "
+                "'sekarang jam berapa', and anything relative to today."
+            ),
             parameters=[
                 ToolParameter(name="timezone_name", param_type=ParamType.STRING,
-                              description="'local' or 'utc' (default local).",
+                              description="'local', 'utc', WIB/WITA/WIT, or an IANA name like Asia/Tokyo (default local).",
                               required=False, default="local"),
             ],
         ),
@@ -1206,9 +1210,9 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         vault_write,
     )
 
-    logger.info(
-        f"[register_tools] Registered {reg.tool_count} tools: "
-        f"{reg.get_all_names()}"
-    )
+    # 100+ exact tools that stay hidden until a request, a skill, or find_tools calls for them.
+    execute_toolbox.register(reg)
+
+    logger.info(f"[register_tools] Registered {reg.tool_count} tools")
 
     return reg

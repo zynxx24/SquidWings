@@ -1,6 +1,7 @@
 ---
 name: design-ui
 description: Make interfaces look deliberate - hierarchy, spacing, type, color, and states.
+tasks: code, activity
 triggers: desain, design, ui, ux, tampilan, warna, layout, cantik, bagus, modern, dashboard, landing page, styling, css
 ---
 # Designing an interface

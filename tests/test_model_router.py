@@ -30,6 +30,7 @@ def fresh(tmp_path, monkeypatch):
         get_store().delete_provider(p.id)
     get_rotator()._health.clear()
     get_rotator()._sticky.clear()
+    get_rotator()._family_rest.clear()
     D._clients.clear()
     yield
 
@@ -110,6 +111,41 @@ def test_rate_limited_account_rests_and_traffic_moves():
     assert {_picks(r, p, 1)[0] for _ in range(4)} == {next(a.label for a in p.accounts if a.id != first.id)}
     clock.t += 31
     assert first.label in _picks(r, p, 4)
+
+
+def test_a_spent_upstream_rests_only_its_model_family():
+    """One key in front of a router: kagiro's empty budget must not stop Gemini on the same account."""
+    clock = Clock()
+    r = Rotator(clock)
+    p = _provider(keys=("only-key-1111",))
+    account = p.accounts[0]
+    rest = r.failure(p.id, account.id, status=402, message="token budget exhausted", model="kg/minimax-m2.7")
+    assert rest == 60 * 60
+    assert r.pick(p, model="gemini/gemma-4-31b-it").account.id == account.id
+    with pytest.raises(NoAccountError, match="kg/"):
+        r.pick(p, model="kg/deepseek-v4-pro")
+    snapshot = r.snapshot(p)[account.id]
+    assert snapshot["status"] == "siap" and snapshot["resting_families"]["kg"]["reason"] == "kuota habis"
+    r.failure(p.id, account.id, status=429, message="You exceeded your current quota", model="gemini/gemini-4-argon")
+    assert r.pick(p, model="vk/openai/gpt-6-luna").account.id == account.id
+    clock.t += 3601
+    assert r.pick(p, model="kg/minimax-m2.7").account.id == account.id
+
+
+def test_a_bad_key_still_rests_the_whole_account_whatever_the_model():
+    r = Rotator(Clock())
+    p = _provider(keys=("only-key-1111",))
+    r.failure(p.id, p.accounts[0].id, status=401, message="invalid key", model="kg/minimax-m2.7")
+    with pytest.raises(NoAccountError):
+        r.pick(p, model="gemini/gemma-4-31b-it")
+
+
+def test_reset_clears_family_rests():
+    r = Rotator(Clock())
+    p = _provider(keys=("only-key-1111",))
+    r.failure(p.id, p.accounts[0].id, status=402, model="kg/x")
+    r.reset(p.id)
+    assert r.pick(p, model="kg/x").account.id == p.accounts[0].id
 
 
 def test_bad_key_rests_long_and_everything_resting_says_when():

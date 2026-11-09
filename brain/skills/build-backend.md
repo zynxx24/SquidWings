@@ -1,6 +1,7 @@
 ---
 name: build-backend
 description: Build backends with sound validation, auth, data access, and error handling.
+tasks: code, activity
 triggers: backend, api, rest, endpoint, database, server, auth, login, sql, migration, migrasi, fastapi, express, django, flask, graphql, webhook, queue
 ---
 # Building a backend

@@ -48,9 +48,9 @@ async def _ranked_files(query: str, workspace: str) -> str:
     return "[LIKELY RELEVANT FILES]\n" + "\n".join(f"- {p}" for p in paths) if paths else ""
 
 
-def _active_skills(user_input: str) -> list[str]:
+def _active_skills(user_input: str, task: str = "") -> list[str]:
     """This session's awake contextual skills, including any this request wakes."""
-    woken = skills.woken(user_input)
+    woken = skills.woken(user_input, task)
     workspace = get_active_workspace()
     if not workspace:
         return woken
@@ -65,8 +65,8 @@ def skill_guidance(user_input: str, task_type: TaskType, max_chars: int) -> tupl
     try:
         if task_type in _NO_SKILLS:
             return "", []
-        active = _active_skills(user_input)
-        index = skills.index_text(active)
+        active = _active_skills(user_input, task_type.value)
+        index = skills.index_text(active, task_type.value)
         if not index:
             return "", []
         selected = skills.select(user_input, active=active, task=task_type.value) if max_chars > 0 else []

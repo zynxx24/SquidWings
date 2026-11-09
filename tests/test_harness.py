@@ -148,7 +148,11 @@ def test_tool_selection_is_small_and_relevant() -> None:
     wants_vault = [s["function"]["name"] for s in select_tools(schemas, TaskType.CODE, "simpan ke vault", lite)]
     assert "vault_write" in wants_vault
 
-    assert len(select_tools(schemas, TaskType.CODE, "x", scaffold_for("x-opus"))) == len(schemas)
+    # A frontier model gets every core tool, but the hidden toolbox stays hidden until asked for.
+    from tool.execute.execute_toolbox import deferred_names
+
+    frontier = {s["function"]["name"] for s in select_tools(schemas, TaskType.CODE, "x", scaffold_for("x-opus"))}
+    assert frontier == {s["function"]["name"] for s in schemas} - deferred_names()
 
 
 def test_disabled_tools_are_never_offered() -> None:

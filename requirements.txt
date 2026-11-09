@@ -24,6 +24,16 @@ markdown-it-py>=3   # Compact Markdown before it reaches a model
 # pymysql>=1           # MySQL and MariaDB
 # pymongo>=4           # MongoDB
 
+# === Toolbox (exact tools: tables, dates, XML) ===
+pandas>=2.0
+numpy>=1.26
+openpyxl>=3.1
+python-dateutil>=2.8
+tzdata>=2024.1            # time zones on systems without /usr/share/zoneinfo
+defusedxml>=0.7           # XML without entity-expansion attacks
+python-docx>=1.1          # doc_create: Word files
+python-pptx>=1.0          # slides_create: PowerPoint files
+
 # === CLI & Display ===
 rich>=13.0                    # Beautiful terminal output
 

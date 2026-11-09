@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from brain import skills
 from config.constants import TaskType
+from tool.execute import execute_toolbox
 from tool.registry.tool_registry import WORKSPACE_TOOLS
 from utils import session_settings
 from utils.workspace_context import get_active_workspace
@@ -23,9 +25,9 @@ _BY_TASK: dict[TaskType, list[str]] = {
         "web_research", "web_read", "read_file", "file_write", "file_patch", "file_search",
         "execute_command", "list_directory", "time_now", "vault_recall", "vault_write", "load_skill", "extract_files",
     ],
-    TaskType.SCHOOL_TASK: ["web_research", "web_read", "read_file", "file_write", "vault_recall", "time_now", "extract_files"],
-    # Small models make arithmetic slips; running the sum in Python avoids them.
-    TaskType.MATH: ["execute_command"],
+    TaskType.SCHOOL_TASK: ["web_research", "web_read", "read_file", "file_write", "vault_recall", "time_now", "extract_files", "calc"],
+    # Small models make arithmetic slips; an exact tool avoids them.
+    TaskType.MATH: ["calc", "execute_command", "solve_equation", "stats_describe", "unit_convert", "fraction"],
     TaskType.REASON: ["web_research", "web_read", "read_file", "vault_recall", "load_skill"],
     TaskType.MULTIMODAL: ["read_file", "web_read"],
     TaskType.GENERATE_IMG: [],
@@ -34,6 +36,8 @@ _BY_TASK: dict[TaskType, list[str]] = {
 # How many of the task's tools always make the cut. A mention of "memory" must
 # add memory tools without pushing out the ability to run anything.
 _CORE_TOOLS = 8
+# Hidden toolbox tools a request's words may pull in, at most.
+_MATCHED_TOOLS = 5
 
 # Extra tools pulled in only when the request talks about them.
 _ON_DEMAND: dict[tuple[str, ...], list[str]] = {
@@ -79,11 +83,30 @@ def _for_model(schema: dict[str, Any]) -> dict[str, Any]:
     return {**schema, "function": {**function, "parameters": {**parameters, "properties": trimmed}}}
 
 
-def _skill_tools(user_input: str) -> list[str]:
-    """Tools an awake contextual skill needs, in this session or woken by this request."""
+def _session() -> tuple[list[str], list[str]]:
+    """(awake skills, unlocked toolbox tools) of the active session."""
     workspace = get_active_workspace()
-    active = session_settings.load(workspace).skills if workspace else []
-    return skills.tools_for([*active, *skills.woken(user_input)])
+    if not workspace:
+        return [], []
+    settings = session_settings.load(workspace)
+    return list(settings.skills), list(settings.tools)
+
+
+def _skill_tools(user_input: str, active: list[str], task: str) -> list[str]:
+    """Tools an awake contextual skill needs, in this session or woken by this request."""
+    return skills.tools_for([*active, *skills.woken(user_input, task)])
+
+
+def _named(by_name: dict[str, Any], lowered: str, deferred: frozenset[str]) -> list[str]:
+    """Tools the user names. Core names may appear inside words; a hidden tool needs its whole name."""
+    named = []
+    for name in by_name:
+        if name in deferred:
+            if re.search(rf"(?<![a-z0-9_]){re.escape(name)}(?![a-z0-9_])", lowered):
+                named.append(name)
+        elif name in lowered:
+            named.append(name)
+    return named
 
 
 def select_tools(
@@ -93,25 +116,38 @@ def select_tools(
     scaffold: Scaffold,
     disabled: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
-    """Return the schemas to offer, most relevant first, capped for the tier."""
+    """Return the schemas to offer, most relevant first, capped for the tier.
+
+    The hidden toolbox never rides along by default, not even for a frontier model:
+    only the tools this request, an awake skill, or an earlier find_tools call asks for.
+    """
     by_name = {s.get("function", {}).get("name", ""): s for s in schemas}
     by_name = {name: s for name, s in by_name.items() if name and name not in disabled}
 
     if task_type == TaskType.GENERATE_IMG:
         return []
-    if scaffold.max_tools is None:
-        return [_for_model(s) for s in by_name.values()]
 
     lowered = user_input.lower()
+    deferred = execute_toolbox.deferred_names()
+    active, unlocked = _session()
+    named = _named(by_name, lowered, deferred)
+    for_skills = _skill_tools(user_input, active, task_type.value)
+    matched = execute_toolbox.match(user_input, limit=_MATCHED_TOOLS)
+
+    if scaffold.max_tools is None:
+        asked = {*named, *for_skills, *unlocked, *matched}
+        names = [n for n in by_name if n not in deferred or n in asked]
+        return [_for_model(by_name[n]) for n in sorted(names)]
+
     base = _BY_TASK.get(task_type, _BY_TASK[TaskType.ACTIVITY])
-    # A tool the user names is always offered, then the task's core tools, then
-    # whatever the request's topic pulls in, then the task's remaining tools.
-    wanted = [name for name in by_name if name in lowered]
-    wanted.extend(_skill_tools(user_input))
-    wanted.extend(base[:_CORE_TOOLS])
+    # A tool the user names is always offered, then what an awake skill needs, then
+    # the task's core tools and find_tools, then what the request's words pull in,
+    # then what this chat unlocked earlier, then the task's remaining tools.
+    wanted = [*named, *for_skills, *base[:_CORE_TOOLS], execute_toolbox.FIND_TOOLS, *matched]
     for keywords, names in _ON_DEMAND.items():
         if any(k in lowered for k in keywords):
             wanted.extend(names)
+    wanted.extend(reversed(unlocked))
     wanted.extend(base[_CORE_TOOLS:])
 
     # dict.fromkeys de-duplicates while keeping the priority order above.
@@ -119,6 +155,13 @@ def select_tools(
     # Tools sit ahead of the prompt in provider caches, so a stable order keeps
     # the same set from invalidating the cached prefix.
     return [_for_model(by_name[n]) for n in sorted(names)]
+
+
+def toolbox_hint(tools: list[dict[str, Any]]) -> str:
+    """One prompt line about the hidden tools, when find_tools is on offer."""
+    if not any(t.get("function", {}).get("name") == execute_toolbox.FIND_TOOLS for t in tools):
+        return ""
+    return "\n\n" + execute_toolbox.groups_line()
 
 
 def text_tool_protocol(schemas: list[dict[str, Any]]) -> str:

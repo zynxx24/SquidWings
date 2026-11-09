@@ -706,12 +706,39 @@ async def text_transform(
 # --------------------------------------------------------------------------- #
 # time_now
 # --------------------------------------------------------------------------- #
+_DAYS_ID = ("Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu")
+_TZ_ALIASES = {"wib": "Asia/Jakarta", "wita": "Asia/Makassar", "wit": "Asia/Jayapura", "gmt": "UTC", "z": "UTC"}
+
+
 async def time_now(timezone_name: str = "local") -> dict[str, Any]:
-    now_utc = datetime.now(tz=UTC)
-    if timezone_name.lower() == "utc":
-        return _ok(iso=now_utc.isoformat(), epoch=now_utc.timestamp(), tz="UTC")
-    local = datetime.now()
-    return _ok(iso=local.isoformat(), epoch=local.timestamp(), tz="local")
+    """Now in the given zone. An unknown zone falls back to local time and says so."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    name = (timezone_name or "local").strip()
+    note = None
+    if name.lower() == "local":
+        now = datetime.now().astimezone()
+        label = "local"
+    elif name.lower() == "utc":
+        now, label = datetime.now(tz=UTC), "UTC"
+    else:
+        try:
+            zone = ZoneInfo(_TZ_ALIASES.get(name.lower(), name))
+            now, label = datetime.now(tz=zone), str(zone)
+        except (ZoneInfoNotFoundError, ValueError):
+            now, label = datetime.now().astimezone(), "local"
+            note = f"unknown time zone '{name}', showing local time"
+    offset = now.utcoffset()
+    hours = offset.total_seconds() / 3600 if offset is not None else 0.0
+    payload: dict[str, Any] = {
+        "iso": now.isoformat(), "epoch": now.timestamp(), "tz": label,
+        "utc_offset": f"UTC{'+' if hours >= 0 else '-'}{abs(hours):g}",
+        "date": now.date().isoformat(), "time": now.strftime("%H:%M:%S"),
+        "weekday": now.strftime("%A"), "hari": _DAYS_ID[now.weekday()],
+    }
+    if note:
+        payload["note"] = note
+    return _ok(**payload)
 
 
 __all__ = [

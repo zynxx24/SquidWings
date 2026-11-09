@@ -72,7 +72,7 @@ from .harness.briefing import build_briefing, skill_guidance
 from .harness.guards import tool_trace
 from .harness.playbooks import record_run
 from .harness.tiers import protocol_text
-from .harness.tool_select import select_tools, text_tool_protocol
+from .harness.tool_select import select_tools, text_tool_protocol, toolbox_hint
 from .harness.verifier import changed_files
 from .pipeline_executor import PipelineExecutor, PipelineResult
 from .session_manager import SessionManager
@@ -943,6 +943,9 @@ class Orchestrator:
                 self._append_system(messages, f"\n\n{protocol}")
             if text_protocol:
                 self._append_system(messages, text_protocol)
+            hint = toolbox_hint(tools)
+            if hint:
+                self._append_system(messages, hint)
             guides, harness.stats.skills_used = skill_guidance(
                 user_input, task_type, scaffold.skill_chars
             )
@@ -982,19 +985,32 @@ class Orchestrator:
         return _RESEARCH_RE.search(user_input) is not None
 
     def _cool_down_provider(self, model: ModelInfo | None) -> bool:
-        """After a billing failure, skip that provider's models for a while.
+        """After a billing failure, skip the models that share that bill for a while.
+
+        One provider can be a router in front of several upstreams ("kg/...", "gemini/...",
+        "vk/..." behind localhost). A spent kagiro budget says nothing about Gemini, so only
+        models with the same provider *and* the same id prefix are rested.
 
         Returns:
-            True if another provider can take the request.
+            True if some other model can take the request.
         """
-        provider_ids = getattr(self._api_client, "provider_ids", None)
-        if model is None or not isinstance(provider_ids, list) or len(provider_ids) < 2:
+        if model is None:
             return False
-        provider = self._api_client.provider_of(model.id)
+        provider_of = getattr(self._api_client, "provider_of", None)
+        if not callable(provider_of):
+            return False
+        provider = provider_of(model.id)
+        family = model.id.split("/", 1)[0] if "/" in model.id else ""
+        others = 0
         for item in self._registry.get_all():
-            if self._api_client.provider_of(item.id) == provider:
+            same_bill = provider_of(item.id) == provider and (
+                not family or (item.id.split("/", 1)[0] if "/" in item.id else "") == family
+            )
+            if same_bill:
                 self._health_checker.mark_unavailable(item.id, _BILLING_COOLDOWN_SECONDS)
-        return True
+            else:
+                others += 1
+        return others > 0
 
     def _pipe_to_loop_result(self, pipe: PipelineResult) -> LoopResult:
         """Convert a PipelineResult into a LoopResult so the rest of process() stays unchanged."""

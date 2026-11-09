@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util as _ilu
 import io
 import zipfile
 
@@ -18,6 +19,9 @@ from config.constants import TaskType
 from utils import extract as extract_module
 from utils import local_ocr
 from utils.extract import extract, intent_of
+
+# The real OCR engine is optional on a dev box; the fake-OCR tests above still cover the flow.
+needs_ocr = pytest.mark.skipif(_ilu.find_spec("rapidocr_onnxruntime") is None, reason="rapidocr-onnxruntime not installed")
 
 
 def _pdf(pages: list[list[str]]) -> bytes:
@@ -354,6 +358,7 @@ def test_boxes_side_by_side_share_a_row_and_rows_keep_their_order():
     assert local_ocr._lines(boxes) == "Judul  \nOrganel  Fungsi  \nRibosom"
 
 
+@needs_ocr
 def test_local_ocr_reads_a_real_image_without_any_network():
     picture = Image.new("RGB", (900, 160), "white")
     ImageDraw.Draw(picture).text((30, 40), "Ibu kota Indonesia", fill="black", font=ImageFont.load_default(size=60))
@@ -362,6 +367,7 @@ def test_local_ocr_reads_a_real_image_without_any_network():
     assert "Indonesia" in local_ocr.read_image(buffer.getvalue())
 
 
+@needs_ocr
 def test_a_real_scan_becomes_text_end_to_end(monkeypatch):
     monkeypatch.setenv("DOCUMENT_OCR", "true")
     page = Image.new("RGB", (900, 500), "white")

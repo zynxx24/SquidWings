@@ -24,37 +24,61 @@ from typing import Any
 from urllib.parse import urlsplit
 
 _ALIASES = {
-    "name": ("title", "name", "business_name"),
-    "category": ("category", "categories", "type"),
-    "address": ("address", "full_address"),
-    "city": ("city",),
-    "website": ("website", "web", "url"),
-    "phone": ("phone", "phone_number", "telephone"),
+    "name": ("title", "name", "business_name", "place_name"),
+    "category": ("category", "categories", "type", "main_category"),
+    "address": ("address", "full_address", "complete_address"),
+    "city": ("city", "kota", "municipality"),
+    "website": ("website", "web", "site", "url"),
+    "phone": ("phone", "phone_number", "telephone", "international_phone_number"),
     "emails": ("emails", "email"),
-    "rating": ("review_rating", "rating", "stars"),
-    "reviews": ("review_count", "reviews", "user_ratings_total"),
+    "rating": ("review_rating", "rating", "stars", "total_score"),
+    "reviews": ("review_count", "reviews", "user_ratings_total", "reviews_count"),
     "lat": ("latitude", "lat"),
-    "lon": ("longitude", "lon", "lng"),
-    "place_id": ("place_id", "cid", "data_id"),
+    # gosom/google-maps-scraper spells this column "longtitude".
+    "lon": ("longitude", "longtitude", "lon", "lng"),
+    "place_id": ("place_id", "cid", "data_id", "google_id"),
+    "maps_url": ("link", "google_maps_url", "maps_url", "place_url"),
+    "status": ("status", "business_status"),
+    "price_range": ("price_range", "price", "price_level"),
+    "plus_code": ("plus_code",),
 }
+
+
+def _flat(v: Any) -> str:
+    """JSON results hold lists and objects (categories, complete_address); flatten them to text."""
+    if isinstance(v, list):
+        return ", ".join(_flat(x) for x in v if x not in (None, ""))
+    if isinstance(v, dict):
+        return ", ".join(_flat(x) for x in v.values() if x not in (None, ""))
+    return str(v).strip()
 
 
 def _pick(row: dict[str, Any], key: str) -> str:
     lowered = {str(k).strip().lower(): v for k, v in row.items() if k}
     for alias in _ALIASES[key]:
         v = lowered.get(alias)
-        if v not in (None, ""):
-            return str(v).strip()
+        if v not in (None, "", [], {}):
+            text = _flat(v)
+            if text:
+                return text
     return ""
 
 
 def read_results(path: str | Path) -> list[dict[str, Any]]:
+    """Rows of a CSV, a JSON array, or JSON Lines (gosom writes one object per line with -json)."""
     p = Path(path)
     text = p.read_text(encoding="utf-8-sig")
-    if p.suffix.lower() == ".json":
-        data = json.loads(text)
+    stripped = text.lstrip()
+    if p.suffix.lower() in (".json", ".jsonl", ".ndjson") or stripped.startswith(("[", "{")):
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            data = [json.loads(line) for line in text.splitlines() if line.strip()]
         return [r for r in (data if isinstance(data, list) else [data]) if isinstance(r, dict)]
-    return list(csv.DictReader(text.splitlines()))
+    # Excel-exported CSVs in Indonesia often use ';'.
+    first = text.splitlines()[0] if text else ""
+    delimiter = ";" if first.count(";") > first.count(",") else ","
+    return list(csv.DictReader(text.splitlines(), delimiter=delimiter))
 
 
 def normalize(row: dict[str, Any], keep_contacts: bool = False) -> dict[str, Any] | None:
@@ -74,25 +98,57 @@ def normalize(row: dict[str, Any], keep_contacts: bool = False) -> dict[str, Any
         "lat": _to_float(_pick(row, "lat")),
         "lon": _to_float(_pick(row, "lon")),
         "place_id": _pick(row, "place_id") or None,
+        "maps_url": _pick(row, "maps_url") or None,
+        "status": _pick(row, "status") or None,
+        "price_range": _pick(row, "price_range") or None,
     }
+    if out["city"] == "" and out["address"]:
+        out["city"] = _city_from_address(out["address"])
     if keep_contacts:
         out["phone"] = _pick(row, "phone") or None
         out["emails"] = _pick(row, "emails") or None
     return out
 
 
+def _city_from_address(address: str) -> str:
+    """Best guess at the city in an Indonesian address: 'Kota X' / 'Kabupaten X', else the part before the province."""
+    m = re.search(r"\b(?:Kota|Kabupaten|Kab\.)\s+([A-Z][\w .'-]+?)(?:,|\s\d{5}|$)", address)
+    if m:
+        return m.group(1).strip()
+    parts = [p.strip() for p in address.split(",") if p.strip()]
+    for part in reversed(parts[:-1] if len(parts) > 2 else parts):
+        cleaned = re.sub(r"\b\d{5}\b", "", part).strip()
+        if cleaned and not re.search(r"\d", cleaned) and len(cleaned) < 40:
+            return cleaned
+    return ""
+
+
 def _to_float(s: str) -> float | None:
     try:
-        return float(s)
+        # "4,7" from a localised export.
+        return float(str(s).replace(",", ".")) if str(s).count(",") == 1 and "." not in str(s) else float(s)
     except (TypeError, ValueError):
         return None
 
 
 def _to_int(s: str) -> int | None:
     try:
-        return int(float(s))
+        return int(float(str(s).replace(".", "").replace(",", ""))) if re.fullmatch(r"\d{1,3}([.,]\d{3})+", str(s)) else int(float(s))
     except (TypeError, ValueError):
         return None
+
+
+def dedupe(places: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One entry per place: by place_id, else by name and address. A scraper that pages twice repeats rows."""
+    seen: set[str] = set()
+    out = []
+    for place in places:
+        key = place.get("place_id") or f"{place['name'].lower()}|{(place.get('address') or '').lower()}"
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(place)
+    return out
 
 
 def slug(text: str) -> str:
@@ -100,14 +156,27 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")[:80] or "place"
 
 
-def note_for(place: dict[str, Any], query: str) -> tuple[str, str]:
-    """(vault path, markdown body) for one place."""
-    path = f"places/{slug(query)}/{slug(place['name'])}"
+def note_for(place: dict[str, Any], query: str, taken: set[str] | None = None) -> tuple[str, str]:
+    """(vault path, markdown body) for one place. Branches with the same name get distinct notes."""
+    base = f"places/{slug(query)}/{slug(place['name'])}"
+    path = base
+    if taken is not None:
+        suffix = slug(place.get("address") or "")[:24] or None
+        if path in taken and suffix:
+            path = f"{base}-{suffix}"
+        n = 2
+        while path in taken:
+            path = f"{base}-{n}"
+            n += 1
+        taken.add(path)
     lines = [f"# {place['name']}", "", f"Query: {query}", ""]
     for label, key in (("Category", "category"), ("Address", "address"), ("City", "city"),
-                       ("Website", "website_domain"), ("Rating", "rating"), ("Reviews", "reviews")):
+                       ("Website", "website_domain"), ("Rating", "rating"), ("Reviews", "reviews"),
+                       ("Price", "price_range"), ("Status", "status"), ("Google Maps", "maps_url")):
         if place.get(key) not in (None, ""):
             lines.append(f"- {label}: {place[key]}")
+    if place.get("lat") is not None and place.get("lon") is not None:
+        lines.append(f"- Coordinates: {place['lat']}, {place['lon']}")
     if "phone" in place and place["phone"]:
         lines.append(f"- Phone: {place['phone']}")
     if "emails" in place and place["emails"]:
@@ -124,13 +193,18 @@ async def import_results(path: str | Path, *, query: str, workspace: str, keep_c
     rows = read_results(path)
     written, skipped = 0, 0
     places: list[dict[str, Any]] = []
-    for row in rows[:limit]:
+    for row in rows:
         place = normalize(row, keep_contacts=keep_contacts)
         if place is None:
             skipped += 1
             continue
         places.append(place)
-        note_path, body = note_for(place, query)
+    before = len(places)
+    places = dedupe(places)
+    duplicates = before - len(places)
+    taken: set[str] = set()
+    for place in places[:limit]:
+        note_path, body = note_for(place, query, taken)
         res = await vault_write(workspace_path=workspace, path=note_path, body=body, note_type="concept")
         if res.get("ok", True):
             written += 1
@@ -138,7 +212,8 @@ async def import_results(path: str | Path, *, query: str, workspace: str, keep_c
             skipped += 1
     summary = _summary(places, query, keep_contacts)
     await vault_write(workspace_path=workspace, path=f"places/{slug(query)}/_summary", body=summary, note_type="concept")
-    return {"ok": True, "written": written, "skipped": skipped, "query": query, "contacts_kept": keep_contacts}
+    return {"ok": True, "written": written, "skipped": skipped, "duplicates": duplicates, "query": query,
+            "contacts_kept": keep_contacts, "places": places}
 
 
 def _summary(places: list[dict[str, Any]], query: str, keep_contacts: bool) -> str:
@@ -155,4 +230,4 @@ def _summary(places: list[dict[str, Any]], query: str, keep_contacts: bool) -> s
     return "\n".join(lines) + "\n"
 
 
-__all__ = ["read_results", "normalize", "note_for", "import_results", "slug"]
+__all__ = ["dedupe", "import_results", "normalize", "note_for", "read_results", "slug"]

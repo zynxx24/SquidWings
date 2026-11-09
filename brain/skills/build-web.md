@@ -1,6 +1,7 @@
 ---
 name: build-web
 description: Build web frontends that are correct, accessible, fast, and safe.
+tasks: code, activity
 triggers: web, website, frontend, html, react, next, nextjs, vue, svelte, tailwind, halaman, page, form, javascript, typescript
 ---
 # Building for the web

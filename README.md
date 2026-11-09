@@ -35,6 +35,9 @@ python main.py web          # buka http://127.0.0.1:8080
 | Baca dokumen | Teks dan gambar dari PDF, Office, EPUB, ZIP, dan scan, lalu agent menentukan langkahnya |
 | Provider bebas | Cukup URL dan API key dari endpoint yang kompatibel dengan OpenAI. Daftar model diambil otomatis, dan routing belajar dari hasilnya |
 | Execution harness | Verifikasi hasil, deteksi loop, perbaikan argumen tool, dan eskalasi ke model lebih kuat |
+| Toolbox | 124 tool tepat (hitung, tanggal, satuan, tabel, uang, terbilang, peta, cuaca, kurs, Word/PPT/Excel/PDF) yang tersembunyi sampai dibutuhkan, lewat kata kunci, skill, atau `find_tools` |
+| Buat dokumen | Word, PowerPoint, Excel, CSV, dan PDF yang rapi, langsung muncul di chat untuk diunduh |
+| Google Maps | Impor hasil scrape, saring dan rangking tempat, jarak, tempat terdekat dari OpenStreetMap, dan ekspor ke Excel atau GeoJSON |
 | Tim agent | Kanvas alur seperti n8n: delay, gate OR, jadwal, output Telegram, dan pilihan database |
 | Riset web | Mencari, membuka beberapa halaman, membaca isinya, dan mencantumkan sumber |
 | Satu chat, satu set | Folder, memori, vault Obsidian, graph kode, skor aislop, dan mode Ponytail sendiri |
@@ -204,7 +207,7 @@ tool/             tool lokal, web, memori, dan kode
 security/         sandbox, policy, path jail, audit, shield
 web/              server FastAPI, Web UI, dan API trading
 trading/          adapter MT5, EA MT4, jurnal, dan model kuant
-knowledge/        impor hasil Google Maps ke vault
+knowledge/        impor hasil Google Maps ke vault dan dataset tempat
 config/           settings, model, provider
 utils/            logger, CLI UI, workspace
 tests/            test suite

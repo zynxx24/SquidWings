@@ -18,6 +18,8 @@ class SessionSettings:
     aislop: bool = True
     # Contextual skills woken in this session. They stay active until the session ends.
     skills: list[str] = field(default_factory=list)
+    # Hidden toolbox tools the model unlocked with find_tools, most recent last.
+    tools: list[str] = field(default_factory=list)
 
 
 def _path(workspace: str | Path) -> Path:
@@ -41,6 +43,21 @@ def activate_skills(workspace: str | Path, names: list[str]) -> list[str]:
         settings.skills = [*settings.skills, *added]
         save(workspace, settings)
     return settings.skills
+
+
+# A session that keeps unlocking tools must not grow its offered list without bound.
+MAX_UNLOCKED_TOOLS = 12
+
+
+def unlock_tools(workspace: str | Path, names: list[str]) -> list[str]:
+    """Remember toolbox tools as unlocked in this session, keeping the most recent. Returns all unlocked."""
+    settings = load(workspace)
+    merged = [n for n in settings.tools if n not in names] + list(dict.fromkeys(names))
+    merged = merged[-MAX_UNLOCKED_TOOLS:]
+    if merged != settings.tools:
+        settings.tools = merged
+        save(workspace, settings)
+    return settings.tools
 
 
 def save(workspace: str | Path, settings: SessionSettings) -> None:
