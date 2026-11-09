@@ -150,3 +150,37 @@ def test_chat_model_picker_follows_router_changes():
     assert "BroadcastChannel('squidwings')" in page and "BroadcastChannel('squidwings')" in app
     assert "e.data.type === 'sq-models') refreshModels(true)" in app
     assert app.count("refreshModels(true)") >= 4   # frame, other tab, tab focus, back to chat
+
+
+# ---------------------------------------------------------------- trading panel location
+
+@pytest.mark.parametrize("running", [True, False])
+def test_trading_panel_location(client, monkeypatch, running):
+    from web import server
+
+    async def fake() -> bool:
+        return running
+
+    monkeypatch.setattr(server, "trading_server_running", fake)
+    data = client.get("/api/trading/panel").json()
+    assert data["external"] is running
+    assert bool(data["hint"]) is not running
+
+
+def test_trading_panel_never_points_a_remote_visitor_at_port_80(monkeypatch):
+    from web import server
+    from web.server import app
+
+    async def fake() -> bool:
+        return True
+
+    monkeypatch.setattr(server, "trading_server_running", fake)
+    remote = TestClient(app, client=("203.0.113.9", 50000))
+    resp = remote.get("/api/trading/panel")
+    assert resp.status_code != 200 or resp.json()["external"] is False
+
+
+def test_trading_page_falls_back_instead_of_an_error():
+    app = (STATIC / "js/app.js").read_text(encoding="utf-8")
+    assert "api('/api/trading/panel')" in app
+    assert "python main.py trading" not in app      # the old dead-end message is gone

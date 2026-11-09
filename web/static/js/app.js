@@ -1001,6 +1001,24 @@
 
   function openApp(name) {
     const app = APPS[name];
+    // Ask once where the trading panel lives: the port-80 server holds the EA's data, and when it
+    // is not running the panel comes from this server instead of an error page.
+    if (name === 'trading' && app.here === undefined) {
+      app.here = !LOCAL;
+      if (LOCAL) {
+        if (S.view === name) {
+          $('app-loader').classList.remove('hidden');
+          $('app-error').classList.add('hidden');
+          $('app-loader-text').textContent = app.loading;
+          SquidPage.hold('app', true);
+        }
+        api('/api/trading/panel')
+          .then(r => { app.here = !r.external; app.hint = r.hint || ''; })
+          .catch(() => { app.here = true; })
+          .finally(() => openApp(name));
+        return;
+      }
+    }
     const old = frames[name];
     if (old && old.state !== 'failed') { showAppState(old); return; }
     // A reload gets a fresh frame: a new src on the old one would add a step to the Back button.
@@ -1009,6 +1027,7 @@
     frame.className = 'app-frame';
     frame.title = app.title;
     frame.setAttribute('allow', 'clipboard-write');
+    frame.classList.toggle('hidden', S.view !== name);
     const f = frames[name] = { frame, name, state: 'loading', started: Date.now(), timer: 0 };
     frame.addEventListener('load', () => {
       if (f.state !== 'loading') return;
@@ -1043,19 +1062,25 @@
       showAppState(f);
       tellFrame(f.frame, { type: 'sq-theme', theme });
       tellFrame(f.frame, { type: 'sq-visible', visible: S.view === f.name });
+      const app = APPS[f.name];
+      if (app.here && app.hint && !app.hintShown && S.view === f.name) { app.hintShown = true; toast(app.hint); }
     }, wait);
   }
 
   function failApp(f) {
     if (f.state !== 'loading') return;
-    f.state = 'failed';
     const app = APPS[f.name];
-    const tradingServer = f.name === 'trading' && LOCAL && !app.here;
+    if (f.name === 'trading' && !app.here) {
+      // The port-80 server stopped after the check: use this server's panel rather than an error.
+      app.here = true;
+      app.hint = app.hint || 'Server trading port 80 tidak menjawab, jadi panel diambil dari server web. Data EA MT4 ada di server port 80.';
+      f.state = 'failed';
+      openApp(f.name);
+      return;
+    }
+    f.state = 'failed';
     $('app-error-title').textContent = `${app.title} belum bisa dibuka`;
-    $('app-error-text').textContent = tradingServer
-      ? 'Server trading (port 80, tempat EA MT4 mengirim harga) belum jalan. Jalankan "python main.py trading" di terminal, lalu tekan Coba lagi.'
-      : 'Halamannya tidak menjawab. Cek server masih jalan, lalu tekan Coba lagi.';
-    $('app-here').classList.toggle('hidden', !tradingServer);
+    $('app-error-text').textContent = 'Halamannya tidak menjawab. Cek server web masih jalan, lalu tekan Coba lagi.';
     showAppState(f);
   }
 
@@ -1068,9 +1093,17 @@
   });
   window.addEventListener('popstate', () => showView(viewFromPath() || 'chat', { fromHistory: true }));
 
-  $('app-retry').onclick = () => openApp(S.view);
-  $('app-here').onclick = () => { APPS.trading.here = true; openApp('trading'); };
-  $('app-reload').onclick = () => { const f = frames[S.view]; if (f) { f.state = 'failed'; openApp(S.view); } };
+  $('app-retry').onclick = () => {
+    if (S.view === 'trading') delete APPS.trading.here;
+    openApp(S.view);
+  };
+  $('app-reload').onclick = () => {
+    const f = frames[S.view];
+    if (!f) return;
+    if (S.view === 'trading') delete APPS.trading.here;   // the port-80 server may have started since
+    f.state = 'failed';
+    openApp(S.view);
+  };
   $('nav-team').onclick = () => showView('team');
   $('nav-chat').onclick = () => showView('chat');
   document.querySelectorAll('a[data-view]').forEach(link => link.addEventListener('click', e => {

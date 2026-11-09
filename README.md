@@ -235,6 +235,7 @@ Jangan pernah meng-commit `.env`. Key disimpan di sana, dan `.env.example` hanya
 | Menu tim tidak muncul | Atur `WEB_TEAMS_ENABLED=true` |
 | Backend `mt5` gagal login | Paket `MetaTrader5` hanya jalan di Windows. Di Linux pakai `mt4` atau `sim` |
 | EA MT4 tampil offline | Masukkan URL server ke daftar WebRequest di MT4, lalu cek secret di preset EA |
+| Panel Trading tanpa data EA MT4 | Server trading butuh port 80. Izinkan sekali: `sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80` (permanen: tulis `net.ipv4.ip_unprivileged_port_start=80` ke `/etc/sysctl.d/99-squidwings.conf`), lalu start ulang `python main.py web` |
 | Perubahan kode trading tidak terasa | Restart server. Hanya file statis yang langsung terbaca |
 | Port 8080 sudah terpakai | `web` pindah sendiri ke port kosong berikutnya (alamatnya tercetak). Kalau yang memakai SquidWings lama, pilih 2 di prompt atau jalankan `--replace`; `--strict-port` membuatnya berhenti saja |
 

@@ -1578,6 +1578,56 @@ def _run_async(coro_fn: Callable[..., Any], *fn_args: Any, **fn_kwargs: Any) -> 
         console.print("\n[dim]⏹ Dihentikan.[/dim]")
 
 
+TRADING_LOG = "trading-server.log"
+SYSCTL_PORT_80 = "sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80"
+
+
+def _start_trading_backend() -> tuple[Any, str]:
+    """Start the trading server (port 80, where MT4's EA reports) next to the web server.
+
+    Returns the child process (None when not started) and a line for the start panel. Without
+    it the trading page still opens, from the web server, but without the EA's data.
+    """
+    import subprocess
+
+    from web.trading_server import DEFAULT_PORT, port_problem
+
+    problem = port_problem("127.0.0.1", DEFAULT_PORT)
+    if problem is None:
+        log = (Path(__file__).resolve().parent / TRADING_LOG).open("ab")
+        try:
+            proc = subprocess.Popen(
+                [sys.executable, str(Path(__file__).resolve()), "trading"],
+                stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                cwd=str(Path(__file__).resolve().parent),
+            )
+        finally:
+            log.close()
+        return proc, (f"[bold green]✔ Trading (EA MT4):[/bold green] [underline]http://127.0.0.1/trading[/underline] "
+                      f"[dim](log: {TRADING_LOG})[/dim]")
+    if "already in use" in problem:
+        import asyncio
+
+        from web.server import trading_server_running
+
+        if asyncio.run(trading_server_running()):
+            return None, "[bold green]✔ Trading (EA MT4):[/bold green] server trading port 80 sudah jalan"
+        return None, ("[yellow]⚠ Port 80 dipakai program lain. Halaman Trading memakai panel server web "
+                      "(tanpa data EA MT4).[/yellow]")
+    return None, ("[yellow]⚠ Linux belum mengizinkan port 80, jadi halaman Trading memakai panel server web "
+                  f"(tanpa data EA MT4).[/yellow]\n[dim]  Untuk EA MT4, jalankan sekali lalu start ulang: {SYSCTL_PORT_80}[/dim]")
+
+
+def _stop_child(proc: Any) -> None:
+    if proc is None or proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except Exception:
+        proc.kill()
+
+
 def _choose_web_port(host: str, port: int, strict: bool = False, replace: bool = False,
                      ask: Callable[[str], str] | None = None) -> int | None:
     """The port the web server can use: ``port``, or a free one after it. None means do not start.
@@ -1695,6 +1745,10 @@ Examples:
         help="Stop with an error when the port is busy, instead of moving to the next free port",
     )
     web_parser.add_argument(
+        "--trading", action=argparse.BooleanOptionalAction, default=True,
+        help="Also start the trading server on port 80 for the MT4 EA, when the system allows it (default: on)",
+    )
+    web_parser.add_argument(
         "--replace", action="store_true",
         help="When another SquidWings web server holds the port, stop it and take the port",
     )
@@ -1768,11 +1822,17 @@ Examples:
                 "membaca semua chat.[/bold yellow]"
             )
 
+        trading_proc = None
+        if getattr(args, "trading", True):
+            trading_proc, trading_line = _start_trading_backend()
+            panel_lines.append(trading_line)
+
         console.print(Panel("\n".join(panel_lines), title="[bold cyan]Agent Router Web Server[/bold cyan]", border_style="cyan"))
 
         try:
             run_server(host=args.host, port=args.port, enable_tunnel=False)
         finally:
+            _stop_child(trading_proc)
             if tunnel:
                 tunnel.stop()
     else:

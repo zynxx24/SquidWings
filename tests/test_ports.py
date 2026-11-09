@@ -74,3 +74,35 @@ def test_prompt_when_squidwings_holds_the_port(busy, monkeypatch, answer, expect
 def test_no_free_port_left(busy, monkeypatch):
     monkeypatch.setattr(ports, "next_free_port", lambda host, start, tries=20: None)
     assert main._choose_web_port("127.0.0.1", busy) is None
+
+
+def test_web_starts_the_trading_server_when_port_80_is_allowed(monkeypatch):
+    import subprocess
+
+    from web import trading_server
+
+    started = []
+    monkeypatch.setattr(trading_server, "port_problem", lambda host, port: None)
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kw: started.append(cmd) or "proc")
+    proc, line = main._start_trading_backend()
+    assert proc == "proc" and started[0][-1] == "trading" and "http://127.0.0.1/trading" in line
+
+
+def test_web_explains_a_forbidden_port_80(monkeypatch):
+    from web import trading_server
+
+    monkeypatch.setattr(trading_server, "port_problem", lambda host, port: trading_server.PORT_HINT.format(port=80))
+    proc, line = main._start_trading_backend()
+    assert proc is None and main.SYSCTL_PORT_80 in line
+
+
+def test_web_reuses_a_running_trading_server(monkeypatch):
+    from web import server, trading_server
+
+    async def running() -> bool:
+        return True
+
+    monkeypatch.setattr(trading_server, "port_problem", lambda host, port: "Port 80 is already in use. Stop it.")
+    monkeypatch.setattr(server, "trading_server_running", running)
+    proc, line = main._start_trading_backend()
+    assert proc is None and "sudah jalan" in line

@@ -636,6 +636,34 @@ async def upload_file(request: Request, name: str = "file.txt", session: str = "
     return result
 
 
+TRADING_SERVER_URL = "http://127.0.0.1"   # where `python main.py trading` listens; MT4 reaches port 80 only
+
+
+async def trading_server_running() -> bool:
+    """True when the standalone trading server (the one holding the EA's data) answers on port 80."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=0.8) as client:
+            resp = await client.get(f"{TRADING_SERVER_URL}/trading")
+    except httpx.HTTPError:
+        return False
+    return resp.status_code == 200 and "/static/trading/trading.js" in resp.text
+
+
+@app.get("/api/trading/panel")
+async def trading_panel(request: Request) -> dict[str, Any]:
+    """Which trading panel the chat page shows: the port-80 server's (with the EA data) or this one's."""
+    local = is_loopback_host(request.client.host if request.client else "")
+    external = local and await trading_server_running()
+    return {
+        "external": external,
+        "hint": "" if external else (
+            "Data EA MT4 ada di server trading port 80, yang belum jalan. Panel ini dari server web, "
+            "cocok untuk backend sim atau MT5."),
+    }
+
+
 @app.get("/api/health")
 async def health_check() -> dict[str, Any]:
     """Check API health."""
