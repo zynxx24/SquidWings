@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quick piece</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1b1714; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { height: min(100vh, calc(100vw * 16 / 9)); width: auto; aspect-ratio: 9 / 16; display: block; cursor: pointer; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script>
+"use strict";
+// =====================================================================
+//  QUICK PIECE — 9:16 @ 120 BPM, 24fps. Eras joined by hard cuts, no morphs: the fastest piece that renders.
+//  See QUICKSTART.md. Change DURATION, ERA_LIST, SHOTS, cuts, cues and board; keep piece.json in step.
+//  Open index.html in a browser to preview (click to hear the score; ?t=2.5 freezes a frame).
+// =====================================================================
+const FPS = 24, W = 1080, H = 1920;
+const BPM = 120, BEAT = 60 / BPM, E8 = BEAT / 2, E16 = BEAT / 4;   // 0.5 / 0.25 / 0.125s = 12 / 6 / 3 frames
+const DURATION = 4.5;
+const NFRAMES = Math.round(DURATION * FPS);
+const LOOP_T = NFRAMES / FPS;
+const SAFE = { top: 240, bottom: 420, right: 140 };
+const HAND = '"Ink Free", "Segoe Print", "Comic Neue", cursive';
+const CX = 470;
+const ERA_LIST = [[0, 1.5, () => sceneA()], [1.5, 3.0, () => sceneB()], [3.0, 4.5, () => sceneC()]];
+const SHOTS = [['a', 0, 0.0, 1.5, 'GANTI 1'], ['b', 1, 1.5, 3.0, 'GANTI 2'], ['c', 2, 3.0, 4.5, 'GANTI 3']];
+const TIMELINE = {
+  width: W, height: H, fps: FPS, bpm: BPM, duration: DURATION, frames: NFRAMES, loop: LOOP_T, safe: SAFE,
+  format: 'beat-cut',
+  shots: SHOTS.map(([key, era, t0, t1, title], i) => ({ id: i + 1, key, era, t0, t1, title })),
+  cuts: [1.5, 3.0], morphs: [], cues: { pop: 1.75 },
+  acts: [{ name: '1', role: 'build', t0: 0, t1: 4.5 }],
+  board: [{ t: 0.75, title: 'GANTI 1', sound: 'pad', next: 'GANTI 2' }, { t: 2.25, title: 'GANTI 2', sound: 'hit', next: 'GANTI 3' }, { t: 3.75, title: 'GANTI 3', sound: 'drone', next: 'loop' }],
+  narration: [],
+};
+window.TIMELINE = TIMELINE;

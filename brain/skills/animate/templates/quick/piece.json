@@ -1,0 +1,22 @@
+{
+  "name": "GANTI-nama",
+  "title": "GANTI judul",
+  "format": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 24,
+    "bpm": 120,
+    "duration": 4.5,
+    "frames": 108
+  },
+  "storyFormat": "beat-cut",
+  "style": "cut-paper",
+  "review": {
+    "safe": {
+      "top": 240,
+      "bottom": 420,
+      "right": 140
+    },
+    "refs": {}
+  }
+}

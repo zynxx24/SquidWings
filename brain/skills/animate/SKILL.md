@@ -19,6 +19,12 @@ A video here is one `index.html`: a `<canvas>` drawn frame by frame, plus a scor
 2. Install the kit: `load_skill(name="animate", install_files=true)`. It returns `installed_at`, this session's own copy (`.skills/<session>/animate`). Below it is written `$KIT`: always use the real path, never another session's copy. A copy that already exists is kept, so styles the user made survive.
 3. Read `craft.md` with `load_skill(name="animate", file="craft.md")`. It is the distilled rule list, and most mistakes are already in it.
 
+## In a hurry
+
+In a team run, or when the user says "langsung buat saja", follow `QUICKSTART.md`
+(`load_skill(name="animate", file="QUICKSTART.md")`): a proven hard-cut template, the whole drawing kit on
+one page, and ten steps to a shared MP4. Do not explore the kit's code.
+
 ## The rules that matter most
 
 - **No animating before the storyboard is approved.** A wrong story or look costs a full build. Three cheap check-ins come first.

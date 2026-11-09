@@ -25,6 +25,15 @@ from tests.test_teams_flow import finish, make, member
 KIT = Path(__file__).resolve().parent.parent / "brain" / "skills" / "animate"
 
 
+@pytest.fixture(autouse=True)
+def roomy_disk(monkeypatch):
+    import agent.team_orchestrator as team_module
+
+    real = team_module.shutil.disk_usage
+    monkeypatch.setattr(team_module.shutil, "disk_usage",
+                        lambda path: real(path)._replace(free=50 * 2**30))
+
+
 # ---------------------------------------------------------------- limits
 
 def test_video_limits_lift_a_cheap_models_caps():
@@ -68,15 +77,16 @@ def test_template_uses_the_short_path():
     video = next(t for t in team_templates(["m-flash", "claude-sonnet"]) if t["key"] == "video-studio")
     steps = {m["id"]: m["instructions"] for m in video["members"]}
     assert steps == VIDEO_INSTRUCTIONS
-    assert "demo/" in steps["animator"] and "jangan berhenti" in steps["animator"]
-    assert "Selalu akhiri dengan share_file" in steps["editor"]
+    assert "templates/quick" in steps["animator"] and "QUICKSTART.md" in steps["animator"]
+    assert "jangan berhenti" in steps["animator"] and "kesempatan terakhir" in steps["editor"]
 
 
-def test_old_template_teams_get_the_new_steps_and_edited_ones_do_not(tmp_path):
+@pytest.mark.parametrize("version", [0, 1])
+def test_old_template_teams_get_the_new_steps_and_edited_ones_do_not(tmp_path, version):
     folder = tmp_path / "teams"
     folder.mkdir()
-    old = [{"id": key, "name": key, "role": "r", "model_id": "m", "instructions": text, "depends_on": []}
-           for key, text in _OLD_VIDEO_INSTRUCTIONS.items()]
+    old = [{"id": key, "name": key, "role": "r", "model_id": "m", "instructions": texts[version], "depends_on": []}
+           for key, texts in _OLD_VIDEO_INSTRUCTIONS.items()]
     old[1]["instructions"] += " Pakai gaya pixel."      # the user edited the animator
     (folder / "teams.json").write_text(json.dumps([{"id": "team-v", "name": "Studio", "description": "", "members": old,
                                                      "lead_id": "editor", "mode": "video"}]), encoding="utf-8")
@@ -137,25 +147,93 @@ def test_leftover_render_explains_a_missing_kit_or_piece(tmp_path):
     assert "belum ada piece" in TeamOrchestrator._render_leftover(tmp_path, "run-1")[1]
 
 
+def _quick_piece(root: Path, kit: Path, seconds: float = 1.5) -> Path:
+    piece = root / "pieces" / "karhutla"
+    shutil.copytree(kit / "templates" / "quick", piece)
+    head = (piece / "src" / "head.html").read_text(encoding="utf-8").replace("GANTI", "Hutan")
+    head = head.replace("const DURATION = 4.5;", f"const DURATION = {seconds};")
+    (piece / "src" / "head.html").write_text(head, encoding="utf-8")
+    scenes = (piece / "src" / "scenes.js").read_text(encoding="utf-8").replace("GANTI", "Api di gambut")
+    (piece / "src" / "scenes.js").write_text(scenes, encoding="utf-8")
+    meta = json.loads((piece / "piece.json").read_text(encoding="utf-8"))
+    meta.update(name="karhutla", title="Karhutla")
+    meta["format"].update(duration=seconds, frames=round(seconds * 24))
+    (piece / "piece.json").write_text(json.dumps(meta), encoding="utf-8")
+    return piece
+
+
+def _installed_kit(root: Path) -> Path:
+    kit = root / ".skills" / "run-1" / VIDEO_SKILL
+    shutil.copytree(KIT, kit, ignore=shutil.ignore_patterns("examples", "__pycache__"))
+    return kit
+
+
+def test_a_copied_demo_or_template_is_never_rendered(tmp_path):
+    kit = _installed_kit(tmp_path)
+    demo = tmp_path / "pieces" / "x"
+    shutil.copytree(kit / "styles" / "cut-paper" / "demo", demo)
+    assert TeamOrchestrator._unfinished_piece(demo, kit)
+    template = tmp_path / "pieces" / "y"
+    shutil.copytree(kit / "templates" / "quick", template)
+    assert TeamOrchestrator._unfinished_piece(template, kit)          # still says GANTI
+    video, note = TeamOrchestrator._render_leftover(tmp_path, "run-1")
+    assert video is None and "salah subjek" in note
+    assert not TeamOrchestrator._unfinished_piece(_quick_piece(tmp_path, kit), kit)
+
+
+def test_a_full_disk_is_named_before_rendering(tmp_path, monkeypatch):
+    import agent.team_orchestrator as team_module
+
+    kit = _installed_kit(tmp_path)
+    piece = _quick_piece(tmp_path, kit, seconds=24)
+    real = shutil.disk_usage
+    monkeypatch.setattr(team_module.shutil, "disk_usage", lambda path: real(path)._replace(free=140 * 1024))
+    note = TeamOrchestrator._disk_short(piece)
+    assert "disk hampir penuh" in note and "576 frame" in note
+    assert TeamOrchestrator._render_leftover(tmp_path, "run-1") == (None, note)
+
+
+async def test_a_video_run_stops_at_once_on_a_full_disk(tmp_path, monkeypatch):
+    import agent.team_orchestrator as team_module
+
+    real = shutil.disk_usage
+    monkeypatch.setattr(team_module.shutil, "disk_usage", lambda path: real(path)._replace(free=300 * 2**20))
+    manager, fake = make(tmp_path)
+    team = manager.create_team("t", "", [member("a"), member("lead")], "lead", mode="video")
+    run = await finish(manager, team.id)
+    assert run.status == "failed" and "Disk tinggal 300 MB" in run.error
+    assert fake.calls == [], "no model call may be spent on a run that cannot render"
+
+
+def test_quickstart_names_only_real_kit_functions():
+    import re
+
+    text = (KIT / "QUICKSTART.md").read_text(encoding="utf-8")
+    code = "\n".join(p.read_text(encoding="utf-8") for p in [KIT / "kit" / "core.js", KIT / "styles" / "cut-paper" / "kit.js"])
+    for name in ["cut", "rect", "ellipsePts", "capsulePts", "arcPts", "spark", "person", "cat", "clock", "mug",
+                 "plant", "books", "sparkle", "face", "tag", "yearTag", "capStrip", "ink", "popS"]:
+        assert f"`{name}(" in text, name
+        assert re.search(rf"function {name}\(|const {name} = ", code), f"{name} is not in the kit"
+
+
 @pytest.mark.skipif(not shutil.which("node") or not shutil.which("ffmpeg"), reason="needs node and ffmpeg")
-def test_leftover_render_really_renders_a_piece(tmp_path):
-    """The real kit, the real sandbox: a piece copied from the cut-paper demo becomes share.mp4."""
+def test_leftover_render_really_renders_a_piece(tmp_path, monkeypatch):
+    """The real kit, the real sandbox: the quick template, filled in, becomes share.mp4 and leaves no frames."""
+    import agent.team_orchestrator as team_module
     from security import sandbox
 
+    monkeypatch.setattr(team_module.shutil, "disk_usage", shutil.disk_usage)   # the real disk here
     try:
         sandbox.run_blocking(["node", "--version"], ".", root=tmp_path, timeout=30)
     except Exception as exc:  # noqa: BLE001
         pytest.skip(f"sandbox cannot run node here: {exc}")
-    kit = tmp_path / ".skills" / "run-1" / VIDEO_SKILL
-    shutil.copytree(KIT, kit, ignore=shutil.ignore_patterns("examples", "__pycache__"))
-    piece = tmp_path / "pieces" / "kebakaran"
-    piece.mkdir(parents=True)
-    shutil.copy(kit / "styles" / "cut-paper" / "demo" / "piece.json", piece / "piece.json")
-    shutil.copytree(kit / "styles" / "cut-paper" / "demo" / "src", piece / "src")
+    kit = _installed_kit(tmp_path)
+    piece = _quick_piece(tmp_path, kit)
+    if TeamOrchestrator._disk_short(piece):
+        pytest.skip("not enough free disk for the frames")
     video, note = TeamOrchestrator._render_leftover(tmp_path, "run-1")
     if video is None and ("playwright" in note.lower() or "chromium" in note.lower()):
         pytest.skip(f"no browser for the renderer here: {note}")
-    assert video == "pieces/kebakaran/renders/share.mp4", note
-    assert (tmp_path / video).stat().st_size > 100_000
-
-
+    assert video == "pieces/karhutla/renders/share.mp4", note
+    assert (tmp_path / video).stat().st_size > 50_000
+    assert not (piece / "frames").exists(), "frames must be deleted after the render"

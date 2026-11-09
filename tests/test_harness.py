@@ -581,6 +581,32 @@ async def test_a_member_is_told_to_write_while_tools_are_still_offered(registry,
     assert sum("Anggaranmu tinggal sedikit" in str(m.get("content")) for m in client.requests[-1]["messages"]) == 1
 
 
+async def test_a_member_that_only_reads_is_asked_for_its_first_file(registry, tmp_path) -> None:
+    from agent.harness import RunLimits
+
+    client = FakeClient(*[reply(calls=[("read_file", {"file_path": f"f{i}.txt"})]) for i in range(5)],
+                        reply(calls=[("file_write", {"path": "a.txt", "content": "x"})]), reply("selesai"))
+    limits = RunLimits(max_rounds=10, tokens=10_000_000, deadline=time.time() + 600)
+    harness = make_harness(registry, tmp_path, limits=limits)
+    harness.scaffold = limits.apply(harness.scaffold)
+    await run(client, registry, harness)
+    asked = [i for i, r in enumerate(client.requests)
+             if any("belum ada satu file pun" in str(m.get("content")) for m in r["messages"])]
+    assert asked and 3 <= asked[0] <= 5 and client.requests[asked[0]].get("tools")
+
+
+async def test_a_member_that_already_wrote_is_not_nagged(registry, tmp_path) -> None:
+    from agent.harness import RunLimits
+
+    client = FakeClient(reply(calls=[("file_write", {"path": "a.txt", "content": "x"})]),
+                        *[reply(calls=[("read_file", {"file_path": f"f{i}.txt"})]) for i in range(4)], reply("selesai"))
+    limits = RunLimits(max_rounds=10, tokens=10_000_000, deadline=time.time() + 600)
+    harness = make_harness(registry, tmp_path, limits=limits)
+    harness.scaffold = limits.apply(harness.scaffold)
+    await run(client, registry, harness)
+    assert not any("belum ada satu file pun" in str(m.get("content")) for m in client.requests[-1]["messages"])
+
+
 async def test_past_the_deadline_the_first_answer_is_final(registry, tmp_path) -> None:
     from agent.harness import RunLimits
 

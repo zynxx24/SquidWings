@@ -73,6 +73,11 @@ OUTPUT_KINDS = {"telegram", "database"}
 REPORTABLE = {"completed", "failed"}
 # Reports are also saved here, in the run's folder, so a later agent can open them in full.
 REPORTS_DIR = "team"
+# export.mjs keeps every frame as a 1080x1920 PNG until the MP4 is made.
+FRAME_BYTES = 1_600_000
+RENDER_SLACK_BYTES = 150 * 2**20
+# A 24-second piece: 576 frames, about 900 MB of PNG, plus the MP4s.
+MIN_VIDEO_FREE_BYTES = 1024 * 2**20
 # A video member reads a kit and writes several files; the default team caps (a 1,500-character
 # skill guide, 6,000-character file reads) left cheap models re-reading it until time ran out.
 VIDEO_LIMITS = {"context_chars": 60_000, "tool_result_chars": 16_000, "max_tools": 16,
@@ -81,6 +86,39 @@ VIDEO_LIMITS = {"context_chars": 60_000, "tool_result_chars": 16_000, "max_tools
 # The video studio's steps. Each one writes something early, because runs that read first and
 # wrote last ended with three reports and no video.
 VIDEO_INSTRUCTIONS = {
+    "script": (
+        "Kerja tim tanpa tanya jawab: pilih sendiri default skill animate dan sebut alasannya singkat. "
+        "Dalam tiga langkah pertama: load_skill animate dengan install_files=true, buat folder "
+        "pieces/<nama-pendek>/ di folder kerja, lalu langsung tulis pieces/<nama-pendek>/brief.md versi pertama. "
+        "Video pendek dan sederhana: 3-4 beat, 12-24 detik, satu beat = satu adegan, berpindah dengan hard cut, "
+        "gaya cut-paper. Paling banyak tiga web_research, hanya untuk fakta yang tampil di layar. brief.md "
+        "berisi: ide satu kalimat, durasi, tabel beat (waktu mulai-selesai kelipatan 0.25 detik, apa yang "
+        "tergambar, caption pendek maksimal 5 kata, warna dinding), dan klaim beserta sumbernya. Laporan akhir: "
+        "nama piece dan seluruh isi brief."
+    ),
+    "animator": (
+        "Ikuti QUICKSTART.md skill animate persis, jangan membaca file kit lain: load_skill(name='animate', "
+        "install_files=true), lalu load_skill(name='animate', file='QUICKSTART.md'). Brief ada di laporan "
+        "penulis naskah di atas, di pieces/<nama>/brief.md, dan di team/script.md; kalau file brief tidak ada, "
+        "pakai laporan itu dan jangan berhenti. Langkah pertama yang menulis: cp -r <installed_at>/templates/quick "
+        "pieces/<nama>-build (lalu pakai folder itu). Lalu tulis src/head.html, piece.json, src/scenes.js, dan "
+        "src/bridges.js dengan satu era per beat, ganti semua GANTI, jalankan build.mjs setelah tiap file dan "
+        "perbaiki errornya, lalu export.mjs --share (execute_command timeout 900), hapus folder frames, dan "
+        "share_file renders/share.mp4. Video sederhana yang jadi lebih baik daripada rencana lengkap tanpa video. "
+        "Laporkan path video, atau error terakhir bila belum jadi."
+    ),
+    "editor": (
+        "Cari pieces/*/renders/share.mp4. Kalau ada: share_file video itu, lalu jalankan review.mjs (timeout 900) "
+        "bila waktunya cukup. Kalau belum ada, kamu kesempatan terakhir: load_skill(name='animate', "
+        "file='QUICKSTART.md') dan lanjutkan langkah yang belum selesai di folder piece animator; kalau src/ masih "
+        "berisi GANTI atau isi demo, tulis ulang scenes.js dari brief dengan 3 adegan sederhana. Build, export "
+        "--share (timeout 900), hapus folder frames, lalu share_file. Jawaban akhir: apa videonya, apa yang "
+        "diperbaiki, shot terlemah, dan yang tidak bisa dicek (musiknya belum didengar)."
+    ),
+}
+# What earlier versions of the template wrote. A saved team still holding exactly one of these
+# gets the current steps; anything the user edited is left alone.
+_VIDEO_INSTRUCTIONS_V2 = {
     "script": (
         "Kerja tim tanpa tanya jawab: pilih sendiri default skill animate dan sebut alasannya singkat. "
         "Dalam tiga langkah pertama: load_skill animate dengan install_files=true, buat folder "
@@ -111,9 +149,7 @@ VIDEO_INSTRUCTIONS = {
         "review, apa yang diperbaiki, shot terlemah, dan yang tidak bisa dicek (musiknya belum didengar)."
     ),
 }
-# What earlier versions of the template wrote. A saved team still holding exactly this text gets
-# the new steps; anything the user edited is left alone.
-_OLD_VIDEO_INSTRUCTIONS = {
+_VIDEO_INSTRUCTIONS_V1 = {
     "script": (
         "Muat load_skill animate, lalu baca grammar/FORMATS.md dan grammar/STORY.md. Ini kerja tim tanpa "
         "tanya jawab: pilih sendiri default yang paling cocok dan tulis alasannya. Cek setiap fakta dengan "
@@ -131,6 +167,7 @@ _OLD_VIDEO_INSTRUCTIONS = {
         "angka review, apa yang diperbaiki, shot terlemah, dan yang tidak bisa dicek (musiknya belum didengar)."
     ),
 }
+_OLD_VIDEO_INSTRUCTIONS = {key: (_VIDEO_INSTRUCTIONS_V1[key], _VIDEO_INSTRUCTIONS_V2[key]) for key in VIDEO_INSTRUCTIONS}
 _MEMBER_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
 _VERDICT_RE = re.compile(r"VERDICT:\s*(PASS|REVISE)", re.IGNORECASE)
 
@@ -273,8 +310,8 @@ class TeamStore:
         """Give a video team made from the old template the new steps. True when something changed."""
         changed = False
         for member in team.members:
-            old = _OLD_VIDEO_INSTRUCTIONS.get(member.id)
-            if old and member.instructions.strip() == old:
+            old = _OLD_VIDEO_INSTRUCTIONS.get(member.id, ())
+            if member.instructions.strip() in old:
                 member.instructions = VIDEO_INSTRUCTIONS[member.id]
                 changed = True
         return changed
@@ -822,6 +859,16 @@ class TeamOrchestrator:
         if team.mode == "video":
             session_settings.activate_skills(stack.workspace, [VIDEO_SKILL])
         try:
+            if team.mode == "video":
+                free = shutil.disk_usage(stack.workspace).free
+                if free < MIN_VIDEO_FREE_BYTES:
+                    # Without room for the frames every export dies with ENOSPC, after the agents
+                    # have spent their whole budget. Say it before spending anything.
+                    raise RuntimeError(
+                        f"Disk tinggal {free // 2**20} MB. Render video butuh sekitar "
+                        f"{MIN_VIDEO_FREE_BYTES // 2**20} MB kosong (frame PNG sementara). Kosongkan ruang disk "
+                        "dulu, lalu jalankan tim lagi."
+                    )
             lead = next((member for member in team.members if member.id == team.lead_id), None)
             after = self._after_answer(team)
             workers = [
@@ -915,6 +962,34 @@ class TeamOrchestrator:
         return "\n".join(lines)
 
     @staticmethod
+    def _unfinished_piece(piece: Path, kit: Path) -> bool:
+        """True when the piece's scenes are still a kit demo or template, or still say GANTI."""
+        scenes = piece / "src" / "scenes.js"
+        try:
+            text = scenes.read_text(encoding="utf-8")
+            head = (piece / "src" / "head.html").read_text(encoding="utf-8")
+        except OSError:
+            return True
+        if "GANTI" in text or "GANTI" in head:
+            return True
+        samples = [*kit.glob("styles/*/demo/src/scenes.js"), *kit.glob("templates/*/src/scenes.js")]
+        return any(sample.read_text(encoding="utf-8", errors="replace") == text for sample in samples if sample.is_file())
+
+    @staticmethod
+    def _disk_short(piece: Path) -> str:
+        """A message when the disk cannot hold the frames of this piece, else ""."""
+        try:
+            frames = int(json.loads((piece / "piece.json").read_text(encoding="utf-8"))["format"]["frames"])
+        except (OSError, ValueError, KeyError, TypeError):
+            frames = 24 * 30
+        need = frames * FRAME_BYTES + RENDER_SLACK_BYTES
+        free = shutil.disk_usage(piece).free
+        if free >= need:
+            return ""
+        return (f"disk hampir penuh: render {frames} frame butuh sekitar {need // 2**20} MB, tersedia "
+                f"{free // 2**20} MB. Kosongkan ruang disk lalu jalankan tim lagi.")
+
+    @staticmethod
     def _render_leftover(workspace: Path, run_id: str) -> tuple[str | None, str]:
         """Build and render the newest piece in the run folder. Returns (video path, what happened)."""
         from security import sandbox
@@ -928,9 +1003,17 @@ class TeamOrchestrator:
         ]
         if not pieces:
             return None, "belum ada piece (piece.json dan src/) yang ditulis, jadi tidak ada yang bisa dirender."
-        piece = max(pieces, key=lambda folder: max((f.stat().st_mtime for f in (folder / "src").iterdir()), default=0))
+        # A copied demo or template renders fine, but as a video about something else. Never send that.
+        written = [folder for folder in pieces if not TeamOrchestrator._unfinished_piece(folder, kit)]
+        if not written:
+            return None, ("src/ masih berisi demo atau template (GANTI) yang belum diganti, jadi tidak dirender: "
+                          "videonya akan salah subjek.")
+        piece = max(written, key=lambda folder: max((f.stat().st_mtime for f in (folder / "src").iterdir()), default=0))
         tools = kit.relative_to(workspace) / "tools"
         target = str(piece.relative_to(workspace))
+        short = TeamOrchestrator._disk_short(piece)
+        if short:
+            return None, short
         try:
             for step, timeout in (("build.mjs", 180), ("export.mjs", 900)):
                 command = ["node", str(tools / step), target, *(["--share"] if step == "export.mjs" else [])]
@@ -940,6 +1023,7 @@ class TeamOrchestrator:
                     return None, f"{step} gagal untuk {target}: {' | '.join(tail) or 'tanpa keterangan'}"
         except Exception as exc:  # noqa: BLE001 - a failed fallback must not hide the agents' reports
             return None, f"render {target} gagal: {exc}"
+        shutil.rmtree(piece / "frames", ignore_errors=True)   # 1.5 MB a frame, and nothing reads them now
         video = piece / "renders" / "share.mp4"
         if not video.is_file():
             return None, f"export.mjs selesai tanpa {target}/renders/share.mp4."

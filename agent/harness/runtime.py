@@ -55,6 +55,8 @@ class RunLimits:
     started_at: float = 0.0
     # Share of the budget after which the agent is told to write its result now.
     warn_at: float = 0.7
+    # Share after which an agent that has written nothing yet is told to start writing.
+    idle_at: float = 0.35
 
     def apply(self, scaffold: Scaffold) -> Scaffold:
         if self.override_tier:

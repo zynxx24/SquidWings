@@ -180,10 +180,27 @@ class AgentLoop:
         advisor_calls_left = harness.scaffold.advisor_calls if harness else 0
         force_final = False
         warned = False
+        idle_warned = False
 
         while iteration < iteration_limit:
             iteration += 1
             result.iterations = iteration
+
+            # A team member that only reads spends its whole budget mapping the problem. Past a third
+            # of it with nothing written, ask for the first file now.
+            if harness and harness.limits and not idle_warned and not warned and not force_final and iteration > 1:
+                used = harness.limits.used(result.total_tokens, iteration - 1, max_iterations)
+                if used >= harness.limits.idle_at and not self._wrote_anything(result):
+                    idle_warned = True
+                    harness.stats.nudges += 1
+                    current_messages.append({
+                        "role": "user",
+                        "content": (
+                            f"Sudah {round(used * 100)}% anggaranmu terpakai dan belum ada satu file pun yang kamu tulis. "
+                            "Cukup membaca. Tulis file pertamamu sekarang dari yang sudah kamu tahu, lalu perbaiki "
+                            "sambil jalan."
+                        ),
+                    })
 
             # A shared budget (a team member) used to end without warning, after the tools were
             # gone, so an agent still reading never wrote its file. Say so while there is room.
@@ -597,6 +614,23 @@ class AgentLoop:
                 **tool_kwargs,
             )
             return ResponseHandler.handle(raw_response)
+
+    _WRITE_HINTS = ("write", "patch", "edit", "create", "save", "append", "replace")
+
+    def _wrote_anything(self, result: Any) -> bool:
+        """True once any tool that writes a file has run (file_write, file_patch, doc_create, ...)."""
+        for entry in result.tool_calls_history:
+            call = entry.get("tool_call") or {}
+            name = str((call.get("function") or {}).get("name") or call.get("name") or "")
+            name = self._tool_registry.resolve_name(name) or name
+            if any(hint in name.lower() for hint in self._WRITE_HINTS):
+                return True
+            if name == "execute_command":
+                args = str((call.get("function") or {}).get("arguments") or "")
+                # cp -r template, tee, > redirects: a command that writes counts too.
+                if any(token in args for token in ("cp ", "> ", "tee ", "mkdir ", "mv ")):
+                    return True
+        return False
 
     async def _call_with_budget(self, max_tokens: int, **call: Any) -> ParsedResponse:
         """Call the model, waiting out a lockout and raising the reasoning budget."""
