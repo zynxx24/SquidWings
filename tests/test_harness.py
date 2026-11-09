@@ -564,6 +564,23 @@ async def test_out_of_budget_run_writes_its_result_instead_of_continuing(registr
     assert "Jangan panggil tool" in str(client.requests[-1]["messages"][-1]["content"])
 
 
+async def test_a_member_is_told_to_write_while_tools_are_still_offered(registry, tmp_path) -> None:
+    """Regression: team members learned the budget was gone only after the tools were taken away."""
+    from agent.harness import RunLimits
+
+    client = FakeClient(*[reply(calls=[("file_write", {"path": f"f{i}.txt", "content": "x"})]) for i in range(9)],
+                        reply("selesai"))
+    limits = RunLimits(max_rounds=10, tokens=10_000_000, deadline=time.time() + 600)
+    harness = make_harness(registry, tmp_path, limits=limits)
+    harness.scaffold = limits.apply(harness.scaffold)
+    await run(client, registry, harness)
+    warned = [i for i, r in enumerate(client.requests)
+              if any("Anggaranmu tinggal sedikit" in str(m.get("content")) for m in r["messages"])]
+    assert warned and client.requests[warned[0]].get("tools")
+    assert 6 <= warned[0] <= 8          # at about 70% of 10 rounds, once
+    assert sum("Anggaranmu tinggal sedikit" in str(m.get("content")) for m in client.requests[-1]["messages"]) == 1
+
+
 async def test_past_the_deadline_the_first_answer_is_final(registry, tmp_path) -> None:
     from agent.harness import RunLimits
 

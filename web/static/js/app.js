@@ -1874,7 +1874,7 @@
     S.run = run;
     paintRun();
     const active = !finished(run.status);
-    const labels = { queued: 'Menunggu', running: 'Berjalan', synthesizing: 'Lead menyusun jawaban', reviewing: 'Reviewer memeriksa', revising: 'Lead merevisi', delivering: 'Mengirim hasil', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan' };
+    const labels = { queued: 'Menunggu', running: 'Berjalan', synthesizing: 'Lead menyusun jawaban', reviewing: 'Reviewer memeriksa', revising: 'Lead merevisi', delivering: 'Mengirim hasil', rendering: 'Merender video', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan' };
     const reviews = (run.reviews || []).map(r => r.verdict).join(', ');
     const elapsed = run.started_at ? ` · ${formatSeconds(((run.completed_at || Date.now() / 1000) - run.started_at) * 1000)}` : '';
     $('run-info').textContent = `${labels[run.status] || run.status}${elapsed} · ${formatTokens(run.total_tokens || 0)} token${reviews ? ` · review: ${reviews}` : ''}`;
@@ -1883,7 +1883,10 @@
     const result = $('result');
     if (run.result || run.error) {
       result.classList.remove('hidden');
-      result.innerHTML = run.error ? `<div class="notice">${esc(run.error)}</div>` : md(run.result);
+      // A failed run can still carry the lead's report; show it under the reason.
+      result.innerHTML = run.error
+        ? `<div class="notice" style="white-space: pre-line">${esc(run.error)}</div>${run.result ? md(run.result) : ''}`
+        : md(run.result);
       enhanceCode(result);
     } else result.classList.add('hidden');
   }

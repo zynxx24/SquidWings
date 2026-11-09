@@ -71,6 +71,66 @@ FINISHING_ROUNDS = {"lead": 4, "revision": 3, "reviewer": 3}
 OUTPUT_KINDS = {"telegram", "database"}
 # A node on the branch not taken has nothing to report, not even a failure.
 REPORTABLE = {"completed", "failed"}
+# Reports are also saved here, in the run's folder, so a later agent can open them in full.
+REPORTS_DIR = "team"
+# A video member reads a kit and writes several files; the default team caps (a 1,500-character
+# skill guide, 6,000-character file reads) left cheap models re-reading it until time ran out.
+VIDEO_LIMITS = {"context_chars": 60_000, "tool_result_chars": 16_000, "max_tools": 16,
+                "briefing_chars": 800, "skill_chars": 7_000}
+
+# The video studio's steps. Each one writes something early, because runs that read first and
+# wrote last ended with three reports and no video.
+VIDEO_INSTRUCTIONS = {
+    "script": (
+        "Kerja tim tanpa tanya jawab: pilih sendiri default skill animate dan sebut alasannya singkat. "
+        "Dalam tiga langkah pertama: load_skill animate dengan install_files=true, buat folder "
+        "pieces/<nama-pendek>/ di folder kerja, lalu langsung tulis pieces/<nama-pendek>/brief.md versi "
+        "pertama. Baru setelah itu baca grammar/FORMATS.md atau grammar/STORY.md bila perlu dan perbaiki "
+        "brief.md. Durasi 15-30 detik, satu gaya bawaan (cut-paper untuk cerita dan sejarah). Paling banyak "
+        "tiga web_research, hanya untuk fakta yang tampil di layar. brief.md berisi: ide satu kalimat, format, "
+        "gaya, durasi, BPM, tabel beat bernomor (waktu, isi, jembatan ke beat berikut, peran suara), dan "
+        "klaim beserta sumbernya. Laporan akhir: path brief.md, nama piece, dan seluruh isi brief."
+    ),
+    "animator": (
+        "Brief ada di laporan penulis naskah di atas, di pieces/<nama>/brief.md, dan di team/script.md. "
+        "Kalau file brief tidak ada, pakai isi laporan itu; jangan berhenti. load_skill animate dengan "
+        "install_files=true dan pakai path installed_at. Jangan membaca kit/core.js atau tools/ satu per "
+        "satu. Mulai dari contoh yang sudah jalan: salin piece.json dan src/ dari "
+        "<installed_at>/styles/<gaya>/demo/ ke pieces/<nama>/, baca STYLE.md gaya itu dan src/scenes.js "
+        "contohnya, lalu ubah src/head.html (TIMELINE), src/scenes.js, src/bridges.js, dan src/score.js "
+        "sesuai beat. Setelah file pertama diubah, langsung jalankan node <installed_at>/tools/build.mjs "
+        "pieces/<nama> dan perbaiki errornya, lalu node <installed_at>/tools/export.mjs pieces/<nama> --share "
+        "(execute_command timeout 900). Video sederhana yang jadi lebih baik daripada rencana lengkap tanpa "
+        "video. Laporkan path renders/share.mp4, atau error terakhir bila belum jadi."
+    ),
+    "editor": (
+        "Kalau pieces/<nama>/renders/share.mp4 sudah ada: jalankan review.mjs (timeout 900), perbaiki yang "
+        "gagal bila waktunya cukup, lalu share_file video itu. Kalau belum ada render tapi src/ sudah ada: "
+        "jalankan build.mjs lalu export.mjs --share (timeout 900), perbaiki error build seperlunya, lalu "
+        "share_file. Selalu akhiri dengan share_file untuk video yang ada. Jawaban akhir: apa videonya, angka "
+        "review, apa yang diperbaiki, shot terlemah, dan yang tidak bisa dicek (musiknya belum didengar)."
+    ),
+}
+# What earlier versions of the template wrote. A saved team still holding exactly this text gets
+# the new steps; anything the user edited is left alone.
+_OLD_VIDEO_INSTRUCTIONS = {
+    "script": (
+        "Muat load_skill animate, lalu baca grammar/FORMATS.md dan grammar/STORY.md. Ini kerja tim tanpa "
+        "tanya jawab: pilih sendiri default yang paling cocok dan tulis alasannya. Cek setiap fakta dengan "
+        "web_research. Tulis pieces/<nama>/brief.md: ide satu kalimat, format, gaya, durasi, BPM, tabel beat "
+        "bernomor dengan jembatan antar beat dan peran suaranya, serta klaim beserta sumbernya."
+    ),
+    "animator": (
+        "Muat load_skill animate dengan install_files=true dan pakai path installed_at. Baca craft.md dan "
+        "STYLE.md gaya yang dipilih di brief.md. Bangun semua beat di pieces/<nama>/src/, lalu jalankan "
+        "build.mjs dan export.mjs --share dengan timeout 900. Laporkan path video dan apa yang belum beres."
+    ),
+    "editor": (
+        "Jalankan review.mjs dengan timeout 900 dan lihat contact sheet-nya. Perbaiki yang gagal, render "
+        "ulang bila perlu. Lalu panggil share_file untuk renders/share.mp4. Jawaban akhir: apa videonya, "
+        "angka review, apa yang diperbaiki, shot terlemah, dan yang tidak bisa dicek (musiknya belum didengar)."
+    ),
+}
 _MEMBER_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,40}")
 _VERDICT_RE = re.compile(r"VERDICT:\s*(PASS|REVISE)", re.IGNORECASE)
 
@@ -208,7 +268,19 @@ class TeamStore:
         ]
         return Team(**kept)
 
+    @staticmethod
+    def _upgrade_video_steps(team: Team) -> bool:
+        """Give a video team made from the old template the new steps. True when something changed."""
+        changed = False
+        for member in team.members:
+            old = _OLD_VIDEO_INSTRUCTIONS.get(member.id)
+            if old and member.instructions.strip() == old:
+                member.instructions = VIDEO_INSTRUCTIONS[member.id]
+                changed = True
+        return changed
+
     def _load(self) -> None:
+        upgraded = False
         path = self.directory / "teams.json"
         try:
             if path.exists():
@@ -222,6 +294,8 @@ class TeamStore:
                         # One damaged team must not hide the others.
                         logger.error("[teams] Skipped a saved team: %s", exc)
                         continue
+                    if self._upgrade_video_steps(team):
+                        upgraded = True
                     self._teams[team.id] = team
         except (OSError, ValueError, TypeError) as exc:
             logger.error("[teams] Could not load teams: %s", exc)
@@ -237,6 +311,9 @@ class TeamStore:
             except (OSError, ValueError, TypeError, KeyError) as exc:
                 # One damaged run must not hide other valid runs.
                 logger.error("[teams] Could not load run %s: %s", path.name, exc)
+        if upgraded:
+            logger.info("[teams] Video teams from the old template got the new steps")
+            self.save_teams()
 
     @staticmethod
     def _atomic_write(path: Path, value: Any) -> None:
@@ -456,28 +533,15 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
             "members": [
                 {
                     **member("script", "Penulis naskah", "Menyusun ide, format, dan tabel beat dari permintaan", mid),
-                    "instructions": (
-                        "Muat load_skill animate, lalu baca grammar/FORMATS.md dan grammar/STORY.md. Ini kerja tim tanpa "
-                        "tanya jawab: pilih sendiri default yang paling cocok dan tulis alasannya. Cek setiap fakta dengan "
-                        "web_research. Tulis pieces/<nama>/brief.md: ide satu kalimat, format, gaya, durasi, BPM, tabel beat "
-                        "bernomor dengan jembatan antar beat dan peran suaranya, serta klaim beserta sumbernya."
-                    ),
+                    "instructions": VIDEO_INSTRUCTIONS["script"],
                 },
                 {
                     **member("animator", "Animator", "Membangun adegan dan merender video", top, "script"),
-                    "instructions": (
-                        "Muat load_skill animate dengan install_files=true dan pakai path installed_at. Baca craft.md dan "
-                        "STYLE.md gaya yang dipilih di brief.md. Bangun semua beat di pieces/<nama>/src/, lalu jalankan "
-                        "build.mjs dan export.mjs --share dengan timeout 900. Laporkan path video dan apa yang belum beres."
-                    ),
+                    "instructions": VIDEO_INSTRUCTIONS["animator"],
                 },
                 {
                     **member("editor", "Editor", "Meninjau hasil render, memperbaiki, dan mengirim video", top, "animator"),
-                    "instructions": (
-                        "Jalankan review.mjs dengan timeout 900 dan lihat contact sheet-nya. Perbaiki yang gagal, render "
-                        "ulang bila perlu. Lalu panggil share_file untuk renders/share.mp4. Jawaban akhir: apa videonya, "
-                        "angka review, apa yang diperbaiki, shot terlemah, dan yang tidak bisa dicek (musiknya belum didengar)."
-                    ),
+                    "instructions": VIDEO_INSTRUCTIONS["editor"],
                 },
             ],
             "lead_id": "editor",
@@ -537,6 +601,7 @@ class TeamOrchestrator:
         self._scheduler: asyncio.Task[None] | None = None
         self._telegram: asyncio.Task[None] | None = None
         self._telegram_offset: int | None = None
+        self._workspaces: dict[str, Path] = {}
 
     @property
     def run_tasks(self) -> dict[str, asyncio.Task[None]]:
@@ -753,6 +818,7 @@ class TeamOrchestrator:
         self._checkpoint(run, "run_started")
         # Everyone in a run shares one folder, so one agent can read another's files.
         stack = session_stack.enter(run.id)
+        self._workspaces[run.id] = Path(stack.workspace)
         if team.mode == "video":
             session_settings.activate_skills(stack.workspace, [VIDEO_SKILL])
         try:
@@ -789,10 +855,18 @@ class TeamOrchestrator:
             for layer in execution_layers([m for m in team.members if m.id in after]):
                 await asyncio.gather(*(self._run_node(run, team, m, mode="after") for m in layer))
             self._finish_result(run, team)
+            render_note = ""
             if team.mode == "video" and not self._has_video(stack.workspace):
                 # The render worked but nobody called share_file. Hand over the newest render
                 # rather than failing a run that did make its video.
                 rendered = shared_files.find_new_videos(stack.workspace, run.started_at or 0.0)
+                if not rendered:
+                    # A piece was written but never rendered: the agents ran out of steps at the end.
+                    # Rendering is deterministic, so do it here, in the same sandbox they use.
+                    run.status = "rendering"
+                    self._checkpoint(run, "render_started")
+                    video, render_note = await asyncio.to_thread(self._render_leftover, Path(stack.workspace), run.id)
+                    rendered = [video] if video else []
                 if rendered:
                     shared_files.add(stack.workspace, rendered[0])
                     logger.info("[teams] Run %s: shared %s, which no agent had shared", run_id, rendered[0])
@@ -802,10 +876,7 @@ class TeamOrchestrator:
             if team.mode == "video" and not self._has_video(stack.workspace):
                 # Agents can finish with a report and no file. That is not a finished video.
                 run.status = "failed"
-                run.error = (
-                    "Tim selesai tanpa video: tidak ada file video yang dibagikan dengan share_file, dan tidak ada "
-                    "render baru (.mp4, .webm, .mov) di folder run. Cek log render animator."
-                )
+                run.error = self._no_video_reason(run, team, render_note)
         except asyncio.CancelledError:
             run.status = "cancelled"
             run.error = "Run cancelled by user."
@@ -819,7 +890,61 @@ class TeamOrchestrator:
             run.error = str(exc)
         finally:
             run.completed_at = time.time()
+            self._workspaces.pop(run.id, None)
             self._checkpoint(run, "run_finished")
+
+    @staticmethod
+    def _no_video_reason(run: TeamRun, team: Team, render_note: str = "") -> str:
+        """Why a video run ended without a video, member by member, in a line each."""
+        lines = ["Tim selesai tanpa video: tidak ada video yang dirender atau dibagikan."]
+        for member in team.members:
+            state = run.agents.get(member.id)
+            if not state or member.kind != "agent":
+                continue
+            if state["status"] == "failed":
+                what = f"gagal: {state.get('error', '')}"
+            elif state["status"] == "completed":
+                text = re.sub(r"[#*`>|]+", " ", state.get("content", ""))
+                what = next((line.strip() for line in text.splitlines() if len(line.strip()) > 20), "selesai")
+            else:
+                what = state["status"]
+            lines.append(f"- {member.name}: {what[:220]}")
+        if render_note:
+            lines.append(f"- Render otomatis: {render_note[:400]}")
+        lines.append(f"Laporan lengkap tiap anggota ada di folder {REPORTS_DIR}/ pada folder run.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_leftover(workspace: Path, run_id: str) -> tuple[str | None, str]:
+        """Build and render the newest piece in the run folder. Returns (video path, what happened)."""
+        from security import sandbox
+
+        kit = workspace / ".skills" / run_id / VIDEO_SKILL
+        if not (kit / "tools" / "export.mjs").is_file():
+            return None, "kit animate belum dipasang di folder run, jadi tidak ada yang bisa dirender."
+        pieces = [
+            path.parent for path in [*workspace.glob("pieces/*/piece.json"), *kit.glob("pieces/*/piece.json")]
+            if (path.parent / "src").is_dir()
+        ]
+        if not pieces:
+            return None, "belum ada piece (piece.json dan src/) yang ditulis, jadi tidak ada yang bisa dirender."
+        piece = max(pieces, key=lambda folder: max((f.stat().st_mtime for f in (folder / "src").iterdir()), default=0))
+        tools = kit.relative_to(workspace) / "tools"
+        target = str(piece.relative_to(workspace))
+        try:
+            for step, timeout in (("build.mjs", 180), ("export.mjs", 900)):
+                command = ["node", str(tools / step), target, *(["--share"] if step == "export.mjs" else [])]
+                done, _ = sandbox.run_blocking(command, ".", root=workspace, timeout=timeout)
+                if done.returncode != 0:
+                    tail = (done.stderr or done.stdout or "").strip().splitlines()[-4:]
+                    return None, f"{step} gagal untuk {target}: {' | '.join(tail) or 'tanpa keterangan'}"
+        except Exception as exc:  # noqa: BLE001 - a failed fallback must not hide the agents' reports
+            return None, f"render {target} gagal: {exc}"
+        video = piece / "renders" / "share.mp4"
+        if not video.is_file():
+            return None, f"export.mjs selesai tanpa {target}/renders/share.mp4."
+        logger.info("[teams] Run %s: rendered %s after the agents stopped", run_id, video)
+        return str(video.relative_to(workspace)), ""
 
     @staticmethod
     def _has_video(workspace: Any) -> bool:
@@ -1132,7 +1257,9 @@ class TeamOrchestrator:
                 self._report(run.agents[d]) for d in member.depends_on
                 if d in run.agents and run.agents[d]["status"] in REPORTABLE
             )
-            context += f"\n\n[REPORTS FROM EARLIER STEPS]\n{reports[-MAX_CONTEXT_CHARS:]}"
+            files = ", ".join(f"{REPORTS_DIR}/{d}.md" for d in member.depends_on if d in run.agents)
+            context += (f"\n\n[REPORTS FROM EARLIER STEPS]\n(Full text in the work folder: {files})\n"
+                        f"{reports[-MAX_CONTEXT_CHARS:]}")
         return context
 
     @staticmethod
@@ -1168,7 +1295,23 @@ class TeamOrchestrator:
             # The lead writes from reports, so it needs far less than a worker.
             tokens = tokens if video else tokens // 2
             end = max(self._run_ends(run), now + MIN_FINISH_SECONDS)
-        return RunLimits(max_rounds=rounds, tokens=tokens, deadline=min(now + budget["member_seconds"], end))
+        deadline = min(now + budget["member_seconds"], end)
+        if video:
+            return RunLimits(max_rounds=rounds, tokens=tokens, deadline=deadline, override_tier=True,
+                             started_at=now, **VIDEO_LIMITS)
+        return RunLimits(max_rounds=rounds, tokens=tokens, deadline=deadline, started_at=now)
+
+    def _save_report(self, run: TeamRun, member: TeamMember, content: str) -> None:
+        """Keep a member's full report as a file, so later members can open what the context cut."""
+        workspace = self._workspaces.get(run.id)
+        if not workspace or not content.strip():
+            return
+        try:
+            folder = workspace / REPORTS_DIR
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"{member.id}.md").write_text(f"# {member.name}\n\n{content}\n", encoding="utf-8")
+        except OSError as exc:
+            logger.warning("[teams] Could not save the report of %s: %s", member.id, exc)
 
     def _track_activity(self, run: TeamRun, member_id: str) -> Callable[[dict[str, Any]], None]:
         """Show what a member is doing right now on its node."""
@@ -1220,6 +1363,7 @@ class TeamOrchestrator:
                 tools=len(response.tool_calls),
             )
             run.total_tokens += response.total_tokens
+            self._save_report(run, member, response.content)
         except asyncio.CancelledError:
             agent["status"] = "cancelled"
             raise

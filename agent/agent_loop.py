@@ -179,10 +179,29 @@ class AgentLoop:
         verify_rounds_left = harness.scaffold.verify_rounds if harness else 0
         advisor_calls_left = harness.scaffold.advisor_calls if harness else 0
         force_final = False
+        warned = False
 
         while iteration < iteration_limit:
             iteration += 1
             result.iterations = iteration
+
+            # A shared budget (a team member) used to end without warning, after the tools were
+            # gone, so an agent still reading never wrote its file. Say so while there is room.
+            if (
+                harness and harness.limits and not warned and not force_final and iteration > 1
+                and harness.limits.used(result.total_tokens, iteration - 1, max_iterations) >= harness.limits.warn_at
+            ):
+                warned = True
+                harness.stats.nudges += 1
+                left = max(1, max_iterations - iteration + 1)
+                current_messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Anggaranmu tinggal sedikit (sekitar {left} langkah). Berhenti membaca dan riset. "
+                        "Tulis sekarang file atau hasil yang menjadi tugasmu, walau belum sempurna, lalu pakai "
+                        "sisa langkah untuk memeriksa dan merapikannya."
+                    ),
+                })
 
             if harness and harness.limits and not force_final and harness.limits.exceeded(result.total_tokens):
                 force_final = True

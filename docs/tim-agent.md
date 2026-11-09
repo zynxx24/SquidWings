@@ -4,6 +4,15 @@ Menu ini aktif dengan `WEB_TEAMS_ENABLED=true`. Satu permintaan tim dibatasi 10 
 
 Centang **Mode video** pada tim yang membangun dan merender video. Tim itu dapat 60 menit per permintaan, dan tiap agent 30 menit, 40 putaran, serta 400 ribu token. Skill `animate` juga langsung aktif di sesinya. Ubah lewat `TEAM_VIDEO_RUN_SECONDS`, `TEAM_VIDEO_MEMBER_SECONDS`, `TEAM_VIDEO_MEMBER_ROUNDS`, dan `TEAM_VIDEO_MEMBER_TOKENS`. Template **Studio video animasi** sudah memakai mode ini: penulis naskah, animator, lalu editor yang meninjau dan mengirim videonya ke hasil tim.
 
+Agar model murah juga sampai ke video:
+
+- **Batas yang cukup.** Agent mode video tidak dipotong batas tier murah: 40 putaran, panduan skill sampai 7.000 karakter, dan file dibaca per 16.000 karakter. Sebelumnya model flash hanya dapat 20 putaran, panduan 1.500 karakter, dan bacaan 6.000 karakter, sehingga habis waktu membaca ulang kit.
+- **Peringatan lebih awal.** Saat 70% putaran, token, atau waktu terpakai, setiap agent tim diminta berhenti membaca dan menulis hasilnya ke file, selagi tool masih tersedia.
+- **Jalur pendek.** Penulis naskah menulis `brief.md` di tiga langkah pertama, dengan durasi 15-30 detik. Animator mulai dari demo gaya yang sudah jalan (`styles/<gaya>/demo/`), langsung build, lalu render. Editor merender sendiri bila animator belum sempat. Tim lama yang masih memakai instruksi template lama diperbarui otomatis; instruksi yang sudah kamu ubah tidak disentuh.
+- **Laporan sebagai file.** Laporan tiap agent juga disimpan di `team/<id>.md` di folder run, jadi agent berikutnya bisa membuka versi lengkapnya.
+- **Render pengaman.** Bila semua agent selesai tanpa video tapi piece (`piece.json` dan `src/`) sudah ditulis, server menjalankan `build.mjs` dan `export.mjs --share` sendiri di sandbox yang sama, lalu membagikan hasilnya.
+- **Alasan yang jelas.** Bila tetap tidak ada video, hasil tim menyebut per agent apa yang terjadi, plus hasil render pengamannya, dan laporan lead tetap tampil di bawahnya.
+
 ## Alur
 
 Kanvas tim bekerja seperti alur di n8n. Urutannya ditandai 1, 2, 3 mengikuti sambungan antar-node, dan node pertama diberi tanda **Mulai**. Jalur keluar dari gate dan switch diberi huruf, misalnya 5A dan 5B, dan hanya jalur yang terpilih yang berjalan.

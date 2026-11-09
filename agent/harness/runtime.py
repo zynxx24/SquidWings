@@ -49,8 +49,26 @@ class RunLimits:
     max_tools: int = 10
     briefing_chars: int = 500
     skill_chars: int = 1_500
+    # Long jobs such as a video build need room to read a kit and write files, even on a cheap
+    # model. With this set, the limits above are used as given instead of only shrinking the tier's.
+    override_tier: bool = False
+    started_at: float = 0.0
+    # Share of the budget after which the agent is told to write its result now.
+    warn_at: float = 0.7
 
     def apply(self, scaffold: Scaffold) -> Scaffold:
+        if self.override_tier:
+            return replace(
+                scaffold,
+                max_iterations=self.max_rounds,
+                context_chars=self.context_chars,
+                tool_result_chars=self.tool_result_chars,
+                max_tools=None if scaffold.max_tools is None else max(scaffold.max_tools, self.max_tools),
+                briefing_chars=self.briefing_chars,
+                skill_chars=self.skill_chars,
+                verify_rounds=min(scaffold.verify_rounds, 1),
+                advisor_calls=0,
+            )
         return replace(
             scaffold,
             max_iterations=min(scaffold.max_iterations, self.max_rounds),
@@ -65,6 +83,13 @@ class RunLimits:
 
     def exceeded(self, tokens_used: int) -> bool:
         return tokens_used >= self.tokens or time.time() >= self.deadline
+
+    def used(self, tokens_used: int, rounds_used: int, max_rounds: int) -> float:
+        """The largest share used of tokens, rounds, and (when the start is known) time."""
+        shares = [tokens_used / max(1, self.tokens), rounds_used / max(1, max_rounds)]
+        if self.started_at and self.deadline > self.started_at:
+            shares.append((time.time() - self.started_at) / (self.deadline - self.started_at))
+        return max(shares)
 
 
 @dataclass
