@@ -70,6 +70,7 @@ python main.py chat                     # terminal, dengan pilihan folder proyek
 python main.py chat --project nama      # langsung ke workspace/projects/nama
 python main.py ask "pertanyaan"         # satu pertanyaan
 python main.py web                      # Web UI di http://127.0.0.1:8080
+python main.py web --replace            # port terpakai SquidWings lama: matikan yang lama dulu
 python main.py trading                  # backend trading saja, di port 80
 python main.py models                   # daftar model
 python main.py health                   # cek koneksi API
@@ -235,6 +236,7 @@ Jangan pernah meng-commit `.env`. Key disimpan di sana, dan `.env.example` hanya
 | Backend `mt5` gagal login | Paket `MetaTrader5` hanya jalan di Windows. Di Linux pakai `mt4` atau `sim` |
 | EA MT4 tampil offline | Masukkan URL server ke daftar WebRequest di MT4, lalu cek secret di preset EA |
 | Perubahan kode trading tidak terasa | Restart server. Hanya file statis yang langsung terbaca |
+| Port 8080 sudah terpakai | `web` pindah sendiri ke port kosong berikutnya (alamatnya tercetak). Kalau yang memakai SquidWings lama, pilih 2 di prompt atau jalankan `--replace`; `--strict-port` membuatnya berhenti saja |
 
 ## Lisensi dan pembelian
 

@@ -1578,6 +1578,63 @@ def _run_async(coro_fn: Callable[..., Any], *fn_args: Any, **fn_kwargs: Any) -> 
         console.print("\n[dim]⏹ Dihentikan.[/dim]")
 
 
+def _choose_web_port(host: str, port: int, strict: bool = False, replace: bool = False,
+                     ask: Callable[[str], str] | None = None) -> int | None:
+    """The port the web server can use: ``port``, or a free one after it. None means do not start.
+
+    A busy port used to fail only after everything had loaded ("[Errno 98] address already in
+    use"). Now: another SquidWings on it can be replaced (``--replace``, or chosen at the prompt);
+    anything else moves to the next free port, unless ``--strict-port``.
+    """
+    from utils import ports
+
+    if ports.port_free(host, port):
+        return port
+    holder = ports.holder(host, port)
+    alternative = ports.next_free_port(host, port)
+    console.print(f"[yellow]⚠ Port {port} sedang dipakai {holder.describe()}.[/yellow]")
+    stop_hint = f"kill {holder.pid}" if holder.pid else f"ss -ltnp | grep :{port}"
+
+    if strict:
+        console.print(f"[red]Tidak jalan karena --strict-port.[/red] Bebaskan port-nya dulu ({stop_hint}) "
+                      f"atau pakai --port {alternative or port + 1}.")
+        return None
+
+    can_replace = holder.squidwings and holder.pid is not None
+    if can_replace and not replace and ask is None and sys.stdin.isatty():
+        ask = console.input
+    if can_replace and not replace and ask is not None:
+        console.print(f"  [bold]1[/bold]  Pakai port {alternative} (Enter)" if alternative else "  [dim]1  Tidak ada port kosong di dekatnya[/dim]")
+        console.print(f"  [bold]2[/bold]  Matikan SquidWings lama lalu pakai port {port}")
+        console.print("  [bold]3[/bold]  Batal")
+        try:
+            choice = ask("Pilih [1/2/3]: ").strip() or "1"
+        except (EOFError, KeyboardInterrupt):
+            choice = "3"
+        if choice == "3":
+            return None
+        replace = choice == "2"
+
+    if replace and can_replace and holder.pid is not None:
+        console.print(f"[dim]Menghentikan SquidWings lama (PID {holder.pid})...[/dim]")
+        if ports.stop(holder.pid, port, host):
+            console.print(f"[green]✔ Port {port} bebas.[/green]")
+            return port
+        console.print(f"[yellow]Server lama belum berhenti. Coba sendiri: {stop_hint}[/yellow]")
+    elif replace:
+        console.print("[yellow]--replace hanya menghentikan server SquidWings; port ini dipakai program lain.[/yellow]")
+
+    if alternative is None:
+        console.print(f"[red]Port {port + 1}-{port + ports.MAX_TRIES} juga terpakai.[/red] Bebaskan port {port} ({stop_hint}) "
+                      "atau pilih yang lain dengan --port.")
+        return None
+    console.print(f"[green]→ Pindah ke port {alternative}.[/green] [dim]Untuk tetap di {port}: {stop_hint}, "
+                  "atau jalankan dengan --replace.[/dim]")
+    if holder.squidwings:
+        console.print("[dim]Dua server SquidWings memakai folder data yang sama; sebaiknya matikan salah satunya.[/dim]")
+    return alternative
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -1592,6 +1649,7 @@ Examples:
   python main.py health                   Check API health
   python main.py web                      Local Web GUI at http://127.0.0.1:8080
   python main.py web --tunnel             Web GUI with optional public tunnel
+  python main.py web --replace            Stop the SquidWings already on the port, then start
   python main.py trading --tunnel         Trading panel + MT4 bridge, watchable from a phone
         """,
     )
@@ -1632,6 +1690,14 @@ Examples:
         default=False,
         help="Expose the Web GUI publicly through Cloudflare Tunnel (default: disabled)",
     )
+    web_parser.add_argument(
+        "--strict-port", action="store_true",
+        help="Stop with an error when the port is busy, instead of moving to the next free port",
+    )
+    web_parser.add_argument(
+        "--replace", action="store_true",
+        help="When another SquidWings web server holds the port, stop it and take the port",
+    )
 
     # trading command
     trading_parser = subparsers.add_parser("trading", help="Start the trading backend and MT4 bridge on their own")
@@ -1665,6 +1731,11 @@ Examples:
 
         from utils.tunnel import CloudflareTunnel
         from web.server import open_to_public, run_server
+
+        port = _choose_web_port(args.host, args.port, strict=args.strict_port, replace=args.replace)
+        if port is None:
+            sys.exit(1)
+        args.port = port
 
         tunnel = None
         public_url = None
