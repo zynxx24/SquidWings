@@ -25,15 +25,6 @@ from tests.test_teams_flow import finish, make, member
 KIT = Path(__file__).resolve().parent.parent / "brain" / "skills" / "animate"
 
 
-@pytest.fixture(autouse=True)
-def roomy_disk(monkeypatch):
-    import agent.team_orchestrator as team_module
-
-    real = team_module.shutil.disk_usage
-    monkeypatch.setattr(team_module.shutil, "disk_usage",
-                        lambda path: real(path)._replace(free=50 * 2**30))
-
-
 # ---------------------------------------------------------------- limits
 
 def test_video_limits_lift_a_cheap_models_caps():
@@ -186,8 +177,7 @@ def test_a_full_disk_is_named_before_rendering(tmp_path, monkeypatch):
 
     kit = _installed_kit(tmp_path)
     piece = _quick_piece(tmp_path, kit, seconds=24)
-    real = shutil.disk_usage
-    monkeypatch.setattr(team_module.shutil, "disk_usage", lambda path: real(path)._replace(free=140 * 1024))
+    monkeypatch.setattr(team_module, "free_bytes", lambda path: 140 * 1024)
     note = TeamOrchestrator._disk_short(piece)
     assert "disk hampir penuh" in note and "576 frame" in note
     assert TeamOrchestrator._render_leftover(tmp_path, "run-1") == (None, note)
@@ -196,8 +186,7 @@ def test_a_full_disk_is_named_before_rendering(tmp_path, monkeypatch):
 async def test_a_video_run_stops_at_once_on_a_full_disk(tmp_path, monkeypatch):
     import agent.team_orchestrator as team_module
 
-    real = shutil.disk_usage
-    monkeypatch.setattr(team_module.shutil, "disk_usage", lambda path: real(path)._replace(free=300 * 2**20))
+    monkeypatch.setattr(team_module, "free_bytes", lambda path: 300 * 2**20)
     manager, fake = make(tmp_path)
     team = manager.create_team("t", "", [member("a"), member("lead")], "lead", mode="video")
     run = await finish(manager, team.id)
@@ -222,7 +211,7 @@ def test_leftover_render_really_renders_a_piece(tmp_path, monkeypatch):
     import agent.team_orchestrator as team_module
     from security import sandbox
 
-    monkeypatch.setattr(team_module.shutil, "disk_usage", shutil.disk_usage)   # the real disk here
+    monkeypatch.setattr(team_module, "free_bytes", lambda path: shutil.disk_usage(path).free)   # the real disk
     try:
         sandbox.run_blocking(["node", "--version"], ".", root=tmp_path, timeout=30)
     except Exception as exc:  # noqa: BLE001

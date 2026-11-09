@@ -54,3 +54,11 @@ def isolated_workspace_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> N
 
     monkeypatch.setattr(workspace_context, "SESSIONS_ROOT", tmp_path / "workspace" / "sessions")
     monkeypatch.setattr(workspace_context, "PROJECTS_ROOT", tmp_path / "workspace" / "projects")
+
+
+@pytest.fixture(autouse=True)
+def _roomy_disk_for_video_teams(monkeypatch):
+    """Video team runs refuse to start on a nearly full disk; tests must not depend on this machine's."""
+    import agent.team_orchestrator as team_module
+
+    monkeypatch.setattr(team_module, "free_bytes", lambda path: 50 * 2**30)

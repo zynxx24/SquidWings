@@ -78,6 +78,11 @@ FRAME_BYTES = 1_600_000
 RENDER_SLACK_BYTES = 150 * 2**20
 # A 24-second piece: 576 frames, about 900 MB of PNG, plus the MP4s.
 MIN_VIDEO_FREE_BYTES = 1024 * 2**20
+
+
+def free_bytes(path: str | Path) -> int:
+    """Free space on the disk holding ``path``."""
+    return shutil.disk_usage(path).free
 # A video member reads a kit and writes several files; the default team caps (a 1,500-character
 # skill guide, 6,000-character file reads) left cheap models re-reading it until time ran out.
 VIDEO_LIMITS = {"context_chars": 60_000, "tool_result_chars": 16_000, "max_tools": 16,
@@ -860,7 +865,7 @@ class TeamOrchestrator:
             session_settings.activate_skills(stack.workspace, [VIDEO_SKILL])
         try:
             if team.mode == "video":
-                free = shutil.disk_usage(stack.workspace).free
+                free = free_bytes(stack.workspace)
                 if free < MIN_VIDEO_FREE_BYTES:
                     # Without room for the frames every export dies with ENOSPC, after the agents
                     # have spent their whole budget. Say it before spending anything.
@@ -983,7 +988,7 @@ class TeamOrchestrator:
         except (OSError, ValueError, KeyError, TypeError):
             frames = 24 * 30
         need = frames * FRAME_BYTES + RENDER_SLACK_BYTES
-        free = shutil.disk_usage(piece).free
+        free = free_bytes(piece)
         if free >= need:
             return ""
         return (f"disk hampir penuh: render {frames} frame butuh sekitar {need // 2**20} MB, tersedia "
