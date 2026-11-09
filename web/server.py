@@ -35,8 +35,10 @@ from agent.orchestrator import Orchestrator
 from agent.team_orchestrator import TeamOrchestrator, TeamStore
 from brain.classifier.continuation import is_continuation_input
 from config.settings import get_settings
+from model.router.groups import group_of, provider_labels
 from model.settings.model_picker import is_chat_model
 from security import sandbox
+from security.headers import embeddable_headers, shell_headers
 from security.web_access import WebSecurityMiddleware, is_loopback_host, set_public_mode
 from tool.execute.execute_code_intel import quality_tools
 from utils import local_ocr, shared_files
@@ -221,37 +223,37 @@ def get_orchestrator() -> Orchestrator:
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+_NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+# The pages the chat page opens inside itself, and their files.
+_APP_PAGES = {"trading": STATIC_DIR / "trading" / "index.html", "router": STATIC_DIR / "router" / "index.html"}
+
+
+def _page(path: Path, headers: dict[str, str]) -> HTMLResponse:
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"{path.parent.name or path.name} page not found")
+    return HTMLResponse(content=path.read_text(encoding="utf-8"), headers={**_NO_CACHE, **headers})
+
+
+def _shell() -> HTMLResponse:
+    return _page(STATIC_DIR / "index.html", shell_headers())
+
+
 @app.get("/", response_class=HTMLResponse)
 async def serve_index() -> HTMLResponse:
-    """Serve the main index.html page."""
-    index_path = STATIC_DIR / "index.html"
-    if not index_path.exists():
-        raise HTTPException(status_code=404, detail="index.html not found")
-    resp = HTMLResponse(content=index_path.read_text(encoding="utf-8"))
-    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return resp
+    """The main page: chat, agent teams, and the trading and router pages inside it."""
+    return _shell()
 
 
 @app.get("/trading", response_class=HTMLResponse)
-async def serve_trading() -> HTMLResponse:
-    """The MT5 trading panel: login, chart, order ticket, positions and history."""
-    page = STATIC_DIR / "trading" / "index.html"
-    if not page.exists():
-        raise HTTPException(status_code=404, detail="trading page not found")
-    resp = HTMLResponse(content=page.read_text(encoding="utf-8"))
-    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return resp
+async def serve_trading(embed: bool = False) -> HTMLResponse:
+    """The main page opened on the trading panel. ``?embed=1`` is the panel itself, for its frame."""
+    return _page(_APP_PAGES["trading"], embeddable_headers()) if embed else _shell()
 
 
 @app.get("/router", response_class=HTMLResponse)
-async def serve_router() -> HTMLResponse:
-    """The model router: your own OpenAI- and Claude-compatible providers, their keys, and token usage."""
-    page = STATIC_DIR / "router" / "index.html"
-    if not page.exists():
-        raise HTTPException(status_code=404, detail="router page not found")
-    resp = HTMLResponse(content=page.read_text(encoding="utf-8"))
-    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return resp
+async def serve_router(embed: bool = False) -> HTMLResponse:
+    """The main page opened on the model router. ``?embed=1`` is the router page itself, for its frame."""
+    return _page(_APP_PAGES["router"], embeddable_headers()) if embed else _shell()
 
 
 # Mount static files (CSS, JS, assets)
@@ -404,11 +406,19 @@ async def list_models(refresh: bool = False) -> dict[str, Any]:
     # Endpoints also list embedding and speech models, which cannot hold a chat.
     chat_models = [m for m in orch.registry.get_all() if is_chat_model(m.id)]
     models = sorted(chat_models, key=lambda m: (m.provider or "", m.id))
+    names, prefixes = provider_labels()
     by_provider: dict[str, list[dict[str, Any]]] = {}
+    groups: dict[str, dict[str, Any]] = {}
     for m in models:
-        by_provider.setdefault(m.provider or "unknown", []).append(model_payload(m))
+        group = group_of(m.id, m.provider or "unknown", names, prefixes)
+        payload = {**model_payload(m), "group": group.key, "group_label": group.label}
+        by_provider.setdefault(m.provider or "unknown", []).append(payload)
+        entry = groups.setdefault(group.key, {"key": group.key, "label": group.label, "provider": group.provider,
+                                              "family": group.family, "count": 0})
+        entry["count"] += 1
     return {
         "models": by_provider,
+        "groups": sorted(groups.values(), key=lambda g: g["label"].lower()),
         "total": len(models),
         "providers": list(by_provider.keys()),
         "default_model": default_model_id(),

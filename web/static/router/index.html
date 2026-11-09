@@ -7,6 +7,8 @@
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/router/router.css">
 <link rel="stylesheet" href="/static/css/soft.css">
+<link rel="stylesheet" href="/static/css/page.css">
+<script src="/static/js/page.js"></script>
 </head>
 <body class="page-router">
 <header class="top">
@@ -16,7 +18,7 @@
   </div>
   <div class="top-actions">
     <button id="sync" class="btn">Sinkron daftar model</button>
-    <a class="btn ghost" href="/">Kembali ke chat</a>
+    <a class="btn ghost" href="/" data-sq-view="chat" data-sq-standalone>Kembali ke chat</a>
   </div>
 </header>
 <div id="banner" class="banner" hidden></div>
@@ -38,7 +40,7 @@
         <button data-period="all">Semua</button>
       </div>
     </div>
-    <div class="kpis" id="kpis"></div>
+    <div class="kpis" id="kpis"><span class="sq-skeleton" style="height:64px"></span><span class="sq-skeleton" style="height:64px"></span><span class="sq-skeleton" style="height:64px"></span><span class="sq-skeleton" style="height:64px"></span></div>
     <figure class="chart">
       <figcaption>
         <span class="chart-title" id="chart-title">Token per jam</span>
@@ -48,7 +50,7 @@
           <span><i class="sw s3"></i>Output</span>
         </span>
       </figcaption>
-      <div class="chart-box" id="chart"></div>
+      <div class="chart-box" id="chart"><span class="sq-skeleton" style="height:100%;min-height:160px"></span></div>
       <div class="tip" id="tip" hidden></div>
     </figure>
     <div class="section-head small">
@@ -116,7 +118,7 @@
         <button type="submit" class="btn primary">Simpan provider</button>
       </div>
     </form>
-    <div id="providers"></div>
+    <div id="providers"><span class="sq-skeleton" style="height:120px;margin-top:12px"></span><span class="sq-skeleton" style="height:120px;margin-top:12px"></span></div>
     <p class="hint" id="empty" hidden>Belum ada provider. Tambahkan satu, lalu modelnya muncul di pemilih model chat dengan prefix-nya, misalnya <code>9r/gpt-4.1</code>.</p>
   </section>
 
@@ -130,7 +132,7 @@
         <select id="default-model" aria-label="Model default"></select>
       </label>
     </div>
-    <div id="model-groups" class="model-groups"></div>
+    <div id="model-groups" class="model-groups"><span class="sq-skeleton" style="height:90px"></span><span class="sq-skeleton" style="height:90px"></span></div>
   </section>
 
   <section class="card" aria-labelledby="pin-title">

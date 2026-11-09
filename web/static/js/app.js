@@ -30,6 +30,9 @@
     trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
     down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/>',
+    refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
+    external: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+    router: '<rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 17h.01M11 17h.01M12 14V9M8.5 6.5a5 5 0 0 1 7 0M6 4a8.5 8.5 0 0 1 12 0"/>',
   };
   const icon = (name, size = 18) =>
     `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -60,9 +63,20 @@
     return doc.body.innerHTML;
   };
 
+  // The trading and router pages open inside this page, so the chat keeps running behind them.
   // The EA talks to the trading server on the default port, so the live data is there. Only a
-  // local chat can reach it; through a tunnel the link stays on this server's own page.
-  if (['127.0.0.1', 'localhost'].includes(location.hostname)) $('nav-trading').href = `http://${location.hostname}/trading`;
+  // local chat can reach it; through a tunnel the panel comes from this server.
+  const LOCAL = ['127.0.0.1', 'localhost'].includes(location.hostname);
+  const APPS = {
+    trading: {
+      title: 'Trading', path: '/trading', loading: 'Membuka panel trading',
+      src: () => (LOCAL && !APPS.trading.here ? `http://${location.hostname}/trading?embed=1` : '/trading?embed=1'),
+      newTab: () => (LOCAL ? `http://${location.hostname}/trading` : '/trading'),
+    },
+    router: { title: 'Router & token', path: '/router', loading: 'Membuka router model', src: () => '/router?embed=1', newTab: () => '/router' },
+  };
+  const viewFromPath = () => Object.keys(APPS).find(name => APPS[name].path === location.pathname.replace(/\/+$/, '')) || '';
+  $('nav-trading').href = APPS.trading.newTab();
 
   const S = {
     models: [], byId: {}, model: 'auto', session: null, ws: null, busy: false,
@@ -144,7 +158,9 @@
     if (name === 'system') document.documentElement.removeAttribute('data-theme');
     else document.documentElement.dataset.theme = name;
     $('theme-label').textContent = THEMES[name];
+    document.querySelectorAll('#app-frames iframe').forEach(frame => tellFrame(frame, { type: 'sq-theme', theme: name }));
   }
+  const tellFrame = (frame, message) => { try { frame.contentWindow.postMessage(message, '*'); } catch { /* not loaded */ } };
   let theme = THEMES[store.get('theme')] ? store.get('theme') : 'system';
   applyTheme(theme);
   $('toggle-theme').onclick = () => {
@@ -156,10 +172,11 @@
 
   /* ── Models ───────────────────────────────────────── */
   function fillModelOptions(select, selected, withAuto) {
+    // One group per provider and upstream ("Default · kg"), from the server, so a new router groups itself.
     const groups = {};
-    S.models.forEach(m => { (groups[m.provider] ||= []).push(m); });
-    const options = Object.entries(groups).map(([provider, list]) =>
-      `<optgroup label="${esc(provider)}">${list.map(m =>
+    S.models.forEach(m => { (groups[m.group_label || m.provider] ||= []).push(m); });
+    const options = Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)).map(([label, list]) =>
+      `<optgroup label="${esc(label)}">${list.map(m =>
         `<option value="${esc(m.id)}" ${m.id === selected ? 'selected' : ''}>${esc(m.display_name)}</option>`).join('')}</optgroup>`).join('');
     select.innerHTML = (withAuto ? `<option value="auto" ${selected === 'auto' ? 'selected' : ''}>Auto (pilih sesuai tugas)</option>` : '') + options;
   }
@@ -253,7 +270,7 @@
     $('chat-title').textContent = 'Chat baru';
     clearThread();
     await post('/api/model/select', { session_id: S.session, model_id: S.model }).catch(() => {});
-    showView('chat');
+    if (!S.booting) showView('chat');
     closeDrawers();
     renderSessions();
     loadStack();
@@ -274,7 +291,7 @@
         else if (message.role === 'assistant') addHistoryAnswer(message);
       }
       scrollDown(true);
-      showView('chat');
+      if (!S.booting) showView('chat');
       closeDrawers();
       renderSessions();
       loadStack();
@@ -894,25 +911,143 @@
   }
 
   /* ── Views ────────────────────────────────────────── */
-  function showView(name) {
-    const team = name === 'team' && S.features.teams !== false;
-    $('view-chat').classList.toggle('hidden', team);
-    $('view-team').classList.toggle('hidden', !team);
-    $('nav-chat').classList.toggle('hidden', !team);
-    $('open-inspector').classList.toggle('hidden', team);
-    $('shell').classList.toggle('team-mode', team);
-    if (team) {
-      $('chat-title').textContent = 'Tim agent';
-      loadTeams();
-      closeDrawers();
-    } else if ($('chat-title').textContent === 'Tim agent') {
-      const current = S.sessions.find(s => s.session_id === S.session);
-      $('chat-title').textContent = current ? current.title : 'Chat baru';
-    }
-    store.set('view', team ? 'team' : 'chat');
+  // chat and team live in this page; trading and router are pages of their own, shown in a frame
+  // that stays alive once opened, so switching back and forth is instant and nothing reloads.
+  const READY_WAIT_MS = 2500;   // after the frame's load event, for its page to say it is ready
+  const OPEN_TIMEOUT_MS = 20000;
+  const frames = {};
+
+  function sessionTitle() {
+    const current = S.sessions.find(s => s.session_id === S.session);
+    return current ? current.title : 'Chat baru';
   }
+
+  function showView(name, opts = {}) {
+    if (name === 'team' && S.features.teams === false) name = 'chat';
+    if (!['chat', 'team'].includes(name) && !APPS[name]) name = 'chat';
+    const app = APPS[name];
+    const was = S.view;
+    S.view = name;
+    $('view-chat').classList.toggle('hidden', name !== 'chat');
+    $('view-team').classList.toggle('hidden', name !== 'team');
+    $('view-app').classList.toggle('hidden', !app);
+    $('nav-chat').classList.toggle('hidden', name === 'chat');
+    $('open-inspector').classList.toggle('hidden', name !== 'chat');
+    $('app-actions').classList.toggle('hidden', !app);
+    $('shell').classList.toggle('wide-mode', name !== 'chat');
+    document.querySelectorAll('[data-view]').forEach(el => {
+      const on = el.dataset.view === name;
+      el.classList.toggle('active', on);
+      if (on) el.setAttribute('aria-current', 'page'); else el.removeAttribute('aria-current');
+    });
+    $('chat-title').textContent = name === 'team' ? 'Tim agent' : app ? app.title : sessionTitle();
+    document.title = app ? `${app.title} · SquidWings` : 'SquidWings';
+    if (name === 'team') loadTeams();
+    if (name !== 'chat') closeDrawers();
+    if (app) openApp(name);
+    Object.entries(frames).forEach(([key, f]) => {
+      f.frame.classList.toggle('hidden', key !== name);
+      tellFrame(f.frame, { type: 'sq-visible', visible: key === name });
+    });
+    if (!app) SquidPage.hold('app', false);
+    if (name !== was && was) {
+      const view = $('view-' + (app ? 'app' : name));
+      view.classList.remove('view-enter');
+      void view.offsetWidth;   // restart the animation
+      view.classList.add('view-enter');
+    }
+    if (!app) store.set('view', name);
+    const path = app ? app.path : '/';
+    if (!opts.fromHistory && location.pathname !== path) {
+      history[S.booting || opts.replace ? 'replaceState' : 'pushState']({ view: name }, '', path + location.search);
+    }
+  }
+
+  function openApp(name) {
+    const app = APPS[name];
+    const old = frames[name];
+    if (old && old.state !== 'failed') { showAppState(old); return; }
+    // A reload gets a fresh frame: a new src on the old one would add a step to the Back button.
+    if (old) { clearTimeout(old.timer); old.frame.remove(); }
+    const frame = document.createElement('iframe');
+    frame.className = 'app-frame';
+    frame.title = app.title;
+    frame.setAttribute('allow', 'clipboard-write');
+    const f = frames[name] = { frame, name, state: 'loading', started: Date.now(), timer: 0 };
+    frame.addEventListener('load', () => {
+      if (f.state !== 'loading') return;
+      // A refused connection also fires load, with the browser's error page. Only our page says ready.
+      clearTimeout(f.timer);
+      f.timer = setTimeout(() => failApp(f), READY_WAIT_MS);
+    });
+    f.timer = setTimeout(() => failApp(f), OPEN_TIMEOUT_MS);
+    frame.src = app.src();
+    $('app-frames').append(frame);
+    showAppState(f);
+  }
+
+  function showAppState(f) {
+    if (S.view !== f.name) return;
+    const app = APPS[f.name];
+    $('app-loader').classList.toggle('hidden', f.state !== 'loading');
+    $('app-loader-text').textContent = app.loading;
+    $('app-error').classList.toggle('hidden', f.state !== 'failed');
+    f.frame.classList.toggle('is-ready', f.state === 'ready');
+    $('app-open').href = app.newTab();
+    SquidPage.hold('app', f.state === 'loading');
+  }
+
+  function readyApp(f) {
+    if (f.state === 'ready') return;
+    clearTimeout(f.timer);
+    // A loader that blinks for 40 ms reads as a glitch; let it show for a moment.
+    const wait = Math.max(0, 280 - (Date.now() - f.started));
+    setTimeout(() => {
+      f.state = 'ready';
+      showAppState(f);
+      tellFrame(f.frame, { type: 'sq-theme', theme });
+      tellFrame(f.frame, { type: 'sq-visible', visible: S.view === f.name });
+    }, wait);
+  }
+
+  function failApp(f) {
+    if (f.state !== 'loading') return;
+    f.state = 'failed';
+    const app = APPS[f.name];
+    const tradingServer = f.name === 'trading' && LOCAL && !app.here;
+    $('app-error-title').textContent = `${app.title} belum bisa dibuka`;
+    $('app-error-text').textContent = tradingServer
+      ? 'Server trading (port 80, tempat EA MT4 mengirim harga) belum jalan. Jalankan "python main.py trading" di terminal, lalu tekan Coba lagi.'
+      : 'Halamannya tidak menjawab. Cek server masih jalan, lalu tekan Coba lagi.';
+    $('app-here').classList.toggle('hidden', !tradingServer);
+    showAppState(f);
+  }
+
+  window.addEventListener('message', e => {
+    const f = Object.values(frames).find(x => x.frame.contentWindow === e.source);
+    if (!f || !e.data || typeof e.data !== 'object') return;
+    if (e.data.type === 'sq-ready') readyApp(f);
+    else if (e.data.type === 'sq-nav' && (e.data.view === 'chat' || APPS[e.data.view])) showView(e.data.view);
+  });
+  window.addEventListener('popstate', () => showView(viewFromPath() || 'chat', { fromHistory: true }));
+
+  $('app-retry').onclick = () => openApp(S.view);
+  $('app-here').onclick = () => { APPS.trading.here = true; openApp('trading'); };
+  $('app-reload').onclick = () => { const f = frames[S.view]; if (f) { f.state = 'failed'; openApp(S.view); } };
   $('nav-team').onclick = () => showView('team');
   $('nav-chat').onclick = () => showView('chat');
+  document.querySelectorAll('a[data-view]').forEach(link => link.addEventListener('click', e => {
+    // Ctrl/Cmd/Shift/middle click still opens the page in its own tab.
+    if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    showView(link.dataset.view);
+  }));
+  // Alt+1 chat, Alt+2 team, Alt+3 trading, Alt+4 router.
+  window.addEventListener('keydown', e => {
+    if (!e.altKey || e.ctrlKey || e.metaKey) return;
+    const name = { 1: 'chat', 2: 'team', 3: 'trading', 4: 'router' }[e.key];
+    if (name) { e.preventDefault(); showView(name); }
+  });
 
   /* ── Team canvas ──────────────────────────────────── */
   const NODE_W = 196;
@@ -1720,6 +1855,9 @@
   };
 
   /* ── Start ────────────────────────────────────────── */
+  // /trading and /router open straight on that page; the chat loads behind it.
+  S.booting = true;
+  if (viewFromPath()) showView(viewFromPath(), { replace: true });
   (async () => {
     try {
       const config = await api('/api/config').catch(() => ({ features: {} }));
@@ -1730,9 +1868,11 @@
       const last = store.get('session');
       if (last && S.sessions.some(s => s.session_id === last)) await openSession(last);
       else await newChat();
-      if (store.get('view') === 'team') showView('team');
     } catch (e) {
       toast(e.message);
+    } finally {
+      showView(viewFromPath() || (store.get('view') === 'team' ? 'team' : 'chat'), { replace: true });
+      S.booting = false;
     }
   })();
 })();

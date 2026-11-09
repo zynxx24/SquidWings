@@ -59,6 +59,31 @@ DEFAULT_HEADERS: dict[str, str] = {
 }
 
 
+# The chat page shows the trading and router pages inside itself. The trading panel may live on
+# its own server on another loopback port (the MT4 bridge needs port 80), so loopback ports count.
+LOOPBACK_FRAMES = "'self' http://127.0.0.1:* http://localhost:*"
+
+
+def csp_with(frame_src: str | None = None, frame_ancestors: str | None = None) -> str:
+    """DEFAULT_CSP with other frame rules. Everything else stays as strict."""
+    parts = [p for p in DEFAULT_CSP.split("; ") if not p.startswith("frame-ancestors")]
+    if frame_src:
+        parts.append(f"frame-src {frame_src}")
+    parts.append("frame-ancestors " + (frame_ancestors or "'none'"))
+    return "; ".join(parts)
+
+
+def shell_headers() -> dict[str, str]:
+    """Headers for the page that hosts the other pages in frames."""
+    return {"Content-Security-Policy": csp_with(frame_src=LOOPBACK_FRAMES)}
+
+
+def embeddable_headers(ancestors: str = "'self'") -> dict[str, str]:
+    """Headers for a page the chat page may show inside itself. Other sites still cannot frame it."""
+    # Browsers ignore X-Frame-Options when frame-ancestors is present; SAMEORIGIN is for old ones.
+    return {"Content-Security-Policy": csp_with(frame_ancestors=ancestors), "X-Frame-Options": "SAMEORIGIN"}
+
+
 class SecurityHeadersMiddleware:
     """Inject hardening headers into every HTTP response.
 

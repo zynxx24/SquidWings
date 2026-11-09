@@ -11,6 +11,8 @@
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/app.css">
 <link rel="stylesheet" href="/static/css/soft.css">
+<link rel="stylesheet" href="/static/css/page.css">
+<script src="/static/js/page.js"></script>
 </head>
 <body class="page-chat">
 <div id="shell" class="shell">
@@ -27,9 +29,10 @@
     </label>
     <nav id="session-list" class="session-list" aria-label="Riwayat chat"></nav>
     <div class="rail-foot">
-      <button id="nav-team" class="rail-link hidden"><span data-icon="team"></span>Tim agent</button>
-      <a id="nav-trading" href="/trading" target="_blank" rel="noopener" class="rail-link"><span data-icon="chart"></span>Trading</a>
-      <a id="nav-router" href="/router" target="_blank" rel="noopener" class="rail-link"><span data-icon="layers"></span>Router &amp; token</a>
+      <a id="nav-home" href="/" data-view="chat" class="rail-link" title="Alt+1"><span data-icon="chat"></span>Chat</a>
+      <button id="nav-team" data-view="team" class="rail-link hidden" title="Alt+2"><span data-icon="team"></span>Tim agent</button>
+      <a id="nav-trading" href="/trading" data-view="trading" class="rail-link" title="Alt+3 · Ctrl+klik untuk tab baru"><span data-icon="chart"></span>Trading</a>
+      <a id="nav-router" href="/router" data-view="router" class="rail-link" title="Alt+4 · Ctrl+klik untuk tab baru"><span data-icon="router"></span>Router &amp; token</a>
       <button id="toggle-theme" class="rail-link"><span data-icon="theme"></span><span id="theme-label">Tema</span></button>
     </div>
   </aside>
@@ -39,7 +42,11 @@
       <button id="open-rail" class="icon-btn" aria-label="Tampilkan atau sembunyikan daftar chat" data-icon="menu"></button>
       <h1 id="chat-title" class="chat-title">Chat baru</h1>
       <div class="topbar-actions">
-        <button id="nav-chat" class="btn btn-ghost hidden"><span data-icon="chat"></span>Kembali ke chat</button>
+        <div id="app-actions" class="app-actions hidden">
+          <button id="app-reload" class="icon-btn" aria-label="Muat ulang halaman ini" title="Muat ulang" data-icon="refresh"></button>
+          <a id="app-open" class="icon-btn" href="/" target="_blank" rel="noopener" aria-label="Buka di tab baru" title="Buka di tab baru" data-icon="external"></a>
+        </div>
+        <button id="nav-chat" class="btn btn-ghost hidden"><span data-icon="chat"></span><span class="hide-small">Kembali ke chat</span></button>
         <button id="open-inspector" class="btn btn-ghost" aria-controls="inspector"><span data-icon="layers"></span><span class="hide-small">Sesi ini</span></button>
       </div>
     </header>
@@ -132,6 +139,23 @@
         </form>
         <div id="run-info" class="run-info"></div>
         <div id="result" class="prose result hidden"></div>
+      </div>
+    </section>
+
+    <section id="view-app" class="view view-app hidden">
+      <div id="app-frames" class="app-frames"></div>
+      <div id="app-loader" class="sq-loader app-overlay hidden" role="status" aria-live="polite">
+        <div class="sq-loader-mark" aria-hidden="true"><span>S</span></div>
+        <p id="app-loader-text" class="sq-loader-text">Memuat</p>
+        <div class="sq-loader-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+      </div>
+      <div id="app-error" class="app-overlay app-error hidden" role="alert">
+        <h2 id="app-error-title">Halaman belum bisa dibuka</h2>
+        <p id="app-error-text"></p>
+        <div class="app-error-actions">
+          <button id="app-retry" class="btn btn-primary">Coba lagi</button>
+          <button id="app-here" class="btn btn-ghost hidden">Pakai panel di server ini</button>
+        </div>
       </div>
     </section>
   </main>

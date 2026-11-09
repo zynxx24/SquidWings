@@ -538,5 +538,9 @@ def test_no_key_anywhere_points_to_the_router_page(monkeypatch):
 def test_router_page_is_served():
     from web.server import app
 
-    r = TestClient(app).get("/router")
+    r = TestClient(app).get("/router?embed=1")
     assert r.status_code == 200 and "Router model" in r.text and "/static/router/router.js" in r.text
+    # Only the chat page on this server may show it inside itself.
+    assert "frame-ancestors 'self'" in r.headers["content-security-policy"]
+    shell = TestClient(app).get("/router")
+    assert shell.status_code == 200 and "/static/js/app.js" in shell.text

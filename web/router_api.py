@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
 from model.router import dispatch, sync
 from model.router import usage as usage_log
+from model.router.groups import grouped, provider_labels
 from model.router.rotation import get_rotator
 from model.router.store import AUTH_MODES, KINDS, STRATEGIES, StoreError, get_store
 from security.web_access import is_local_request
@@ -213,12 +214,11 @@ def models() -> dict[str, Any]:
     """Every chat model the registry knows, grouped by provider, and the default one."""
     from web.server import default_model_id, get_orchestrator, is_chat_model
 
-    names = {p.id: p.name for p in get_store().providers()}
-    groups: dict[str, list[str]] = {}
-    for m in get_orchestrator().registry.get_all():
-        if is_chat_model(m.id):
-            groups.setdefault(m.provider or "lain", []).append(m.id)
-    return {"groups": [{"provider": k, "name": names.get(k, k), "models": sorted(v)} for k, v in sorted(groups.items())],
+    names, prefixes = provider_labels()
+    found = grouped(((m.id, m.provider) for m in get_orchestrator().registry.get_all() if is_chat_model(m.id)),
+                    names, prefixes)
+    return {"groups": [{"key": g.key, "provider": g.provider, "family": g.family, "name": g.label, "models": ids}
+                       for g, ids in found],
             "default_model": default_model_id(), "chosen": get_store().meta("default_model", "")}
 
 
