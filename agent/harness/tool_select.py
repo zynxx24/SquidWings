@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from functools import lru_cache
 from typing import Any
 
 from brain import skills
@@ -58,7 +59,7 @@ _ON_DEMAND: dict[tuple[str, ...], list[str]] = {
     ("copy", "salin", "duplikat", "duplicate", "cadangkan", "backup"): ["file_copy"],
     ("ganti semua", "replace all", "replace", "cari dan ganti", "find and replace", "search and replace",
      "ganti nama", "rename all", "refactor", "di semua file", "across files"): ["file_replace_all"],
-    ("zip", "arsip", "archive", "kompres", "compress", "ekstrak"): ["archive"],
+    ("zip", "unzip", "arsip", "archive", "kompres", "compress", "ekstrak", "extract"): ["archive"],
     ("ffmpeg", "konversi", "convert", "gif", "webp", "webm", "mp4", "video", "poster", "thumbnail",
      "animasi", "animation"): ["media_convert"],
     ("trading", "trade", "trader", "mt4", "mt5", "metatrader", "forex", "xauusd", "eurusd", "gbpusd", "usdjpy",
@@ -66,8 +67,29 @@ _ON_DEMAND: dict[tuple[str, ...], list[str]] = {
      "akun trading", "ekuitas", "open posisi", "posisi trading", "floating"): ["trading_snapshot"],
     ("json",): ["json_query"],
     ("pdf", "dokumen", "ekstrak", "extract", "docx", "word", "excel", "pptx", "gambar", "file", "folder"): ["extract_files"],
-    ("kirim file", "kirimkan file", "bagikan", "share", "download", "unduh", "mp4", "render"): ["share_file"],
+    ("kirim file", "kirimkan file", "kirim ke chat", "kirimkan", "lampirkan", "attach", "send file", "bagikan", "share",
+     "download", "unduh", "mp4", "render", "excel", "csv", "pdf", "gambar", "foto", "laporan"): ["share_file"],
 }
+# A tool that makes a file is only half the job if the file cannot reach the chat.
+_MAKES_FILES = frozenset({"file_write", "execute_command", "media_convert", "archive", "file_patch"})
+_SHARE = "share_file"
+
+
+def _keyword_pattern(keywords: tuple[str, ...]) -> re.Pattern[str]:
+    """A keyword must start a word: "file" is in "filenya" but not in "profile", "git" not in "digital"."""
+    alternatives = "|".join(re.escape(k) for k in sorted(keywords, key=len, reverse=True))
+    return re.compile(rf"(?<![a-z0-9_])(?:{alternatives})")
+
+
+# Compiled once: one regex per group instead of a substring scan per keyword per request.
+_ON_DEMAND_RE: tuple[tuple[re.Pattern[str], list[str]], ...] = tuple(
+    (_keyword_pattern(keywords), names) for keywords, names in _ON_DEMAND.items()
+)
+
+
+@lru_cache(maxsize=512)
+def _whole_word(name: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<![a-z0-9_]){re.escape(name)}(?![a-z0-9_])")
 
 
 def _for_model(schema: dict[str, Any]) -> dict[str, Any]:
@@ -102,7 +124,7 @@ def _named(by_name: dict[str, Any], lowered: str, deferred: frozenset[str]) -> l
     named = []
     for name in by_name:
         if name in deferred:
-            if re.search(rf"(?<![a-z0-9_]){re.escape(name)}(?![a-z0-9_])", lowered):
+            if _whole_word(name).search(lowered):
                 named.append(name)
         elif name in lowered:
             named.append(name)
@@ -144,14 +166,17 @@ def select_tools(
     # the task's core tools and find_tools, then what the request's words pull in,
     # then what this chat unlocked earlier, then the task's remaining tools.
     wanted = [*named, *for_skills, *base[:_CORE_TOOLS], execute_toolbox.FIND_TOOLS, *matched]
-    for keywords, names in _ON_DEMAND.items():
-        if any(k in lowered for k in keywords):
+    for pattern, names in _ON_DEMAND_RE:
+        if pattern.search(lowered):
             wanted.extend(names)
     wanted.extend(reversed(unlocked))
     wanted.extend(base[_CORE_TOOLS:])
 
     # dict.fromkeys de-duplicates while keeping the priority order above.
     names = [n for n in dict.fromkeys(wanted) if n in by_name][: scaffold.max_tools]
+    if _SHARE in by_name and _SHARE not in names and _MAKES_FILES & set(names):
+        # The last name is the least wanted one, so it makes way when the tier is full.
+        names = [*names[: scaffold.max_tools - 1], _SHARE] if len(names) >= scaffold.max_tools else [*names, _SHARE]
     # Tools sit ahead of the prompt in provider caches, so a stable order keeps
     # the same set from invalidating the cached prefix.
     return [_for_model(by_name[n]) for n in sorted(names)]

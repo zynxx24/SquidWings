@@ -17,7 +17,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
-from model.router import dispatch, sync
+from model.router import dispatch, pricing, sync
 from model.router import usage as usage_log
 from model.router.groups import grouped, provider_labels
 from model.router.rotation import get_rotator
@@ -234,12 +234,46 @@ def set_default_model(body: dict[str, Any]) -> dict[str, Any]:
 def usage(period: str = Query("24h"), group: str = Query("provider")) -> dict[str, Any]:
     if period not in usage_log.PERIODS or group not in usage_log.GROUPS:
         raise HTTPException(400, f"period: {', '.join(usage_log.PERIODS)}; group: {', '.join(usage_log.GROUPS)}")
-    data = usage_log.get_usage_log().summary(period, group)
+    book = pricing.get_price_book()
+    data = usage_log.get_usage_log().summary(period, group, price=book.price)
     names = {p.id: p.name for p in get_store().providers()}
     for row in data["rows"]:
         if "provider" in row:
             row["provider_name"] = names.get(row["provider"], row["provider"])
+    data["usd_idr"] = book.usd_idr()
     return data
+
+
+@router.get("/prices")
+def prices() -> dict[str, Any]:
+    """The price used for every model that has tokens, plus the ones typed on the page. USD per 1M tokens."""
+    book = pricing.get_price_book()
+    seen = usage_log.get_usage_log().summary("all", "model")["rows"]
+    tokens = {row["model"]: int(row["total"]) for row in seen}
+    out = []
+    for model in sorted(set(tokens) | set(book.custom_models()), key=lambda m: -tokens.get(m, 0)):
+        price, source = book.lookup(model)
+        out.append({"model": model, "tokens": tokens.get(model, 0), "source": source,
+                    "price": price.public() if price else None})
+    return {"models": out, "usd_idr": book.usd_idr(), "sources": list(pricing.SOURCES),
+            "note": "Perkiraan. Harga bawaan hanya untuk Claude (harga Anthropic). Reseller sering lebih murah: isi harganya sendiri."}
+
+
+@router.post("/prices", dependencies=[Depends(admin)])
+def set_price(body: dict[str, Any]) -> dict[str, Any]:
+    """Type a model's price (USD per 1M tokens), clear it with ``{"model": ..., "clear": true}``, or set ``usd_idr``."""
+    book = pricing.get_price_book()
+    try:
+        if "usd_idr" in body:
+            book.set_usd_idr(body.get("usd_idr"))
+        model = str(body.get("model", "")).strip()
+        if model and body.get("clear"):
+            book.clear_custom(model)
+        elif model:
+            book.set_custom(model, body)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return prices()
 
 
 __all__ = ["router", "can_edit"]

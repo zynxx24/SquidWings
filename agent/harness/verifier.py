@@ -101,12 +101,48 @@ def _syntax_error(path: Path) -> str | None:
     return None
 
 
-def _run_tests(workspace: str) -> str | None:
-    """Run existing pytest tests in a session workspace. Returns failure output."""
+_MAX_TEST_FILES_SCANNED = 400
+
+
+def related_tests(root: Path, changed: list[Path]) -> list[Path]:
+    """The test files that name a changed module (by its stem), plus changed test files themselves.
+
+    An empty list means nothing could be tied to the change, and the whole suite is the honest check.
+    """
+    stems = {p.stem for p in changed if p.suffix == ".py" and not p.name.startswith("test_")}
+    found: dict[str, Path] = {}
+    for p in changed:
+        if p.suffix == ".py" and p.name.startswith("test_") and p.exists():
+            found[str(p)] = p
+    if not stems:
+        return list(found.values())
+    pattern = re.compile(r"\b(?:" + "|".join(re.escape(s) for s in sorted(stems)) + r")\b")
+    candidates = [*sorted((root / "tests").glob("test_*.py")), *sorted(root.glob("test_*.py"))] if root.is_dir() else []
+    for path in candidates[:_MAX_TEST_FILES_SCANNED]:
+        if str(path) in found:
+            continue
+        try:
+            if pattern.search(path.read_text(encoding="utf-8", errors="ignore")):
+                found[str(path)] = path
+        except OSError:
+            continue
+    return list(found.values())
+
+
+def _run_tests(workspace: str, changed: list[Path] | None = None) -> str | None:
+    """Run existing pytest tests in a session workspace. Returns failure output.
+
+    Tests that mention a changed module run first and alone when any are found; otherwise the suite.
+    A suite that takes minutes made every verified turn slow, and the tests that read the changed file
+    are the ones that can fail from it.
+    """
     root = Path(workspace)
     if not root.is_dir() or not ((root / "tests").is_dir() or any(root.glob("test_*.py"))):
         return None
     command = [sandbox.python_command(), "-m", "pytest", "-x", "-q", "--no-header", "-p", "no:cacheprovider"]
+    related = related_tests(root, changed or [])
+    if related:
+        command.extend(str(p.relative_to(root)) if p.is_relative_to(root) else str(p) for p in related)
     try:
         # Code the agent just wrote runs under the same limits as its commands.
         proc, _ = sandbox.run_blocking(command, ".", root=root, timeout=_TEST_TIMEOUT)
@@ -148,7 +184,7 @@ def _check_sync(
                 passed.append(f"aislop {score}/100")
 
     if files and not issues and workspace:
-        failure = _run_tests(workspace)
+        failure = _run_tests(workspace, files)
         if failure is not None:
             issues.append(f"Tests fail after your change:\n{failure}")
         elif any(Path(workspace).glob("test_*.py")) or (Path(workspace) / "tests").is_dir():

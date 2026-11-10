@@ -14,6 +14,10 @@ Token counts follow the OpenAI convention for every provider, so they add up:
 
 Requests that streamed without a usage report are still counted, with zero tokens, and the
 page shows how many there were. Rows older than ROUTER_USAGE_KEEP_DAYS (default 400) are deleted.
+
+Given a price lookup (``model.router.pricing``), the summary also estimates the cost in dollars:
+per row, per time bucket, in total, and as a daily and 30-day rate at the period's pace. Models
+without a price are listed, not counted as free.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ import os
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -139,7 +144,8 @@ class UsageLog:
              "COALESCE(SUM(CASE WHEN ok=1 AND reported=0 THEN 1 ELSE 0 END),0) AS unreported, "
              "COALESCE(AVG(CASE WHEN ok=1 THEN latency_ms END),0) AS avg_latency_ms")
 
-    def summary(self, period: str = "24h", group: str = "provider", now: float | None = None) -> dict[str, Any]:
+    def summary(self, period: str = "24h", group: str = "provider", now: float | None = None,
+                price: Callable[[str], Any] | None = None) -> dict[str, Any]:
         now = now or time.time()
         since, bucket = self._window(period, now)
         if group not in GROUPS:
@@ -158,12 +164,73 @@ class UsageLog:
                 "COALESCE(SUM(1-ok),0) AS errors FROM usage WHERE ts >= ? GROUP BY bucket ORDER BY bucket",
                 (bucket, bucket, since))]
             first = db.execute("SELECT MIN(ts) FROM usage").fetchone()[0]
+            keys = "model" if group == "model" else f"{GROUPS[group]}, model"
+            by_model = [dict(r) for r in db.execute(
+                f"SELECT {keys}, COUNT(*) AS requests, COALESCE(SUM(input),0) AS input, COALESCE(SUM(output),0) AS output, "
+                "COALESCE(SUM(cached),0) AS cached, COALESCE(SUM(cache_write),0) AS cache_write FROM usage "
+                f"WHERE ts >= ? GROUP BY {keys}", (since,))] if price else []
+            by_bucket = [dict(r) for r in db.execute(
+                "SELECT CAST(ts / ? AS INTEGER) * ? AS bucket, model, COALESCE(SUM(input),0) AS input, "
+                "COALESCE(SUM(output),0) AS output, COALESCE(SUM(cached),0) AS cached, COALESCE(SUM(cache_write),0) AS cache_write "
+                "FROM usage WHERE ts >= ? GROUP BY bucket, model", (bucket, bucket, since))] if price else []
             db.row_factory = None
         for item in (totals, *rows):
             item["avg_latency_ms"] = round(item.get("avg_latency_ms") or 0)
             item["cache_hit_pct"] = round(item["cached"] / item["input"] * 100, 1) if item.get("input") else 0.0
+        filled = _fill(series, since or (first or now), now, bucket)
+        if price:
+            _add_costs(price, group, totals, rows, filled, by_model, by_bucket, (now - (since or first or now)))
         return {"period": period, "group": group, "since": since or first, "until": now, "bucket_s": bucket,
-                "totals": totals, "rows": rows, "series": _fill(series, since or (first or now), now, bucket)}
+                "totals": totals, "rows": rows, "series": filled}
+
+
+def _cost(price: Callable[[str], Any], cache: dict[str, Any], row: dict[str, Any]) -> float | None:
+    model = row["model"]
+    if model not in cache:
+        cache[model] = price(model)
+    found = cache[model]
+    if found is None:
+        return None
+    return float(found.cost(prompt=int(row["input"]), output=int(row["output"]), cached=int(row["cached"]),
+                            cache_write=int(row["cache_write"])))
+
+
+def _add_costs(price: Callable[[str], Any], group: str, totals: dict[str, Any], rows: list[dict[str, Any]],
+               series: list[dict[str, Any]], by_model: list[dict[str, Any]], by_bucket: list[dict[str, Any]],
+               span_s: float) -> None:
+    """Dollars per row, per bucket and in total, from the per-model sums. Unpriced tokens stay out."""
+    cache: dict[str, Any] = {}
+    columns = [c.strip() for c in GROUPS[group].split(",")]
+    per_row: dict[tuple[Any, ...], list[float]] = {}
+    unpriced: dict[str, int] = {}
+    for item in by_model:
+        key = tuple(item[c] for c in columns)
+        slot = per_row.setdefault(key, [0.0, 0])
+        cost = _cost(price, cache, item)
+        if cost is None:
+            slot[1] += item["requests"]
+            if item["input"] or item["output"]:
+                unpriced[item["model"]] = unpriced.get(item["model"], 0) + int(item["input"]) + int(item["output"])
+        else:
+            slot[0] += cost
+    for row in rows:
+        cost, missing = per_row.get(tuple(row[c] for c in columns), [0.0, 0])
+        row["cost_usd"] = round(cost, 6)
+        row["unpriced_requests"] = int(missing)
+    per_bucket: dict[int, float] = {}
+    for item in by_bucket:
+        cost = _cost(price, cache, item)
+        if cost:
+            per_bucket[int(item["bucket"])] = per_bucket.get(int(item["bucket"]), 0.0) + cost
+    for point in series:
+        point["cost_usd"] = round(per_bucket.get(int(point["bucket"]), 0.0), 6)
+    total = sum(slot[0] for slot in per_row.values())
+    totals["cost_usd"] = round(total, 6)
+    totals["unpriced_requests"] = int(sum(slot[1] for slot in per_row.values()))
+    totals["unpriced_models"] = [m for m, _ in sorted(unpriced.items(), key=lambda kv: -kv[1])][:20]
+    days = max(span_s, 3600.0) / 86400        # at least an hour, so one early request is not a month's bill
+    totals["cost_per_day_usd"] = round(total / days, 6) if total else 0.0
+    totals["cost_30d_usd"] = round(total / days * 30, 4) if total else 0.0
 
 
 def _fill(series: list[dict[str, Any]], since: float, now: float, bucket: int) -> list[dict[str, Any]]:

@@ -34,6 +34,16 @@
     return n.toLocaleString('id-ID');
   };
   const full = n => Number(n || 0).toLocaleString('id-ID');
+  // Dollars: small amounts keep enough digits to be more than "$0.00".
+  const usd = v => {
+    v = Number(v || 0);
+    if (v === 0) return '$0';
+    if (v < 0.01) return '$' + v.toFixed(4);
+    if (v < 100) return '$' + v.toFixed(2);
+    return '$' + Math.round(v).toLocaleString('en-US');
+  };
+  const idr = v => S.usage && S.usage.usd_idr ? 'Rp' + Math.round(Number(v || 0) * S.usage.usd_idr).toLocaleString('id-ID') : '';
+  const money = v => (idr(v) ? `${usd(v)} · ${idr(v)}` : usd(v));
 
   function banner(text, err = false) {
     const b = $('banner');
@@ -89,14 +99,18 @@
     const u = S.usage;
     if (!u) return;
     const t = u.totals;
-    const kpi = (label, value, note) => h('div', { class: 'kpi' }, h('div', { class: 'label' }, label),
-      h('div', { class: 'value', title: full(value) }, fmt(value)), h('div', { class: 'note' }, note || ''));
+    const kpi = (label, value, note, shown) => h('div', { class: 'kpi' }, h('div', { class: 'label' }, label),
+      h('div', { class: 'value', title: shown ? money(value) : full(value) }, shown ? usd(value) : fmt(value)), h('div', { class: 'note' }, note || ''));
+    const unpriced = t.unpriced_models && t.unpriced_models.length
+      ? ` · ${t.unpriced_models.length} model belum ada harga` : '';
+    const costNote = (t.cost_usd ? `≈ ${money(t.cost_30d_usd)} per 30 hari pada laju ini` : 'belum ada token berharga') + unpriced;
     $('kpis').replaceChildren(
       kpi('Request', t.requests, `${full(t.errors)} gagal${t.unreported ? ` · ${full(t.unreported)} tanpa laporan` : ''}`),
       kpi('Input', t.input, `rata-rata ${full(t.avg_latency_ms)} ms`),
       kpi('Output', t.output, ''),
       kpi('Cached', t.cached, `${t.cache_hit_pct}% dari input${t.cache_write ? ` · tulis ${fmt(t.cache_write)}` : ''}`),
       kpi('Total', t.total, 'input + output'),
+      kpi('Biaya (perkiraan)', t.cost_usd, costNote, true),
     );
     $('chart-title').textContent = PERIOD_TITLE[u.period] || 'Token';
     renderChart(u.series, u.bucket_s);
@@ -166,6 +180,7 @@
           h('b', null, label(p.bucket, bucket)),
           row('s1', 'Input baru', fresh), row('s2', 'Input cache', p.cached), row('s3', 'Output', p.output),
           row('', 'Total', p.total), row('', 'Request', p.requests), p.errors ? row('', 'Gagal', p.errors) : null,
+          p.cost_usd ? h('div', { class: 'r' }, h('span', null, 'Biaya'), h('span', null, money(p.cost_usd))) : null,
         );
         tip.hidden = false;
         const rect = box.getBoundingClientRect();
@@ -191,17 +206,59 @@
 
   function renderTable(rows, group) {
     const first = { provider: 'Provider', account: 'Akun', model: 'Model' }[group];
-    const head = h('tr', null, [first, 'Request', 'Gagal', 'Input', 'Cached', 'Hit %', 'Output', 'Total', 'Rata-rata ms'].map(t => h('th', null, t)));
+    const head = h('tr', null, [first, 'Request', 'Gagal', 'Input', 'Cached', 'Hit %', 'Output', 'Total', 'Biaya', 'Rata-rata ms'].map(t => h('th', null, t)));
     const body = rows.length ? rows.map(r => {
       const name = group === 'model' ? r.model
         : group === 'account' ? `${r.provider} · ${r.account_label || r.account || 'utama'}`
           : (r.provider_name || r.provider);
       return h('tr', null, h('td', { class: 'name', title: name }, name), h('td', null, full(r.requests)),
         h('td', { class: r.errors ? '' : 'muted' }, full(r.errors)), h('td', null, full(r.input)), h('td', null, full(r.cached)),
-        h('td', null, `${r.cache_hit_pct}%`), h('td', null, full(r.output)), h('td', null, full(r.total)), h('td', null, full(r.avg_latency_ms)));
-    }) : [h('tr', null, h('td', { colspan: 9, class: 'muted' }, 'Belum ada request di periode ini.'))];
+        h('td', null, `${r.cache_hit_pct}%`), h('td', null, full(r.output)), h('td', null, full(r.total)),
+        h('td', { class: r.unpriced_requests ? 'muted' : '', title: r.unpriced_requests ? `${full(r.unpriced_requests)} request tanpa harga, tidak dihitung` : money(r.cost_usd) },
+          usd(r.cost_usd) + (r.unpriced_requests ? '*' : '')),
+        h('td', null, full(r.avg_latency_ms)));
+    }) : [h('tr', null, h('td', { colspan: 10, class: 'muted' }, 'Belum ada request di periode ini.'))];
     $('usage-table').replaceChildren(h('thead', null, head), h('tbody', null, body));
   }
+
+  /* ── prices ────────────────────────────────────── */
+  const SOURCE = { custom: 'kamu isi', listed: 'dari provider', bawaan: 'bawaan Claude', gratis: 'gratis', '': 'belum ada' };
+  async function loadPrices() {
+    try { renderPrices(await api('/api/router/prices')); } catch (e) { banner(e.message, true); }
+  }
+  function renderPrices(r) {
+    const rate = $('usd-idr');
+    if (document.activeElement !== rate) rate.value = r.usd_idr || '';
+    rate.disabled = !S.canEdit;
+    const cell = (model, key, value) => h('input', {
+      type: 'number', min: '0', step: 'any', value: value ?? '', 'aria-label': `${key} ${model}`, class: 'price-in',
+      'data-key': key, disabled: !S.canEdit, placeholder: key === 'input' || key === 'output' ? 'wajib' : 'auto',
+    });
+    const head = h('tr', null, ['Model', 'Token', 'Sumber', 'Input', 'Cached', 'Output', ''].map(t => h('th', null, t)));
+    const body = r.models.length ? r.models.map(m => {
+      const p = m.price || {};
+      const tr = h('tr', null, h('td', { class: 'name', title: m.model }, m.model), h('td', null, fmt(m.tokens)),
+        h('td', { class: m.source ? '' : 'muted' }, SOURCE[m.source] ?? m.source),
+        h('td', null, cell(m.model, 'input', p.input)), h('td', null, cell(m.model, 'cached', m.source === 'custom' || m.source === 'listed' ? p.cached : '')),
+        h('td', null, cell(m.model, 'output', p.output)));
+      const save = h('button', { class: 'btn small', disabled: !S.canEdit, onclick: () => savePrice(m.model, tr) }, 'Simpan');
+      const clear = m.source === 'custom' ? h('button', { class: 'btn small ghost', disabled: !S.canEdit, onclick: () => savePrice(m.model, null) }, 'Hapus') : null;
+      tr.append(h('td', null, save, clear));
+      return tr;
+    }) : [h('tr', null, h('td', { colspan: 7, class: 'muted' }, 'Belum ada model yang memakai token.'))];
+    $('price-table').replaceChildren(h('thead', null, head), h('tbody', null, body));
+  }
+  async function savePrice(model, tr) {
+    const body = { model };
+    if (tr) tr.querySelectorAll('input[data-key]').forEach(i => { body[i.dataset.key] = i.value; });
+    else body.clear = true;
+    try { renderPrices(await api('/api/router/prices', { method: 'POST', body })); banner(`Harga ${model} ${tr ? 'disimpan' : 'dihapus'}.`); loadUsage(); }
+    catch (e) { banner(e.message, true); }
+  }
+  $('usd-idr').addEventListener('change', async e => {
+    try { renderPrices(await api('/api/router/prices', { method: 'POST', body: { usd_idr: e.target.value } })); loadUsage(); }
+    catch (err) { banner(err.message, true); }
+  });
 
   /* ── providers ─────────────────────────────────── */
   async function loadProviders() {
@@ -382,7 +439,7 @@
   $('sync').onclick = () => syncModels(false).then(loadModels);
   window.addEventListener('resize', () => { if (S.usage) renderChart(S.usage.series, S.usage.bucket_s); });
 
-  loadProviders().then(loadModels);
+  loadProviders().then(loadModels).then(loadPrices);
   loadUsage();
   setInterval(() => { if (!document.hidden && !document.activeElement?.matches('input, textarea, select')) loadProviders(); }, 5000);
   setInterval(() => { if (!document.hidden) loadUsage(); }, 15000);

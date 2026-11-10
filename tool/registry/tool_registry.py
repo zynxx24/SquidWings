@@ -157,7 +157,7 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset({
     "git_diff", "json_query", "web_search", "time_now", "vault_search", "vault_read",
     "vault_recall", "vault_neighbours", "vault_explain", "memory_recall", "memory_rank_files",
     "graphify_query", "project_overview", "code_outline", "find_symbol", "load_skill",
-    "web_research", "web_read", "file_find", "file_read_many", "trading_snapshot",
+    "web_research", "web_read", "file_find", "file_read_many",
 })
 
 

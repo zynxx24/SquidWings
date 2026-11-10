@@ -1590,9 +1590,26 @@ def _start_trading_backend() -> tuple[Any, str]:
     """
     import subprocess
 
-    from web.trading_server import DEFAULT_PORT, port_problem
+    from web.trading_server import DEFAULT_PORT, code_is_stale, port_problem, prepare_port
 
     problem = port_problem("127.0.0.1", DEFAULT_PORT)
+    replaced = False
+    if problem and "already in use" in problem:
+        import asyncio
+
+        from web.server import trading_server_running
+
+        if not asyncio.run(trading_server_running()):
+            return None, ("[yellow]⚠ Port 80 dipakai program lain. Halaman Trading memakai panel server web "
+                          "(tanpa data EA MT4).[/yellow]")
+        if code_is_stale(DEFAULT_PORT) is False:
+            return None, "[bold green]✔ Trading (EA MT4):[/bold green] server trading port 80 sudah jalan (kode terbaru)"
+        # An older copy, left from an earlier start, would keep running yesterday's code: replace it.
+        problem = prepare_port("127.0.0.1", DEFAULT_PORT, say=lambda text: console.print(f"[dim]{text}[/dim]"), interactive=False)
+        replaced = problem is None
+    elif problem:
+        # Not allowed yet: open port 80 once with sudo, here in the terminal, then carry on.
+        problem = prepare_port("127.0.0.1", DEFAULT_PORT, say=lambda text: console.print(f"[yellow]{text}[/yellow]"))
     if problem is None:
         log = (Path(__file__).resolve().parent / TRADING_LOG).open("ab")
         try:
@@ -1604,16 +1621,9 @@ def _start_trading_backend() -> tuple[Any, str]:
         finally:
             log.close()
         return proc, (f"[bold green]✔ Trading (EA MT4):[/bold green] [underline]http://127.0.0.1/trading[/underline] "
-                      f"[dim](log: {TRADING_LOG})[/dim]")
-    if "already in use" in problem:
-        import asyncio
-
-        from web.server import trading_server_running
-
-        if asyncio.run(trading_server_running()):
-            return None, "[bold green]✔ Trading (EA MT4):[/bold green] server trading port 80 sudah jalan"
-        return None, ("[yellow]⚠ Port 80 dipakai program lain. Halaman Trading memakai panel server web "
-                      "(tanpa data EA MT4).[/yellow]")
+                      f"{'[dim](server lama diganti)[/dim] ' if replaced else ''}[dim](log: {TRADING_LOG})[/dim]")
+    if "already in use" in problem or "belum berhenti" in problem:
+        return None, f"[yellow]⚠ {problem}[/yellow]"
     return None, ("[yellow]⚠ Linux belum mengizinkan port 80, jadi halaman Trading memakai panel server web "
                   f"(tanpa data EA MT4).[/yellow]\n[dim]  Untuk EA MT4, jalankan sekali lalu start ulang: {SYSCTL_PORT_80}[/dim]")
 
@@ -1700,7 +1710,7 @@ Examples:
   python main.py web                      Local Web GUI at http://127.0.0.1:8080
   python main.py web --tunnel             Web GUI with optional public tunnel
   python main.py web --replace            Stop the SquidWings already on the port, then start
-  python main.py trading --tunnel         Trading panel + MT4 bridge, watchable from a phone
+  python main.py trading --tunnel         Trading panel + MT4 bridge (Enterprise edition)
         """,
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -1754,7 +1764,7 @@ Examples:
     )
 
     # trading command
-    trading_parser = subparsers.add_parser("trading", help="Start the trading backend and MT4 bridge on their own")
+    trading_parser = subparsers.add_parser("trading", help="Start the trading backend and MT4 bridge on their own (Enterprise)")
     trading_parser.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
     trading_parser.add_argument("--port", "-p", type=int, default=80, help="Port (default: 80, what MT4 reaches)")
     trading_parser.add_argument(
@@ -1777,6 +1787,11 @@ Examples:
     elif args.command == "doctor":
         sys.exit(0 if _display_doctor() else 1)
     elif args.command == "trading":
+        from config.edition import ENTERPRISE_NOTE, trading_enabled
+
+        if not trading_enabled():
+            console.print(f"[yellow]{ENTERPRISE_NOTE}[/yellow]")
+            sys.exit(2)
         from web.trading_server import run as run_trading
 
         sys.exit(run_trading(args.host, args.port, tunnel=getattr(args, "tunnel", False)))
@@ -1822,8 +1837,10 @@ Examples:
                 "membaca semua chat.[/bold yellow]"
             )
 
+        from config.edition import trading_enabled
+
         trading_proc = None
-        if getattr(args, "trading", True):
+        if getattr(args, "trading", True) and trading_enabled():
             trading_proc, trading_line = _start_trading_backend()
             panel_lines.append(trading_line)
 

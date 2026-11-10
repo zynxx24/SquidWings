@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from config.edition import trading_enabled
 from model.router.groups import group_of, grouped
 from security.headers import (
     DEFAULT_CSP,
@@ -90,7 +91,10 @@ def test_each_path_opens_the_main_page(client, path):
     assert r.headers["x-frame-options"] == "DENY"
 
 
-@pytest.mark.parametrize(("path", "script"), [("/trading?embed=1", "trading.js"), ("/router?embed=1", "router.js")])
+@pytest.mark.parametrize(("path", "script"), [
+    pytest.param("/trading?embed=1", "trading.js", marks=pytest.mark.enterprise),
+    ("/router?embed=1", "router.js"),
+])
 def test_embedded_pages(client, path, script):
     r = client.get(path)
     assert r.status_code == 200 and script in r.text and "/static/js/page.js" in r.text
@@ -120,13 +124,15 @@ def test_models_carry_their_group(client, monkeypatch):
 # ---------------------------------------------------------------- static wiring
 
 def test_pages_load_the_shared_loader_before_their_scripts():
-    for page in ("index.html", "router/index.html", "trading/index.html"):
+    pages = ("index.html", "router/index.html") + (("trading/index.html",) if trading_enabled() else ())
+    for page in pages:
         html = (STATIC / page).read_text(encoding="utf-8")
         scripts = re.findall(r'<script src="([^"]+)"', html)
         assert scripts[0] == "/static/js/page.js", page
         assert "/static/css/page.css" in html
 
 
+@pytest.mark.enterprise
 def test_standalone_controls_hide_inside_the_chat_page():
     router = (STATIC / "router/index.html").read_text(encoding="utf-8")
     trading = (STATIC / "trading/index.html").read_text(encoding="utf-8")
@@ -154,6 +160,7 @@ def test_chat_model_picker_follows_router_changes():
 
 # ---------------------------------------------------------------- trading panel location
 
+@pytest.mark.enterprise
 @pytest.mark.parametrize("running", [True, False])
 def test_trading_panel_location(client, monkeypatch, running):
     from web import server
@@ -167,6 +174,7 @@ def test_trading_panel_location(client, monkeypatch, running):
     assert bool(data["hint"]) is not running
 
 
+@pytest.mark.enterprise
 def test_trading_panel_never_points_a_remote_visitor_at_port_80(monkeypatch):
     from web import server
     from web.server import app

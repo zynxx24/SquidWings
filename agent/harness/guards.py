@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+from collections import deque
 from typing import Any
 
 # Names small models commonly use instead of the declared parameter.
@@ -242,6 +243,9 @@ class LoopGuard:
         self._last_signature = ""
         self._repeats = 0
         self._failures = 0
+        # Recent signatures: a run going A, B, A, B never repeats itself twice in a row, but is as stuck.
+        self._recent: deque[str] = deque(maxlen=2 * self._stuck_after + 2)
+        self._cycle_warned = False
         self.needs_help = False
         self.give_up = False
 
@@ -251,6 +255,7 @@ class LoopGuard:
         self._repeats = self._repeats + 1 if signature == self._last_signature else 0
         self._last_signature = signature
         self._failures = self._failures + 1 if error else 0
+        self._recent.append(signature)
 
         if self._repeats >= self._stuck_after + 3:
             self.give_up = True
@@ -260,6 +265,14 @@ class LoopGuard:
                 f"Kamu sudah memanggil {name} dengan argumen yang sama {self._repeats + 1} kali "
                 "dan hasilnya tidak akan berubah. Gunakan hasil yang sudah ada, atau coba "
                 "pendekatan lain."
+            )
+        seen = self._recent.count(signature)
+        if seen > self._stuck_after and not self._repeats and not self._cycle_warned and not error:
+            self._cycle_warned = True
+            self.needs_help = True
+            return (
+                f"Kamu berputar: {name} dengan argumen ini sudah dipanggil {seen} kali di antara panggilan lain, "
+                "dan jawabannya sama setiap kali. Pakai hasil yang sudah ada dan lanjut ke langkah berikutnya."
             )
         if self._failures >= self._stuck_after:
             self.needs_help = True

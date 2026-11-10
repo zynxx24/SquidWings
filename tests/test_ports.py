@@ -76,6 +76,7 @@ def test_no_free_port_left(busy, monkeypatch):
     assert main._choose_web_port("127.0.0.1", busy) is None
 
 
+@pytest.mark.enterprise
 def test_web_starts_the_trading_server_when_port_80_is_allowed(monkeypatch):
     import subprocess
 
@@ -88,6 +89,7 @@ def test_web_starts_the_trading_server_when_port_80_is_allowed(monkeypatch):
     assert proc == "proc" and started[0][-1] == "trading" and "http://127.0.0.1/trading" in line
 
 
+@pytest.mark.enterprise
 def test_web_explains_a_forbidden_port_80(monkeypatch):
     from web import trading_server
 
@@ -96,6 +98,7 @@ def test_web_explains_a_forbidden_port_80(monkeypatch):
     assert proc is None and main.SYSCTL_PORT_80 in line
 
 
+@pytest.mark.enterprise
 def test_web_reuses_a_running_trading_server(monkeypatch):
     from web import server, trading_server
 
@@ -104,5 +107,66 @@ def test_web_reuses_a_running_trading_server(monkeypatch):
 
     monkeypatch.setattr(trading_server, "port_problem", lambda host, port: "Port 80 is already in use. Stop it.")
     monkeypatch.setattr(server, "trading_server_running", running)
+    monkeypatch.setattr(trading_server, "code_is_stale", lambda port=80, host="127.0.0.1": False)
     proc, line = main._start_trading_backend()
     assert proc is None and "sudah jalan" in line
+
+
+@pytest.mark.enterprise
+def test_web_replaces_a_trading_server_running_old_code(monkeypatch):
+    import subprocess
+
+    from web import server, trading_server
+
+    async def running() -> bool:
+        return True
+
+    asked, started = [], []
+    monkeypatch.setattr(trading_server, "port_problem", lambda host, port: "Port 80 is already in use. Stop it.")
+    monkeypatch.setattr(server, "trading_server_running", running)
+    monkeypatch.setattr(trading_server, "code_is_stale", lambda port=80, host="127.0.0.1": True)
+    monkeypatch.setattr(trading_server, "prepare_port", lambda host, port, **kw: asked.append(kw) or None)
+    monkeypatch.setattr(subprocess, "Popen", lambda cmd, **kw: started.append(cmd) or "proc")
+    proc, line = main._start_trading_backend()
+    assert proc == "proc" and "server lama diganti" in line and asked[0]["interactive"] is False
+
+
+@pytest.mark.enterprise
+def test_trading_replaces_its_own_older_copy_but_not_another_program(monkeypatch):
+    from utils import ports
+    from web import trading_server
+
+    stopped = []
+    monkeypatch.setattr(trading_server, "port_problem", lambda host, port: "Port 80 is already in use. Stop whatever is listening there first.")
+    monkeypatch.setattr(ports, "holder", lambda host, port: ports.Holder(4242, "/x/.venv/bin/python /x/main.py trading", False))
+    monkeypatch.setattr(ports, "stop", lambda pid, port, host: stopped.append(pid) or True)
+    assert trading_server.prepare_port("127.0.0.1", 80, say=lambda text: None) is None and stopped == [4242]
+    monkeypatch.setattr(ports, "holder", lambda host, port: ports.Holder(77, "/usr/sbin/nginx -g daemon off;", False))
+    problem = trading_server.prepare_port("127.0.0.1", 80, say=lambda text: None)
+    assert problem and "nginx" in problem and "kill 77" in problem and stopped == [4242]
+    assert not trading_server.is_our_trading_server("python main.py web")
+
+
+@pytest.mark.enterprise
+def test_a_forbidden_port_80_is_opened_once_with_sudo_in_the_terminal(monkeypatch):
+    import subprocess
+
+    from web import trading_server
+
+    allowed = []
+    monkeypatch.setattr(trading_server, "port_problem",
+                        lambda host, port: None if allowed else trading_server.PORT_HINT.format(port=80))
+    monkeypatch.setattr(trading_server.sys.stdin, "isatty", lambda: True, raising=False)
+    monkeypatch.setattr(trading_server.shutil, "which", lambda name: "/usr/bin/sudo")
+
+    class Done:
+        returncode = 0
+
+    def run(cmd, **kw):
+        allowed.append(cmd)
+        return Done()
+
+    monkeypatch.setattr(subprocess, "run", run)
+    assert trading_server.prepare_port("127.0.0.1", 80, say=lambda text: None, interactive=True) is None
+    assert allowed[0][:3] == ["sudo", "sh", "-c"] and "ip_unprivileged_port_start=80" in allowed[0][3]
+    assert trading_server.SYSCTL_FILE in allowed[0][3], "kept after a reboot too"

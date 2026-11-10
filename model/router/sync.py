@@ -35,6 +35,9 @@ async def refresh(provider: ProviderConfig) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - any failure is reported, not raised
         logger.warning(f"[router] model fetch for {provider.id} failed: {exc}")
         return {"ok": False, "count": 0, "error": str(exc)[:300]}
+    with contextlib.suppress(Exception):   # prices are a bonus: a listing without them is normal
+        from model.router.pricing import get_price_book
+        get_price_book().remember_listed(models)
     registered = 0
     if _sink is not None:
         try:

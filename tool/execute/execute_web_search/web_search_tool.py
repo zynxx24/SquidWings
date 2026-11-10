@@ -31,6 +31,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
+from config import credentials
 from config.settings import get_settings
 from tool.execute.execute_local_memory.graphify_store import GraphifyStore
 from tool.execute.execute_local_memory.vault.frontmatter import serialize_frontmatter
@@ -124,8 +125,9 @@ def _get_config() -> _Config:
         graphify_enabled=bool(getattr(s, "graphify_memory_enabled", False)),
         graphify_endpoint=str(getattr(s, "graphify_memory_endpoint", "") or "").strip(),
         graphify_timeout=float(getattr(s, "graphify_memory_timeout_seconds", 5.0)),
-        searxng_url=str(getattr(s, "searxng_url", "") or "").strip().rstrip("/"),
-        brave_api_key=str(getattr(s, "brave_search_api_key", "") or "").strip(),
+        # Typed on the team page's Kredensial tab, else .env.
+        searxng_url=credentials.get("searxng_url").rstrip("/"),
+        brave_api_key=credentials.get("brave_search_api_key"),
     )
 
 

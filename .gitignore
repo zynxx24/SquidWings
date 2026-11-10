@@ -101,3 +101,31 @@ trading/data/
 
 # Per-port tunnel logs (tunnel.sh, main.py trading --tunnel)
 tunnel-*.log
+
+# === SquidWings Enterprise: the trading module stays on this machine, never in the public repo ===
+# config/edition.py switches it on when these files are present. See README, "Edisi".
+/trading/
+/web/quant_api.py
+/web/mt5_api.py
+/web/mt4_bridge.py
+/web/trading_server.py
+/web/static/trading/
+/tool/execute/execute_trading/
+/brain/skills/analis-trading.md
+/docs/trading.md
+/tests/test_autotrade.py
+/tests/test_brain.py
+/tests/test_brain_math.py
+/tests/test_confluence.py
+/tests/test_forward.py
+/tests/test_llm_trader.py
+/tests/test_mt4_and_strategy.py
+/tests/test_mt5_trading.py
+/tests/test_papersim.py
+/tests/test_quant_intelligence.py
+/tests/test_quant_model.py
+/tests/test_scalp.py
+/tests/test_trading_news.py
+/tests/test_trading_server.py
+/tests/test_trading_snapshot.py
+/tests/test_trading_ui.py

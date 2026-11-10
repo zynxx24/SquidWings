@@ -17,6 +17,7 @@ os.environ["SANDBOX_MODE"] = "off"
 os.environ["GRAPHIFY_AUTO"] = "false"
 os.environ["AISLOP_AUTO"] = "false"
 os.environ["MT4_RECORD_TICKS"] = "0"     # bridge tests must not write into trading/data
+os.environ["TRADE_NEWS_AUTO"] = "0"      # proposals must not fetch the live economic calendar
 os.environ["QUANT_WORKER"] = "0"          # keep backtests in the test process
 os.environ["DOCUMENT_OCR"] = "false"      # each image would be a model call
 os.environ["SEND_IMAGES"] = "false"       # a developer .env with SEND_IMAGES=true must not change upload tests
@@ -30,6 +31,19 @@ os.environ["ROUTER_STORE_DIR"] = _tempfile.mkdtemp(prefix="router-store-")
 os.environ["ROUTER_IMPORT_ENV"] = "0"      # the server's start-up must not copy .env endpoints into it
 
 import pytest
+
+from config.edition import trading_enabled
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Skip ``@pytest.mark.enterprise`` tests when the Enterprise trading module is not installed."""
+    if trading_enabled():
+        return
+    skip = pytest.mark.skip(reason="needs the Enterprise trading module")
+    for item in items:
+        if "enterprise" in item.keywords:
+            item.add_marker(skip)
+
 
 # Offline tests must pass on a fresh clone, which has no .env.
 os.environ["API_KEY"] = "test-key-not-real"

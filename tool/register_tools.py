@@ -10,6 +10,7 @@ Dipanggil saat startup. Mendaftarkan semua tool yang AI bisa pakai:
 
 from __future__ import annotations
 
+from config.edition import trading_enabled
 from config.settings import get_settings
 from tool.execute import execute_toolbox
 from tool.execute.execute_auto_generate.auto_generate_tool import auto_generate
@@ -69,8 +70,6 @@ from tool.execute.execute_local_ops.power_tools import (
 )
 from tool.execute.execute_share_file.share_tool import share_file
 from tool.execute.execute_skills.skill_tool import load_skill
-from tool.execute.execute_trading.snapshot_tool import SECTIONS as TRADING_SECTIONS
-from tool.execute.execute_trading.snapshot_tool import trading_snapshot
 from tool.execute.execute_upload_file.extract_tool import extract_files
 from tool.execute.execute_upload_file.read_file_tool import list_directory, read_file
 from tool.execute.execute_web_search.web_reader import web_read, web_research
@@ -965,29 +964,35 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         web_read,
     )
 
-    # --- trading: read-only snapshot of the local trading server ---
-    reg.register(
-        ToolSchema(
-            name="trading_snapshot",
-            description=(
-                "Read the local MT4/MT5 trading server: account, open positions, pending orders, history, the "
-                "quant rule's proposal for a symbol (side, entry, SL, TP, score, every reason it passed or was "
-                "blocked), stop-loss management suggestions, the risk state, the EA bridge, and a walk-forward "
-                "backtest. Read-only: it cannot send, close or modify orders. Use it before giving any trading view."
+    # --- trading (Enterprise): read-only snapshot of the local trading server ---
+    if trading_enabled():
+        from tool.execute.execute_trading.snapshot_tool import SECTIONS as TRADING_SECTIONS
+        from tool.execute.execute_trading.snapshot_tool import trading_snapshot
+        from tool.registry.tool_registry import mark_read_only
+
+        mark_read_only({"trading_snapshot"})
+        reg.register(
+            ToolSchema(
+                name="trading_snapshot",
+                description=(
+                    "Read the local MT4/MT5 trading server: account, open positions, pending orders, history, the "
+                    "quant rule's proposal for a symbol (side, entry, SL, TP, score, every reason it passed or was "
+                    "blocked), stop-loss management suggestions, the risk state, the EA bridge, and a walk-forward "
+                    "backtest. Read-only: it cannot send, close or modify orders. Use it before giving any trading view."
+                ),
+                parameters=[
+                    ToolParameter(name="symbol", param_type=ParamType.STRING,
+                                  description="Symbol for the proposal and backtest, e.g. XAUUSD.", required=False),
+                    ToolParameter(name="sections", param_type=ParamType.ARRAY,
+                                  description="Any of: " + ", ".join(TRADING_SECTIONS) + ". Default: status, account, "
+                                              "positions, proposal, manage, risk_state. backtest is slow (up to 2 min).",
+                                  required=False),
+                    ToolParameter(name="history_days", param_type=ParamType.INTEGER,
+                                  description="Days of closed deals for 'history' (1-90, default 7).", required=False),
+                ],
             ),
-            parameters=[
-                ToolParameter(name="symbol", param_type=ParamType.STRING,
-                              description="Symbol for the proposal and backtest, e.g. XAUUSD.", required=False),
-                ToolParameter(name="sections", param_type=ParamType.ARRAY,
-                              description="Any of: " + ", ".join(TRADING_SECTIONS) + ". Default: status, account, "
-                                          "positions, proposal, manage, risk_state. backtest is slow (up to 2 min).",
-                              required=False),
-                ToolParameter(name="history_days", param_type=ParamType.INTEGER,
-                              description="Days of closed deals for 'history' (1-90, default 7).", required=False),
-            ],
-        ),
-        trading_snapshot,
-    )
+            trading_snapshot,
+        )
 
     reg.register(
         ToolSchema(
@@ -1010,8 +1015,10 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         ToolSchema(
             name="share_file",
             description=(
-                "Give the user a file you made in this session: a video, image or audio file plays in the chat, "
-                "anything else becomes a download. Use it for finished results such as renders/share.mp4. This is "
+                "Send a file you made in this session to the chat: a video, image or audio file plays in the chat, "
+                "anything else (PDF, spreadsheet, document, archive, code) becomes a download. Call it whenever you "
+                "made a file the user asked for, such as a report, a spreadsheet, a chart or renders/share.mp4, so "
+                "they get the file itself and not only its path. This is "
                 "the only way to show a file: never start a web server, http.server or a tunnel (cloudflared, "
                 "ngrok) to show one, because every command runs in a fresh sandbox and those processes die when "
                 "the command ends."

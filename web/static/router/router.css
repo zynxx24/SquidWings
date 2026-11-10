@@ -135,3 +135,7 @@ textarea { font-family: var(--mono); font-size: 12.5px; resize: vertical; }
 .models-out.ok { color: var(--ok); }
 .models-out.bad { color: var(--err); }
 .badge.default { color: var(--accent); border-color: var(--accent); }
+
+.price-in { width: 84px; padding: 4px 6px; font-variant-numeric: tabular-nums; }
+#price-table td:last-child { white-space: nowrap; }
+.rate { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; white-space: nowrap; }

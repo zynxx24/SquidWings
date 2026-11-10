@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 import httpx
 
 from agent.team_flow import is_valid_table
+from config import credentials
 from config.settings import get_settings
 from utils.logger import get_logger
 
@@ -86,13 +87,12 @@ async def _post_message(client: httpx.AsyncClient, url: str, chat_id: str, text:
 
 async def send_telegram(text: str, chat_id: str = "") -> int:
     """Send a text to a chat. Returns the number of messages it took."""
-    settings = get_settings()
-    token = settings.telegram_bot_token
-    target = chat_id or settings.telegram_chat_id
+    token = credentials.get("telegram_bot_token")
+    target = chat_id or credentials.get("telegram_chat_id")
     if not token:
-        raise OutputError("TELEGRAM_BOT_TOKEN belum diisi di .env")
+        raise OutputError("Bot token Telegram belum diisi. Isi di Tim agent > Kredensial, atau TELEGRAM_BOT_TOKEN di .env.")
     if not target:
-        raise OutputError("Chat ID kosong. Isi di node ini atau TELEGRAM_CHAT_ID di .env")
+        raise OutputError("Chat ID kosong. Isi di node ini, di Tim agent > Kredensial, atau TELEGRAM_CHAT_ID di .env.")
     parts = _split_message(text)
     if not parts:
         raise OutputError("Tidak ada isi untuk dikirim")
@@ -105,7 +105,7 @@ async def send_telegram(text: str, chat_id: str = "") -> int:
 
 async def fetch_telegram_updates(offset: int | None, wait: int = _TELEGRAM_POLL_SECONDS) -> list[dict[str, Any]]:
     """New messages sent to the bot, by long polling. Empty when Telegram is not set up."""
-    token = get_settings().telegram_bot_token
+    token = credentials.get("telegram_bot_token")
     if not token:
         return []
     params: dict[str, Any] = {"timeout": wait, "allowed_updates": '["message"]'}
@@ -164,12 +164,11 @@ async def http_request(method: str, url: str, body: str = "") -> str:
 # ── Databases ─────────────────────────────────────────────────────────────────
 def database_options() -> list[dict[str, Any]]:
     """Which databases can be chosen, and what each still needs."""
-    settings = get_settings()
     options: list[dict[str, Any]] = []
     for database, (label, setting, driver) in _DATABASES.items():
         reason = ""
-        if setting and not getattr(settings, setting):
-            reason = f"Isi {setting.upper()} di .env"
+        if setting and not credentials.get(setting):
+            reason = f"Isi URL-nya di Tim agent > Kredensial, atau {setting.upper()} di .env"
         elif driver != "sqlite3" and importlib.util.find_spec(driver) is None:
             reason = f'Jalankan pip install "{_INSTALL[driver]}"'
         options.append({"id": database, "label": label, "ready": not reason, "reason": reason})
@@ -206,17 +205,52 @@ def _save_sql(driver: Any, connection: Any, table: str, record: dict[str, Any], 
         connection.close()
 
 
+def _check_blocking(database: str) -> None:
+    """Open a connection and close it again. Writes nothing."""
+    if database == "postgres":
+        psycopg = importlib.import_module("psycopg")
+        psycopg.connect(credentials.get("team_db_postgres_url"), connect_timeout=_CONNECT_TIMEOUT).close()
+    elif database == "mysql":
+        pymysql = importlib.import_module("pymysql")
+        parsed = httpx.URL(credentials.get("team_db_mysql_url"))
+        pymysql.connect(host=parsed.host, port=parsed.port or 3306, user=parsed.username, password=parsed.password,
+                        database=parsed.path.lstrip("/"), connect_timeout=_CONNECT_TIMEOUT).close()
+    elif database == "mongodb":
+        pymongo = importlib.import_module("pymongo")
+        client = pymongo.MongoClient(credentials.get("team_db_mongodb_url"), serverSelectionTimeoutMS=_CONNECT_TIMEOUT * 1000)
+        try:
+            client.admin.command("ping")
+        finally:
+            client.close()
+    elif database != "sqlite":
+        raise OutputError(f"Database tidak dikenal: {database}")
+
+
+async def check_database(database: str) -> None:
+    """Can a flow reach this database now? Raises OutputError with a reason that names no secret."""
+    option = next((o for o in database_options() if o["id"] == database), None)
+    if option is None:
+        raise OutputError(f"Database tidak dikenal: {database}")
+    if not option["ready"]:
+        raise OutputError(option["reason"])
+    try:
+        await asyncio.to_thread(_check_blocking, database)
+    except OutputError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the driver's message can hold the URL, so only its type is shown
+        raise OutputError(f"Tidak bisa tersambung ke {option['label']} ({type(exc).__name__})") from None
+
+
 def _save_blocking(database: str, table: str, record: dict[str, Any]) -> None:
-    settings = get_settings()
     if database == "sqlite":
         _save_sqlite(table, record)
     elif database == "postgres":
         psycopg = importlib.import_module("psycopg")
-        connection = psycopg.connect(settings.team_db_postgres_url, connect_timeout=_CONNECT_TIMEOUT)
+        connection = psycopg.connect(credentials.get("team_db_postgres_url"), connect_timeout=_CONNECT_TIMEOUT)
         _save_sql(psycopg, connection, table, record, "BIGSERIAL PRIMARY KEY")
     elif database == "mysql":
         pymysql = importlib.import_module("pymysql")
-        parsed = httpx.URL(settings.team_db_mysql_url)
+        parsed = httpx.URL(credentials.get("team_db_mysql_url"))
         connection = pymysql.connect(
             host=parsed.host, port=parsed.port or 3306, user=parsed.username, password=parsed.password,
             database=parsed.path.lstrip("/"), connect_timeout=_CONNECT_TIMEOUT, charset="utf8mb4",
@@ -224,7 +258,7 @@ def _save_blocking(database: str, table: str, record: dict[str, Any]) -> None:
         _save_sql(pymysql, connection, table, record, "BIGINT AUTO_INCREMENT PRIMARY KEY")
     elif database == "mongodb":
         pymongo = importlib.import_module("pymongo")
-        client = pymongo.MongoClient(settings.team_db_mongodb_url, serverSelectionTimeoutMS=_CONNECT_TIMEOUT * 1000)
+        client = pymongo.MongoClient(credentials.get("team_db_mongodb_url"), serverSelectionTimeoutMS=_CONNECT_TIMEOUT * 1000)
         try:
             client.get_default_database()[table].insert_one(dict(record))
         finally:

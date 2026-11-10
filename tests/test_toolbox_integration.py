@@ -252,6 +252,7 @@ def test_an_awake_google_maps_skill_brings_its_tools(schemas, session):
     assert {"gmaps_import", "places_search"} <= offered
 
 
+@pytest.mark.enterprise
 def test_trading_skill_brings_the_risk_calculators(schemas):
     offered = names(select_tools(schemas, TaskType.ACTIVITY, "analisa posisi xauusd di akun mt4 saya", scaffold_for("x-flash")))
     assert {"trading_snapshot", "position_size", "risk_reward"} <= offered

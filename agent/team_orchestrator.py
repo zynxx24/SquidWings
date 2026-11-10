@@ -40,6 +40,7 @@ from agent.team_outputs import (
     save_to_database,
     send_telegram,
 )
+from config import credentials
 from config.constants import ResponseStatus
 from config.settings import get_settings
 from utils import session_settings, shared_files
@@ -1549,7 +1550,7 @@ class TeamOrchestrator:
 
     async def _telegram_loop(self) -> None:
         while True:
-            if not self._telegram_teams() or not get_settings().telegram_bot_token:
+            if not self._telegram_teams() or not credentials.get("telegram_bot_token"):
                 await asyncio.sleep(TELEGRAM_IDLE_SECONDS)
                 continue
             try:
@@ -1572,7 +1573,7 @@ class TeamOrchestrator:
             pending = await fetch_telegram_updates(-1, wait=0)
             self._telegram_offset = pending[-1]["update_id"] + 1 if pending else 0
         updates = await fetch_telegram_updates(self._telegram_offset, wait=wait)
-        allowed = str(get_settings().telegram_chat_id or "")
+        allowed = credentials.get("telegram_chat_id")
         started: list[str] = []
         for update in updates:
             self._telegram_offset = max(self._telegram_offset, int(update["update_id"]) + 1)

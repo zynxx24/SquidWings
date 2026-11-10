@@ -65,6 +65,18 @@
     <p class="hint">Input sudah termasuk token cached. Cached = dibaca dari cache provider (lebih murah). Request stream tanpa laporan usage tetap dihitung, tanpa token.</p>
   </section>
 
+  <section class="card" aria-labelledby="price-title">
+    <div class="section-head">
+      <div>
+        <h2 id="price-title">Perkiraan biaya</h2>
+        <p class="sub">USD per 1 juta token. Harga bawaan hanya untuk Claude (harga resmi Anthropic). Model lain memakai harga dari daftar model provider bila ada, atau harga yang kamu isi di sini. Reseller sering lebih murah dari harga resmi, jadi isi harga dari tagihanmu.</p>
+      </div>
+      <label class="rate">Kurs USD→IDR <input id="usd-idr" type="number" min="0" step="1" placeholder="mis. 16500" style="width:110px"></label>
+    </div>
+    <div class="table-wrap"><table class="grid" id="price-table"></table></div>
+    <p class="hint" id="price-note">Biaya dihitung: input baru × harga input + cached × harga cache + output × harga output. Bila harga cache kosong: baca cache 10% dan tulis cache 125% dari harga input. Ini perkiraan, tagihan provider tetap angka sebenarnya.</p>
+  </section>
+
   <section class="card" aria-labelledby="prov-title">
     <div class="section-head">
       <div>

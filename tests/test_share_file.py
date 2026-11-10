@@ -85,16 +85,24 @@ def test_command_timeouts_are_capped(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_an_awake_skill_brings_its_tools_on_a_small_model(session: Path) -> None:
-    names = [f"t{i}" for i in range(40)] + ["share_file", "execute_command", "load_skill", "read_file"]
+    names = [f"t{i}" for i in range(40)] + ["share_file", "load_skill", "read_file"]
     schemas = [{"type": "function", "function": {"name": n, "parameters": {"properties": {}}}} for n in names]
     lite = _SCAFFOLDS[Tier.LITE]
 
-    def offered(text: str) -> list[str]:
-        return [s["function"]["name"] for s in tool_select.select_tools(schemas, TaskType.CODE, text, lite)]
+    def offered(text: str, extra: tuple[str, ...] = ()) -> list[str]:
+        more = [{"type": "function", "function": {"name": n, "parameters": {"properties": {}}}} for n in extra]
+        return [s["function"]["name"] for s in tool_select.select_tools(schemas + more, TaskType.CODE, text, lite)]
 
-    assert "share_file" not in offered("lanjutkan panel 3")
+    assert "share_file" not in offered("lanjutkan panel 3"), "nothing here makes a file, so nothing to send"
     session_settings.activate_skills(session, ["animate"])
     assert "share_file" in offered("lanjutkan panel 3")
+
+
+def test_a_tool_that_makes_files_brings_share_file(session: Path) -> None:
+    names = [f"t{i}" for i in range(40)] + ["share_file", "execute_command", "load_skill", "read_file"]
+    schemas = [{"type": "function", "function": {"name": n, "parameters": {"properties": {}}}} for n in names]
+    offered = [s["function"]["name"] for s in tool_select.select_tools(schemas, TaskType.CODE, "lanjutkan panel 3", _SCAFFOLDS[Tier.LITE])]
+    assert "share_file" in offered and "execute_command" in offered
 
 
 async def test_the_loop_puts_shared_files_under_the_answer(session: Path) -> None:

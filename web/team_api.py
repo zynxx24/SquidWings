@@ -7,13 +7,15 @@ from collections.abc import AsyncIterator
 from dataclasses import asdict
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from agent.team_orchestrator import team_templates
-from agent.team_outputs import OutputError, database_options, send_telegram
-from config.settings import get_settings
+from agent.team_outputs import OutputError, check_database, database_options, send_telegram
+from config import credentials
+from web.router_api import admin
 
 router = APIRouter(prefix="/api/teams", tags=["AI teams"])
 
@@ -72,11 +74,79 @@ async def list_templates(request: Request) -> dict[str, Any]:
 async def integrations(request: Request) -> dict[str, Any]:
     """What a flow can deliver to. Says what is set up, never the secrets themselves."""
     service(request)
-    settings = get_settings()
     return {
-        "telegram": {"ready": bool(settings.telegram_bot_token), "default_chat": bool(settings.telegram_chat_id)},
+        "telegram": {"ready": bool(credentials.get("telegram_bot_token")), "default_chat": bool(credentials.get("telegram_chat_id"))},
+        "search": {"brave": bool(credentials.get("brave_search_api_key")), "searxng": bool(credentials.get("searxng_url"))},
         "databases": database_options(),
     }
+
+
+# ---------------------------------------------------------------- credentials (Kredensial tab)
+
+
+@router.get("/credentials")
+async def list_credentials() -> dict[str, Any]:
+    """Every key and ID a flow can use: set or not, from the page or .env. Secrets come back masked."""
+    return credentials.public()
+
+
+class CredentialsInput(BaseModel):
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+@router.put("/credentials", dependencies=[Depends(admin)])
+async def save_credentials(payload: CredentialsInput) -> dict[str, Any]:
+    """Save keys typed on the page. An empty value removes the page's copy, so .env applies again."""
+    try:
+        credentials.get_store().update(payload.values)
+    except credentials.CredentialError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return credentials.public()
+
+
+class CredentialTest(BaseModel):
+    group: str = Field(pattern=r"^(telegram|search|database)$")
+    database: str = Field(default="", max_length=20)
+
+
+async def _test_search() -> list[str]:
+    done = []
+    async with httpx.AsyncClient(timeout=12) as client:
+        key = credentials.get("brave_search_api_key")
+        if key:
+            response = await client.get("https://api.search.brave.com/res/v1/web/search", params={"q": "test", "count": "1"},
+                                        headers={"Accept": "application/json", "X-Subscription-Token": key})
+            if response.status_code != 200:
+                raise OutputError(f"Brave menolak key ini ({response.status_code}).")
+            done.append("Brave")
+        url = credentials.get("searxng_url").rstrip("/")
+        if url:
+            try:
+                response = await client.get(f"{url}/search", params={"q": "test", "format": "json"})
+                response.raise_for_status()
+                response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise OutputError(f"SearXNG tidak menjawab JSON: {type(exc).__name__}. Aktifkan format json di settings.yml.") from None
+            done.append("SearXNG")
+    if not done:
+        raise OutputError("Belum ada key Brave atau URL SearXNG. Tool web search tetap jalan dengan pencarian bawaan.")
+    return done
+
+
+@router.post("/credentials/test", dependencies=[Depends(admin)])
+async def test_credentials(payload: CredentialTest) -> dict[str, Any]:
+    """Try the saved keys for real: a Telegram message, a one-result search, or a database connection."""
+    try:
+        if payload.group == "telegram":
+            await send_telegram("Tes dari SquidWings: Telegram sudah tersambung.")
+            return {"ok": True, "message": "Pesan tes terkirim ke chat Telegram."}
+        if payload.group == "search":
+            done = await _test_search()
+            return {"ok": True, "message": f"{' dan '.join(done)} menjawab."}
+        await check_database(payload.database or "sqlite")
+        return {"ok": True, "message": "Database tersambung."}
+    except OutputError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 class TelegramTest(BaseModel):

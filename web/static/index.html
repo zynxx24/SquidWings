@@ -10,6 +10,7 @@
 <link rel="stylesheet" href="/static/css/highlight.css">
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/team.css">
 <link rel="stylesheet" href="/static/css/soft.css">
 <link rel="stylesheet" href="/static/css/page.css">
 <script src="/static/js/page.js"></script>
@@ -85,60 +86,111 @@
     </section>
 
     <section id="view-team" class="view hidden">
-      <div class="team-bar">
-        <div class="team-bar-group">
-          <select id="team-select" aria-label="Pilih tim"></select>
-          <select id="template-select" aria-label="Mulai dari template"><option value="">Template</option></select>
-          <input id="team-name" placeholder="Nama tim" aria-label="Nama tim">
-          <label class="check" title="Waktu tiap agent sampai 30 menit, untuk membangun dan merender video"><input type="checkbox" id="team-video">Mode video</label>
+      <header class="wf-top">
+        <div class="wf-title">
+          <select id="team-select" class="wf-pick" aria-label="Pilih alur"></select>
+          <input id="team-name" class="wf-name" placeholder="Beri nama alur ini" aria-label="Nama alur" maxlength="100">
+          <span id="wf-dirty" class="wf-dirty hidden" title="Tekan Simpan atau Ctrl+S">Belum disimpan</span>
         </div>
-        <div class="team-bar-group">
-          <select id="add-node" aria-label="Tambah node">
-            <option value="">+ Tambah</option>
-            <option value="agent">Agent</option>
-            <optgroup label="Logika">
-              <option value="gate">Gate IF (AND/OR)</option>
-              <option value="switch">Switch</option>
-              <option value="merge">Merge</option>
-              <option value="delay">Delay</option>
-            </optgroup>
-            <optgroup label="Data">
-              <option value="set">Teks / template</option>
-              <option value="http">HTTP request</option>
-            </optgroup>
-            <optgroup label="Keluaran">
-              <option value="telegram">Telegram</option>
-              <option value="database">Database</option>
-            </optgroup>
-          </select>
-          <button id="flow-schedule" class="btn btn-ghost" type="button">Jadwal</button>
-          <button id="tidy-board" class="btn btn-ghost" type="button">Rapikan</button>
-          <button id="save-team" class="btn btn-ghost">Simpan</button>
-          <button id="delete-team" class="icon-btn btn-danger" aria-label="Hapus tim" title="Hapus tim" data-icon="trash"></button>
+        <nav id="wf-tabs" class="wf-tabs" role="tablist" aria-label="Bagian alur">
+          <button data-tab="editor" class="on" role="tab" aria-selected="true">Editor</button>
+          <button data-tab="runs" role="tab" aria-selected="false">Eksekusi</button>
+          <button data-tab="creds" role="tab" aria-selected="false">Kredensial</button>
+        </nav>
+        <div class="wf-actions">
+          <details id="wf-menu" class="wf-menu">
+            <summary class="icon-btn" aria-label="Menu alur" title="Menu alur">⋯</summary>
+            <div class="wf-menu-list" role="menu">
+              <button id="new-team" type="button" role="menuitem">Alur baru</button>
+              <select id="template-select" aria-label="Mulai dari template"><option value="">Mulai dari template…</option></select>
+              <button id="tidy-board" type="button" role="menuitem">Rapikan tata letak</button>
+              <label class="check" title="Waktu tiap agent sampai 30 menit, untuk membangun dan merender video"><input type="checkbox" id="team-video">Mode video (waktu panjang)</label>
+              <button id="delete-team" type="button" role="menuitem" class="danger">Hapus alur</button>
+            </div>
+          </details>
+          <button id="save-team" class="btn btn-primary" title="Ctrl+S">Simpan</button>
+        </div>
+      </header>
+
+      <div class="wf-body">
+        <div id="wf-editor" class="wf-pane wf-editor">
+          <div id="board" class="board" tabindex="0" aria-label="Kanvas alur. Seret latar untuk menggeser, Ctrl+scroll untuk zoom, Tab untuk menambah node.">
+            <div id="canvas" class="canvas">
+              <svg id="edges" class="edges" width="6000" height="4000" aria-hidden="true">
+                <defs>
+                  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                    <path d="M0 0 10 5 0 10z" class="edge-head"></path>
+                  </marker>
+                </defs>
+                <g id="edge-lines"></g>
+                <path id="edge-draft" class="edge draft hidden"></path>
+              </svg>
+              <div id="nodes" class="nodes"></div>
+              <button id="edge-delete" class="edge-delete hidden" type="button" aria-label="Putus sambungan" title="Putus sambungan (Delete)">×</button>
+            </div>
+            <button id="open-creator" class="wf-plus" type="button" title="Tambah node (Tab)" aria-label="Tambah node"><span data-icon="plus"></span></button>
+            <div class="wf-zoom" role="group" aria-label="Zoom">
+              <button id="zoom-fit" type="button" title="Muat semua (1)" aria-label="Muat semua node">⤢</button>
+              <button id="zoom-out" type="button" title="Perkecil (-)" aria-label="Perkecil">−</button>
+              <span id="zoom-level" class="zoom-level">100%</span>
+              <button id="zoom-in" type="button" title="Perbesar (+)" aria-label="Perbesar">+</button>
+              <button id="zoom-tidy" type="button" title="Rapikan tata letak" aria-label="Rapikan tata letak">⇶</button>
+            </div>
+            <div class="wf-run">
+              <div id="run-info" class="run-info hidden" aria-live="polite"></div>
+              <div id="result" class="prose result hidden"></div>
+              <form id="run-form" class="run-form">
+                <input id="task" placeholder="Tugas atau input untuk alur ini" aria-label="Tugas untuk alur" maxlength="50000">
+                <button id="result-toggle" class="btn btn-ghost hidden" type="button">Hasil</button>
+                <button id="cancel" class="btn btn-ghost hidden" type="button">Batalkan</button>
+                <button id="run" class="btn btn-primary run-btn" type="submit">▶ Jalankan alur</button>
+              </form>
+            </div>
+          </div>
+          <aside id="creator" class="creator hidden" aria-label="Tambah node">
+            <div class="creator-head">
+              <h3>Tambah node</h3>
+              <button id="creator-close" class="icon-btn" type="button" aria-label="Tutup" data-icon="x"></button>
+            </div>
+            <input id="creator-search" class="creator-search" placeholder="Cari node… (Enter memilih yang pertama)" aria-label="Cari node">
+            <p id="creator-context" class="hint creator-context"></p>
+            <div id="creator-list" class="creator-list"></div>
+          </aside>
+        </div>
+
+        <div id="wf-runs" class="wf-pane wf-runs hidden">
+          <div id="runs-list" class="runs-list"></div>
+          <div id="run-detail" class="run-detail"></div>
+        </div>
+
+        <div id="wf-creds" class="wf-pane wf-creds hidden">
+          <div class="creds-wrap">
+            <h2>Kredensial</h2>
+            <p class="hint">Key dan ID untuk Telegram, web search, dan database. Diatur di sini, tidak perlu membuka .env di server.</p>
+            <div id="creds-body" class="creds-body"></div>
+          </div>
         </div>
       </div>
-      <div class="team-body">
-        <div id="board" class="board">
-          <svg id="edges" class="edges" width="1600" height="2000" aria-hidden="true">
-            <defs>
-              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M0 0 10 5 0 10z" class="edge-head"></path>
-              </marker>
-            </defs>
-            <g id="edge-lines"></g>
-          </svg>
-          <div id="nodes" class="nodes"></div>
+
+      <div id="ndv" class="ndv hidden" role="dialog" aria-modal="true" aria-labelledby="ndv-title">
+        <div class="ndv-box">
+          <header class="ndv-head">
+            <span id="ndv-icon" class="node-icon"></span>
+            <div class="ndv-heading"><span id="ndv-kind" class="node-kind"></span><h3 id="ndv-title"></h3></div>
+            <button id="ndv-remove" class="btn btn-ghost btn-danger btn-small" type="button">Hapus node</button>
+            <button id="ndv-close" class="icon-btn" type="button" aria-label="Tutup (Esc)" data-icon="x"></button>
+          </header>
+          <nav id="ndv-tabs" class="ndv-tabs" aria-label="Bagian node">
+            <button data-pane="input" type="button">Input</button>
+            <button data-pane="params" type="button" class="on">Parameter</button>
+            <button data-pane="output" type="button">Output</button>
+          </nav>
+          <div class="ndv-cols">
+            <section class="ndv-col ndv-in"><h4>Input</h4><div id="ndv-input"></div></section>
+            <section class="ndv-col ndv-params"><h4>Parameter</h4><div id="ndv-params"></div></section>
+            <section class="ndv-col ndv-out"><h4>Output</h4><div id="ndv-output"></div></section>
+          </div>
         </div>
-        <aside id="member-panel" class="member-panel" aria-label="Pengaturan agent"></aside>
-      </div>
-      <div class="team-run">
-        <form id="run-form" class="run-form">
-          <input id="task" placeholder="Tugas untuk tim" aria-label="Tugas untuk tim">
-          <button id="run" class="btn btn-primary" type="submit">Jalankan</button>
-          <button id="cancel" class="btn btn-ghost hidden" type="button">Batalkan</button>
-        </form>
-        <div id="run-info" class="run-info"></div>
-        <div id="result" class="prose result hidden"></div>
       </div>
     </section>
 
@@ -177,5 +229,6 @@
 <script src="/static/js/purify.min.js"></script>
 <script src="/static/js/highlight.min.js"></script>
 <script src="/static/js/app.js"></script>
+<script src="/static/js/team.js"></script>
 </body>
 </html>

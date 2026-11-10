@@ -626,3 +626,37 @@ def test_limits_shrink_every_tier_and_turn_off_the_advisor() -> None:
         assert scaffold.context_chars <= 24_000
         assert scaffold.max_tools == 10
         assert scaffold.advisor_calls == 0
+
+
+# --- harness optimisations ------------------------------------------------
+
+
+def test_on_demand_keywords_match_whole_words_only() -> None:
+    from agent.harness.tool_select import _ON_DEMAND_RE
+
+    git = next(pattern for pattern, names in _ON_DEMAND_RE if "git_status" in names)
+    assert git.search("lihat git status") and git.search("commitnya belum masuk")
+    assert not git.search("marketing digital tanpa versi")
+    files = next(pattern for pattern, names in _ON_DEMAND_RE if names == ["extract_files"])
+    assert files.search("baca filenya") and not files.search("lihat profile saya")
+
+
+def test_verifier_runs_only_the_tests_tied_to_the_change(tmp_path) -> None:
+    from agent.harness.verifier import related_tests
+
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pricing.py").write_text("x = 1\n")
+    (tmp_path / "tests" / "test_pricing.py").write_text("from pricing import x\n")
+    (tmp_path / "tests" / "test_other.py").write_text("def test_a(): pass\n")
+    (tmp_path / "tests" / "test_new.py").write_text("def test_b(): pass\n")
+    related = related_tests(tmp_path, [tmp_path / "pricing.py", tmp_path / "tests" / "test_new.py"])
+    assert {p.name for p in related} == {"test_pricing.py", "test_new.py"}
+    assert related_tests(tmp_path, [tmp_path / "lonely.py"]) == [], "nothing tied: the whole suite runs"
+
+
+def test_loop_guard_spots_a_cycle_of_two_calls() -> None:
+    guard = LoopGuard(stuck_after=2)
+    nudges = [guard.observe(n, {"x": 1}, None) for n in ("a", "b", "a", "b", "a", "b")]
+    assert any(n and "berputar" in n for n in nudges)
+    assert sum(1 for n in nudges if n) == 1, "said once"
+    assert guard.needs_help and not guard.give_up

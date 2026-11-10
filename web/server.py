@@ -120,14 +120,19 @@ _TEAMS_ENABLED = get_settings().teams_enabled
 if _TEAMS_ENABLED:
     app.include_router(team_router)
 
-# MT5 trading panel. Its order endpoints stay closed unless MT5_TRADE_TOKEN is set.
-from web.mt5_api import router as mt5_router  # noqa: E402
+# Trading (Enterprise): the MT5 panel, the MT4 EA bridge and the quant API. They are mounted only
+# when the Enterprise module is installed; the community edition has no trading routes at all.
+# The MT5 order endpoints stay closed unless MT5_TRADE_TOKEN is set.
+from config.edition import ENTERPRISE_NOTE, edition, trading_enabled  # noqa: E402
 
-app.include_router(mt5_router)
-from web.mt4_bridge import router as mt4_router  # noqa: E402
+if trading_enabled():
+    from web.mt4_bridge import router as mt4_router
+    from web.mt5_api import router as mt5_router
+    from web.quant_api import router as quant_router
 
-app.include_router(mt4_router)
-from web.quant_api import router as quant_router  # noqa: E402
+    app.include_router(mt5_router)
+    app.include_router(mt4_router)
+    app.include_router(quant_router)
 from web.router_api import router as model_router_api  # noqa: E402
 
 
@@ -148,7 +153,6 @@ from model.router import sync as _router_sync  # noqa: E402
 
 _router_sync.set_registry_sink(_router_models_sink)
 
-app.include_router(quant_router)
 app.include_router(model_router_api)
 
 
@@ -226,6 +230,12 @@ STATIC_DIR = Path(__file__).parent / "static"
 _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 # The pages the chat page opens inside itself, and their files.
 _APP_PAGES = {"trading": STATIC_DIR / "trading" / "index.html", "router": STATIC_DIR / "router" / "index.html"}
+_ENTERPRISE_PAGE = """<!doctype html><html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Trading · Enterprise</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.6 system-ui,sans-serif;
+background:#0f1115;color:#e6e8ee}main{max-width:30rem;padding:2rem;text-align:center}
+h1{font-size:1.2rem;margin:0 0 .5rem}p{color:#a6adbb;margin:0}</style></head>
+<body><main><h1>Trading tersedia di SquidWings Enterprise</h1><p>%s</p></main></body></html>"""
 
 
 def _page(path: Path, headers: dict[str, str]) -> HTMLResponse:
@@ -247,6 +257,10 @@ async def serve_index() -> HTMLResponse:
 @app.get("/trading", response_class=HTMLResponse)
 async def serve_trading(embed: bool = False) -> HTMLResponse:
     """The main page opened on the trading panel. ``?embed=1`` is the panel itself, for its frame."""
+    if not trading_enabled():
+        if not embed:
+            return _shell()
+        return HTMLResponse(content=_ENTERPRISE_PAGE % ENTERPRISE_NOTE, headers={**_NO_CACHE, **embeddable_headers()})
     return _page(_APP_PAGES["trading"], embeddable_headers()) if embed else _shell()
 
 
@@ -654,6 +668,8 @@ async def trading_server_running() -> bool:
 @app.get("/api/trading/panel")
 async def trading_panel(request: Request) -> dict[str, Any]:
     """Which trading panel the chat page shows: the port-80 server's (with the EA data) or this one's."""
+    if not trading_enabled():
+        return {"external": False, "hint": ENTERPRISE_NOTE}
     local = is_loopback_host(request.client.host if request.client else "")
     external = local and await trading_server_running()
     return {
@@ -679,7 +695,7 @@ async def health_check() -> dict[str, Any]:
 async def client_config() -> dict[str, Any]:
     """Feature flags the frontend needs to render its navigation."""
     settings = get_settings()
-    return {"features": {"teams": settings.teams_enabled}}
+    return {"edition": edition(), "features": {"teams": settings.teams_enabled, "trading": trading_enabled()}}
 
 
 @app.get("/api/security")

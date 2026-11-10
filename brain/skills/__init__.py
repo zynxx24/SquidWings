@@ -91,6 +91,11 @@ def _parse(path: Path) -> Skill | None:
     )
     if not fields.get("name"):
         return None
+    if fields.get("edition", "").lower() == "enterprise":
+        from config.edition import trading_enabled
+
+        if not trading_enabled():
+            return None   # an Enterprise skill whose module is not installed
     folder = path.name == "SKILL.md"
     return Skill(
         name=fields["name"],

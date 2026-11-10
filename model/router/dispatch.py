@@ -36,7 +36,10 @@ WAIT_FOR_ACCOUNT_S = 8.0
 MODELS_TIMEOUT_S = 12.0
 MAX_ATTEMPTS = 6
 _NO_RETRY = {400, 404, 413, 422}
-_clients: dict[tuple[str, str, str, int], httpx.AsyncClient] = {}
+# One client per account and per event loop: an httpx client belongs to the loop that opened its
+# connections, and the trading LLM calls from a thread with a loop of its own.
+_clients: dict[tuple[str, str, str, int, int], httpx.AsyncClient] = {}
+_client_loops: dict[tuple[str, str, str, int, int], asyncio.AbstractEventLoop] = {}
 
 
 def _headers(provider: ProviderConfig, key: str) -> dict[str, str]:
@@ -51,7 +54,11 @@ def _headers(provider: ProviderConfig, key: str) -> dict[str, str]:
 
 
 def _client(provider: ProviderConfig, account: Account) -> httpx.AsyncClient:
-    key = (provider.id, account.id, provider.base_url, provider.timeout_s)
+    loop = asyncio.get_running_loop()
+    for stale in [k for k, owner in _client_loops.items() if owner.is_closed()]:
+        _clients.pop(stale, None)      # its loop is gone; the client cannot be used or closed from here
+        _client_loops.pop(stale, None)
+    key = (provider.id, account.id, provider.base_url, provider.timeout_s, id(loop))
     client = _clients.get(key)
     if client is None or client.is_closed:
         client = httpx.AsyncClient(
@@ -61,6 +68,7 @@ def _client(provider: ProviderConfig, account: Account) -> httpx.AsyncClient:
             follow_redirects=True,
         )
         _clients[key] = client
+        _client_loops[key] = loop
     return client
 
 
@@ -310,10 +318,12 @@ def route(model: str) -> ProviderConfig | None:
 
 
 async def close() -> None:
-    for client in list(_clients.values()):
-        if not client.is_closed:
+    loop = asyncio.get_running_loop()
+    for key, client in list(_clients.items()):
+        if not client.is_closed and _client_loops.get(key) in (loop, None):
             await client.aclose()
     _clients.clear()
+    _client_loops.clear()
 
 
 __all__ = ["chat", "chat_stream", "list_models", "route", "close"]

@@ -63,18 +63,35 @@ Setiap request ke model dicatat, termasuk lewat `API_BASE_URL` di `.env` dan `co
 - **Total** = input + output.
 - Request stream yang tidak mengirim laporan usage tetap dihitung sebagai request, tanpa token, dan jumlahnya ditampilkan. Provider OpenAI-compatible di halaman ini otomatis diminta mengirim usage saat streaming (`stream_options.include_usage`).
 
+## Perkiraan biaya
+
+Kartu **Biaya (perkiraan)**, kolom **Biaya** di rincian, dan tooltip grafik menghitung dolar dari token. Kartunya juga menampilkan laju 30 hari, yaitu biaya periode itu dibagi lamanya periode lalu dikali 30. Isi **Kurs USD→IDR** untuk melihat rupiah di samping dolar.
+
+Harga per model (USD per 1 juta token) diambil dari sumber pertama yang tersedia:
+
+| Urutan | Sumber | Keterangan |
+|---|---|---|
+| 1 | Diisi di tabel **Perkiraan biaya** | Selalu menang. Isi dari tagihan reseller-mu |
+| 2 | Daftar `/models` provider | Kalau provider mencantumkan harga, misalnya OpenRouter. Disimpan saat model diambil |
+| 3 | Bawaan | Hanya model Claude, dengan harga resmi Anthropic. Contoh: `claude-opus-5-5` $4/$20, `claude-sonnet-5-5` $2/$10, `claude-haiku-5-5` $0,10/$0,50 |
+| 4 | Gratis | ID yang berakhiran `:free` |
+
+Model tanpa harga tidak dihitung gratis. Kartu menyebut berapa model yang belum punya harga, dan kolom Biaya diberi tanda `*`. Biaya = input baru × harga input + cached × harga cache + output × harga output. Bila harga cache kosong, baca cache dihitung 10% dan tulis cache 125% dari harga input. Ini perkiraan; tagihan provider tetap angka sebenarnya. Harga reseller sering jauh di bawah harga resmi, jadi harga bawaan Claude bisa terlalu tinggi untuk model yang lewat reseller.
+
+`GET /api/router/prices` menampilkan harga yang dipakai tiap model. `POST /api/router/prices` dengan `{"model", "input", "output", "cached"?}` mengisi harga, `{"model", "clear": true}` menghapusnya, dan `{"usd_idr": 16500}` mengisi kurs. Perubahan dari luar komputer ini butuh PIN.
+
 ## Penyimpanan dan keamanan
 
-- Provider dan API key: `web/data/router/providers.json`, izin 0600, tidak ikut git. Log token: `web/data/router/usage.db` (SQLite). Pindahkan dengan `ROUTER_STORE_DIR`. Baris lebih tua dari `ROUTER_USAGE_KEEP_DAYS` (default 400) dihapus.
+- Provider dan API key: `web/data/router/providers.json`, izin 0600, tidak ikut git. Log token: `web/data/router/usage.db` (SQLite). Harga dan kurs: `web/data/router/prices.json`. Pindahkan dengan `ROUTER_STORE_DIR`. Baris lebih tua dari `ROUTER_USAGE_KEEP_DAYS` (default 400) dihapus.
 - Halaman tidak pernah menerima API key utuh, hanya versi tersamar seperti `sk-dem…1111`.
 - Lewat tunnel, halaman bisa dipakai sama seperti di komputer ini, termasuk menambah dan menghapus provider dan key. Karena tunnel tidak punya login, pasang **PIN** di bagian *Keamanan tunnel*: setelah itu perubahan dari luar komputer ini butuh PIN (halaman memintanya sekali per tab, lalu mengirimnya sebagai header `X-Router-Pin`). Dari komputer ini PIN tidak pernah diminta. PIN disimpan sebagai hash PBKDF2 bersalt, bukan teks aslinya. Kosongkan lalu simpan untuk menghapusnya.
 - Tanpa provider di halaman dan tanpa `API_KEY` di `.env`, chat menjawab dengan petunjuk untuk membuka `/router`.
 
 ## Navigasi
 
-Chat, Tim agent, Trading, dan Router & token ada di satu web. Tautan di bawah daftar chat (atau Alt+1 sampai Alt+4) berpindah halaman tanpa meninggalkan chat. Trading dan Router dimuat di dalam halaman utama sekali, lalu tetap hidup, jadi bolak-balik terasa instan, dan polling-nya berhenti selama halamannya tidak ditampilkan. Alamat ikut berubah (`/`, `/trading`, `/router`), jadi tombol Back dan bookmark bekerja, dan `http://127.0.0.1:8080/router` langsung membuka halaman router di dalam web utama. Ctrl+klik membuka halamannya di tab sendiri. Tombol putar di bar atas memuat ulang halaman itu saja.
+Chat, Tim agent, Router & token, dan (di edisi Enterprise) Trading ada di satu web. Tautan di bawah daftar chat (atau Alt+1 sampai Alt+4) berpindah halaman tanpa meninggalkan chat. Trading dan Router dimuat di dalam halaman utama sekali, lalu tetap hidup, jadi bolak-balik terasa instan, dan polling-nya berhenti selama halamannya tidak ditampilkan. Alamat ikut berubah (`/`, `/trading`, `/router`), jadi tombol Back dan bookmark bekerja, dan `http://127.0.0.1:8080/router` langsung membuka halaman router di dalam web utama. Ctrl+klik membuka halamannya di tab sendiri. Tombol putar di bar atas memuat ulang halaman itu saja.
 
-Di komputer ini, panel Trading diambil dari server trading di port 80, karena di sanalah data EA MT4. `python main.py web` menjalankan server itu sendiri bila Linux mengizinkan port 80 (matikan dengan `--no-trading`). Bila belum diizinkan, panel diambil dari server web (cocok untuk backend sim atau MT5, tanpa data EA), dengan pemberitahuan kecil, bukan halaman error. Izinkan port 80 sekali dengan `sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80`, lalu start ulang web.
+Khusus edisi Enterprise: panel Trading diambil dari server trading di port 80, karena di sanalah data EA MT4. `python main.py web` menjalankan server itu sendiri bila Linux mengizinkan port 80 (matikan dengan `--no-trading`). Bila belum diizinkan, panel diambil dari server web (cocok untuk backend sim atau MT5, tanpa data EA), dengan pemberitahuan kecil, bukan halaman error. Izinkan port 80 sekali dengan `sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80`, lalu start ulang web.
 
 Saat memuat, bar tipis di atas halaman berjalan, tombol yang memicu request menampilkan spinner, dan halaman yang baru dibuka menampilkan loader logo dengan cincin berputar. Request yang berulang dalam beberapa detik (polling harga dan status) tidak memunculkan bar. Semua ini ada di `web/static/js/page.js` dan `web/static/css/page.css`, dipakai ketiga halaman.
 
