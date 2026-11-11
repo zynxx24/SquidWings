@@ -293,7 +293,7 @@ Tes bertanda `enterprise` dilewati sendiri bila modul Enterprise tidak terpasang
 
 ## 📜 Lisensi dan pembelian
 
-SquidWings adalah perangkat lunak **berbayar (proprietary)** di bawah SquidWings Commercial License. Kode yang terlihat di repositori ini tidak otomatis boleh dipakai, disalin, atau dijual: hak pakai diperoleh dengan membeli lisensi. Syarat lengkap ada di [LICENSE](LICENSE), dan komponen pihak ketiga di [NOTICE](NOTICE).
+SquidWings adalah perangkat lunak **berbayar (proprietary)** di bawah SquidWings Commercial License. Kode yang terlihat di repositori ini tidak otomatis boleh dipakai, disalin, atau dijual: hak pakai Enterprise diperoleh dengan membeli lisensi. Syarat lengkap ada di [LICENSE](LICENSE), dan komponen pihak ketiga di [NOTICE](NOTICE).
 
 - **Pakai** sesuai jumlah pengguna, instalasi, dan jangka waktu yang dibeli.
 - **Jual beli** lisensi hanya oleh pemilik hak cipta atau penjual resmi yang ditunjuk tertulis.
@@ -301,4 +301,4 @@ SquidWings adalah perangkat lunak **berbayar (proprietary)** di bawah SquidWings
 - **Enterprise** (modul trading) dilisensikan terpisah. Fitur trading tidak menjamin keuntungan.
 - Disediakan **tanpa garansi**. Komponen pihak ketiga (antara lain `animate` dan `humanizer-indonesia`, MIT) memakai lisensinya sendiri.
 
-Pembelian lisensi Community atau Enterprise, perpanjangan, dan izin khusus: **aguswiraw60@gmail.com**.
+Pembelian lisensi Enterprise, perpanjangan, dan izin khusus: **aguswiraw60@gmail.com**.
