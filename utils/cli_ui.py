@@ -54,25 +54,48 @@ def sandbox_label() -> str:
     return f"[green]{backend}[/green] [dim]· {network}[/dim]"
 
 
-def banner(console: Console, *, models: int, providers: list[str], session_id: str, project: Path) -> None:
+def banner(console: Console, *, models: int, providers: list[str], session_id: str, project: Path,
+           chat: str = "") -> None:
+    """The first panel. ``chat`` is the chat's name; a new chat gets it from the AI after its first message."""
     title = Text.assemble(("SquidWings", "bold bright_cyan"), ("  agent untuk semua model", "dim"))
+    named = (f"[bright_white]{escape(chat)}[/bright_white]" if chat
+             else "[bright_white]\\[terminal][/bright_white] [dim]judul ≤28 huruf dibuat AI setelah pesan pertama[/dim]")
     rows = [
+        f"[dim]chat     [/dim]{named}",
+        f"[dim]proyek   [/dim][bright_green]{escape(project.name)}[/bright_green] [dim]{escape(str(project))}[/dim]",
         f"[dim]model    [/dim]{models} model [dim]· {escape(', '.join(providers) or 'tidak ada provider')}[/dim]",
         f"[dim]sandbox  [/dim]{sandbox_label()}",
-        f"[dim]proyek   [/dim][bright_green]{escape(project.name)}[/bright_green] [dim]{escape(str(project))}[/dim]",
-        f"[dim]sesi     [/dim][dim]{escape(session_id)}[/dim]",
         "",
         "[dim]Ketik tugasmu, atau[/dim] [cyan]/tree nama-proyek[/cyan] [dim]untuk pindah proyek ·[/dim] "
-        "[cyan]/model[/cyan] [dim]·[/dim] [cyan]/memory[/cyan] [dim]·[/dim] [cyan]/help[/cyan] [dim]·[/dim] [cyan]exit[/cyan]",
+        "[cyan]/chats[/cyan] [dim]·[/dim] [cyan]/model[/cyan] [dim]·[/dim] [cyan]/memory[/cyan] [dim]·[/dim] "
+        "[cyan]/help[/cyan] [dim]·[/dim] [cyan]exit[/cyan]",
     ]
     console.print(Panel("\n".join(rows), title=title, title_align="left", border_style="bright_cyan", padding=(0, 2)))
 
 
-def context_line(model: str | None, workspace: Path | None) -> str:
+def context_line(model: str | None, workspace: Path | None, chat: str = "") -> str:
     """What applies to the next message, printed above the prompt."""
     short_model = escape((model or "auto").split("/")[-1])
     place = f"[bright_green]{escape(workspace.name)}[/bright_green]" if workspace else "[dim]tanpa proyek[/dim]"
-    return f"[dim]{short_model} ·[/dim] {place}"
+    named = f" [dim]· {escape(chat)}[/dim]" if chat and (not workspace or chat != workspace.name) else ""
+    return f"[dim]{short_model} ·[/dim] {place}{named}"
+
+
+def chats_table(console: Console, chats: list[dict[str, Any]], current: str) -> None:
+    """Recent chats from every place (``[terminal]``, ``[web]``), newest first, numbered for ``/chats <n>``."""
+    if not chats:
+        console.print("[dim]Belum ada chat tersimpan.[/dim]")
+        return
+    lines = []
+    for k, chat in enumerate(chats, 1):
+        mark = "[bright_cyan]●[/bright_cyan]" if chat["session_id"] == current else " "
+        when = time.strftime("%d %b %H:%M", time.localtime(chat.get("updated_at") or 0))
+        lines.append(f"{mark} [bold]{k:>2}[/bold]  {escape(chat['title'])}  "
+                     f"[dim]{chat.get('message_count', 0)} pesan · {when}[/dim]")
+    lines.append("")
+    lines.append("[dim]Lanjutkan chat dengan[/dim] [cyan]/chats <nomor>[/cyan][dim]; proyek aktif tetap sama.[/dim]")
+    console.print(Panel("\n".join(lines), title="Chat terakhir", title_align="left", border_style="bright_cyan",
+                        padding=(0, 1)))
 
 
 def route_line(task_type: str, difficulty: str, model: str) -> str:

@@ -47,7 +47,13 @@ from utils.extract import Image as ExtractedImage
 from utils.helpers import format_tokens, generate_session_id, is_valid_session_id
 from utils.logger import get_logger
 from utils.markdown_compact import compact_markdown, fit_markdown
-from utils.workspace_context import SESSIONS_ROOT, session_workspace
+from utils.session_names import quick_title
+from utils.workspace_context import (
+    forget_session_folder,
+    name_session_folder,
+    reserve_session_name,
+    session_workspace,
+)
 from web.team_api import router as team_router
 
 logger = get_logger(__name__)
@@ -89,6 +95,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info(f"[web] imported {len(imported)} provider(s) from .env into the Router page")
     except Exception as exc:  # noqa: BLE001 - a broken store must not stop the server
         logger.warning(f"[web] .env import into the Router page failed: {exc}")
+    # Folders from before "[web] <title>" naming get their names (once; nothing runs in them yet).
+    try:
+        renamed = await asyncio.to_thread(_name_old_folders)
+        if app.state.team_orchestrator:
+            renamed += await asyncio.to_thread(app.state.team_orchestrator.name_old_folders)
+        if renamed:
+            logger.info(f"[web] named {renamed} old session folder(s) [web]/[team] <title>")
+    except Exception as exc:  # noqa: BLE001 - naming is cosmetic
+        logger.warning(f"[web] naming old folders failed: {exc}")
     # Daily, in the background: keeps graphify and aislop on their latest release.
     from tool.execute.execute_code_intel import tool_updates
 
@@ -749,7 +764,7 @@ async def session_messages(session_id: str) -> dict[str, Any]:
     model_info = None if model == AUTO_MODEL else orch.registry.get(model)
     return {
         "session_id": session_id,
-        "title": meta.get("title", "Chat"),
+        "title": orch.conversation_store.label(session_id),
         "created_at": meta.get("created_at"),
         "updated_at": meta.get("updated_at"),
         "model_used": model,
@@ -791,9 +806,10 @@ async def delete_session(session_id: str) -> dict[str, Any]:
     # The chat's folder holds its vault, graph, memory, and files. Only ever a
     # direct child of the sessions folder, under an id already checked to be plain.
     if is_valid_session_id(session_id):
-        folder = SESSIONS_ROOT / session_id
+        folder = session_workspace(session_id, create=False)
         if folder.is_dir():
             await asyncio.to_thread(shutil.rmtree, folder, ignore_errors=True)
+        forget_session_folder(session_id)
     return {"status": "ok", "session_id": session_id, "deleted": True}
 
 
@@ -951,6 +967,62 @@ async def new_session() -> dict[str, Any]:
 
 # ─── WebSocket Chat ──────────────────────────────────────────────────
 
+def _start_naming(orch: Any, session_id: str, tag: str, message: str) -> asyncio.Task[str | None] | None:
+    """Tag the chat, give its folder a quick name, and ask the AI for a title while the turn runs.
+
+    Naming is cosmetic: any failure here leaves the chat unnamed, never stops the turn.
+    """
+    try:
+        store = orch.conversation_store
+        store.set_source(session_id, tag)
+        if store.needs_ai_title(session_id) is not True:
+            return None
+        first = next((m.content for m in store.get_history(session_id)
+                      if m.role == "user" and str(m.content).strip()), message)
+        reserve_session_name(session_id, tag, quick_title(str(first)))
+        pending = orch.title_for(str(first))
+        return asyncio.ensure_future(pending) if inspect.isawaitable(pending) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[ws] chat naming skipped: {exc}")
+        return None
+
+
+async def _finish_naming(orch: Any, session_id: str, tag: str, task: asyncio.Task[str | None] | None) -> str | None:
+    """After the turn: keep the AI's title and rename the folder to match. Returns the new label."""
+    if task is None:
+        return None
+    try:
+        title = await asyncio.wait_for(task, timeout=5)
+    except Exception:  # noqa: BLE001 - slow or failed: the quick title stays and the next turn asks again
+        task.cancel()
+        return None
+    try:
+        store = orch.conversation_store
+        if isinstance(title, str) and title:
+            store.set_title(session_id, title, ai=True)
+        await asyncio.to_thread(name_session_folder, session_id, tag, str(store.get_session_meta(session_id).get("title", "")))
+        return str(store.label(session_id))
+    except Exception as exc:  # noqa: BLE001 - a folder that cannot be renamed keeps its name
+        logger.debug(f"[ws] chat naming skipped: {exc}")
+        return None
+
+
+def _name_old_folders() -> int:
+    """Give folders made before the naming a ``[web] <title>`` name. Runs once at start, nothing works in them then."""
+    from utils import workspace_context as wc
+
+    store = get_orchestrator().conversation_store
+    names = wc._read_names()
+    done = 0
+    for item in store.list_sessions():
+        sid = item["session_id"]
+        if not is_valid_session_id(sid) or sid in names or not (wc.SESSIONS_ROOT / sid).is_dir():
+            continue
+        if name_session_folder(sid, item.get("source") or "web", item.get("name") or ""):
+            done += 1
+    return done
+
+
 async def _await_turn(websocket: WebSocket, turn: asyncio.Task[Any]) -> None:
     """Wait for a turn while listening, so the user can stop it.
 
@@ -1100,6 +1172,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 q.put_nowait({"type": "thinking", "content": chunk})
 
             start_time = time.time()
+            # "[web] <title>": a quick title now, the AI's own (at most 28 characters) once it answers
+            title_task = _start_naming(orch, session_id, "web", message)
             # This chat's folder, vault, graph, and Ponytail mode.
             session_stack.enter(session_id)
 
@@ -1131,6 +1205,9 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     queue.put_nowait({"type": "content", "content": response.content})
 
                 latency = (time.time() - start_time) * 1000
+                titled = await _finish_naming(orch, session_id, "web", title_task)
+                if titled:
+                    queue.put_nowait({"type": "meta", "event": "title", "session_id": session_id, "title": titled})
                 queue.put_nowait({
                     "type": "done",
                     "model_used": response.model_used,

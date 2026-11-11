@@ -761,6 +761,7 @@
         else if (m.type === 'thinking') turn.thinking(m.content);
         else if (m.type === 'reset') turn.reset();
         else if (m.type === 'progress') turn.progress(m);
+        else if (m.type === 'meta' && m.event === 'title' && m.session_id === S.session) $('chat-title').textContent = m.title;
         else if (m.type === 'done') {
           turn.finish();
           turn.foot({ model: m.model_used, tokens: m.total_tokens, ms: m.latency_ms, harness: m.harness });

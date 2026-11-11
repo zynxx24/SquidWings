@@ -64,7 +64,11 @@ def skill_guidance(user_input: str, task_type: TaskType, max_chars: int) -> tupl
     """
     try:
         if task_type in _NO_SKILLS:
-            return "", []
+            # No playbooks for an image request, but its built-in check (aislop) still comes along.
+            if task_type != TaskType.GENERATE_IMG or max_chars <= 0:
+                return "", []
+            extra = [s for s in skills.companions(user_input, []) if len(s.body) <= max_chars][:1]
+            return ("\n\n" + extra[0].body, [extra[0].name]) if extra else ("", [])
         active = _active_skills(user_input, task_type.value)
         index = skills.index_text(active, task_type.value)
         if not index:
@@ -73,6 +77,8 @@ def skill_guidance(user_input: str, task_type: TaskType, max_chars: int) -> tupl
         chosen: list[str] = []
         parts = [index]
         room = max_chars
+        # Built-in companions (aislop) go first, so the size limit never drops them.
+        selected = sorted(selected, key=lambda skill: not skill.companion)
         for skill in selected:
             if len(skill.body) > room:
                 continue

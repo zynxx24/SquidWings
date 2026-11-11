@@ -36,7 +36,7 @@ _SCAN_EXCLUDES = "graphify-out,.vault,.agent_memory"
 _AISLOP_INSTALL = "aislop is not installed. Install it with: npm install -g aislop"
 _GRAPHIFY_INSTALL = "graphify is not installed. Install it with: uv tool install graphifyy"
 _CODE_SUFFIXES = {
-    ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".rb", ".php", ".cs", ".c", ".h", ".cpp", ".hpp",
+    ".py", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".go", ".rs", ".java", ".rb", ".php", ".cs", ".c", ".h", ".cpp", ".hpp",
 }
 
 

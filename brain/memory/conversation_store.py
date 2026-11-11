@@ -13,6 +13,7 @@ from typing import Any
 
 from utils.helpers import is_valid_session_id
 from utils.logger import get_logger
+from utils.session_names import TAGS, label, quick_title, split_label
 
 logger = get_logger(__name__)
 
@@ -126,6 +127,8 @@ class ConversationStore:
                     "created_at": data.get("created_at") or (messages[0].timestamp if messages else time.time()),
                     "updated_at": data.get("updated_at") or (messages[-1].timestamp if messages else time.time()),
                     "model_used": data.get("model_used") or (messages[-1].model_used if messages else ""),
+                    "source": data.get("source") or "",
+                    "titled": bool(data.get("titled")),
                 }
             except Exception as e:
                 logger.warning(f"[memory] Failed to load session from {file_path}: {e}")
@@ -146,22 +149,20 @@ class ConversationStore:
             return
         try:
             messages = self._sessions.get(session_id, [])
-            meta = self._session_metadata.get(session_id, {})
+            meta = dict(self._session_metadata.get(session_id, {}))
             title = meta.get("title") or self._generate_title(messages)
             created_at = meta.get("created_at") or (messages[0].timestamp if messages else time.time())
             updated_at = meta.get("updated_at") or time.time()
             model_used = meta.get("model_used") or (messages[-1].model_used if messages else "")
 
-            self._session_metadata[session_id] = {
-                "title": title,
-                "created_at": created_at,
-                "updated_at": updated_at,
-                "model_used": model_used,
-            }
+            meta.update(title=title, created_at=created_at, updated_at=updated_at, model_used=model_used)
+            self._session_metadata[session_id] = meta
 
             data = {
                 "session_id": session_id,
                 "title": title,
+                "source": meta.get("source") or "",
+                "titled": bool(meta.get("titled")),
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "model_used": model_used,
@@ -175,13 +176,10 @@ class ConversationStore:
             logger.warning(f"[memory] Failed to save session {session_id}: {e}")
 
     def _generate_title(self, messages: list[Message]) -> str:
-        """Generate a title from the first user message."""
+        """A quick title (at most 28 characters) from the first user message, until the AI names the chat."""
         for m in messages:
             if m.role == "user" and m.content.strip():
-                clean = " ".join(m.content.strip().split())
-                if len(clean) > 42:
-                    return clean[:42] + "..."
-                return clean
+                return quick_title(m.content)
         return "New Chat"
 
     def add_message(
@@ -213,12 +211,11 @@ class ConversationStore:
         now = time.time()
         if session_id not in self._sessions:
             self._sessions[session_id] = []
-            self._session_metadata[session_id] = {
-                "title": "New Chat",
-                "created_at": now,
-                "updated_at": now,
-                "model_used": model_used or "",
-            }
+            meta = self._session_metadata.setdefault(session_id, {})
+            meta.setdefault("title", "New Chat")
+            meta["created_at"] = now
+            meta["updated_at"] = now
+            meta["model_used"] = model_used or meta.get("model_used") or ""
 
         msg = Message(
             role=role,
@@ -328,17 +325,46 @@ class ConversationStore:
                 return False
         return True
 
-    def set_title(self, session_id: str, title: str) -> None:
-        """Set a custom title for a session."""
+    def set_title(self, session_id: str, title: str, *, ai: bool = False) -> None:
+        """Set a session's title. A leading ``[web]``-style tag is dropped: the tag comes from the source.
+
+        ``ai`` marks the title the AI picked, so the chat is not named again. A title the user types
+        counts as final too.
+        """
+        tag, clean = split_label(title)
         meta = self._session_metadata.setdefault(session_id, {
-            "title": title,
+            "title": clean,
             "created_at": time.time(),
             "updated_at": time.time(),
             "model_used": "",
         })
-        meta["title"] = title
-        meta["updated_at"] = time.time()
-        self._save_session(session_id)
+        meta["title"] = clean or meta.get("title") or "New Chat"
+        meta["titled"] = True
+        if tag and not meta.get("source"):
+            meta["source"] = tag
+        if not ai:
+            meta["updated_at"] = time.time()
+        if session_id in self._sessions:
+            self._save_session(session_id)
+
+    def set_source(self, session_id: str, source: str) -> None:
+        """Where the chat happens: ``web``, ``terminal`` or ``team``. Kept from the first time it is set."""
+        meta = self._session_metadata.setdefault(session_id, {
+            "title": "New Chat", "created_at": time.time(), "updated_at": time.time(), "model_used": "",
+        })
+        if not meta.get("source") and source in TAGS:
+            meta["source"] = source
+            if session_id in self._sessions:
+                self._save_session(session_id)
+
+    def needs_ai_title(self, session_id: str) -> bool:
+        """True until the AI (or the user) has named this chat."""
+        return not self._session_metadata.get(session_id, {}).get("titled")
+
+    def label(self, session_id: str) -> str:
+        """``[web] Judul``: the name shown in lists and used for the chat's folder."""
+        meta = self.get_session_meta(session_id)
+        return label(meta.get("source") or "web", meta.get("title") or "New Chat")
 
     def get_session_meta(self, session_id: str) -> dict[str, Any]:
         """Get metadata for a session."""
@@ -375,7 +401,9 @@ class ConversationStore:
 
             results.append({
                 "session_id": sid,
-                "title": title,
+                "title": label(meta.get("source") or "web", title),
+                "name": title,
+                "source": meta.get("source") or "web",
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "message_count": len(messages),

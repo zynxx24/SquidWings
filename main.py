@@ -67,7 +67,7 @@ from utils.cli_formatter import (
 from utils.helpers import format_tokens, generate_session_id
 from utils.logger import get_logger
 from utils.session_settings import PONYTAIL_MODES
-from utils.workspace_context import PROJECTS_ROOT, set_active_ponytail
+from utils.workspace_context import PROJECTS_ROOT, folder_label, set_active_ponytail
 
 logger = get_logger(__name__)
 console = Console()
@@ -870,7 +870,9 @@ def _display_help() -> None:
             ("/md", "Tampilkan ulang jawaban terakhir sebagai Markdown"),
             ("/paste", "Tempel teks beberapa baris"),
         ]),
-        ("Sesi", [
+        ("Chat", [
+            ("/chats", "Chat terakhir: [terminal] dan [web], dengan judul dari AI"),
+            ("/chats <nomor>", "Lanjutkan chat itu di proyek aktif"),
             ("/help, /h, /?", "Bantuan ini"),
             ("clear", "Hapus riwayat obrolan sesi ini"),
             ("exit, quit, q", "Keluar"),
@@ -1251,6 +1253,52 @@ def _remove_if_unused(folder: Path) -> None:
             shutil.rmtree(folder)
 
 
+def _start_terminal_naming(orchestrator: Orchestrator, session_id: str, text: str) -> asyncio.Task[str | None] | None:
+    """Tag the chat ``[terminal]`` and, on its first message, ask a cheap model for a title."""
+    try:
+        store = orchestrator.conversation_store
+        store.set_source(session_id, "terminal")
+        if store.needs_ai_title(session_id) is not True or text.startswith("/"):
+            return None
+        return asyncio.create_task(orchestrator.title_for(text))
+    except Exception as exc:  # noqa: BLE001 - naming must never stop a chat
+        logger.debug(f"[chat_mode] chat naming skipped: {exc}")
+        return None
+
+
+async def _finish_terminal_naming(
+    orchestrator: Orchestrator, session_id: str, task: asyncio.Task[str | None], project: Path | None
+) -> Path | None:
+    """Keep the AI's title and, for a project made for this session, rename it ``[terminal] <title>``.
+
+    Returns the project's new folder, or None when it kept its place.
+    """
+    try:
+        title = await asyncio.wait_for(task, timeout=5)
+    except Exception:  # noqa: BLE001 - slow or failed: the quick title stays, the next message asks again
+        task.cancel()
+        return None
+    store = orchestrator.conversation_store
+    if title:
+        store.set_title(session_id, title, ai=True)
+    if project is None or not project.is_dir():
+        return None
+    name = folder_label("terminal", store.get_session_meta(session_id).get("title", ""))
+    target = project.parent / name
+    k = 1
+    while target.exists() and target.resolve() != project.resolve():
+        k += 1
+        target = project.parent / f"{name} {k}"
+    if target == project:
+        return None
+    try:
+        project.rename(target)
+    except OSError as exc:
+        logger.warning(f"[chat_mode] could not rename project to {target.name}: {exc}")
+        return None
+    return target
+
+
 async def chat_mode(project: str | None = None) -> None:
     """Interactive chat REPL that works inside a project folder from the start.
 
@@ -1302,13 +1350,15 @@ async def chat_mode(project: str | None = None) -> None:
         session_id=session_id,
         project=started_in,
     )
+    conversation_store.set_source(session_id, "terminal")
 
     try:
         while True:
             console.print()
 
             session_stack.enter(session_id, active_workspace)
-            console.print(cli_ui.context_line(override_model, active_workspace))
+            chat_name = "" if conversation_store.needs_ai_title(session_id) else conversation_store.label(session_id)
+            console.print(cli_ui.context_line(override_model, active_workspace, chat_name))
             try:
                 user_input = _read_user_input(cli_ui.PROMPT)
             except (EOFError, KeyboardInterrupt):
@@ -1343,6 +1393,20 @@ async def chat_mode(project: str | None = None) -> None:
                     continue
                 console.print(f"  [dim green]✓ {len(paste_lines)} baris berhasil dimuat. Mengirim ke AI...[/dim green]")
 
+            # Recent chats, and picking one up again
+            elif user_input.lower().split(" ")[0] in ("/chats", "/chat", "/resume"):
+                chats = conversation_store.list_sessions()[:20]
+                _, _, pick = user_input.partition(" ")
+                if pick.strip().isdigit() and 1 <= int(pick) <= len(chats):
+                    session_id = chats[int(pick) - 1]["session_id"]
+                    session_stack.enter(session_id, active_workspace)
+                    console.print(f"[bright_cyan]↺ Melanjutkan {escape(conversation_store.label(session_id))}[/bright_cyan]")
+                elif pick.strip():
+                    console.print(f"[yellow]Tidak ada chat nomor {escape(pick.strip())}. Lihat /chats.[/yellow]")
+                else:
+                    cli_ui.chats_table(console, chats, session_id)
+                continue
+
             # Handle IDE slash commands
             elif user_input.startswith("/"):
                 handled, new_model, new_ws = _handle_ide_command(
@@ -1361,6 +1425,9 @@ async def chat_mode(project: str | None = None) -> None:
                     if new_ws != active_workspace:
                         active_workspace = new_ws
                     continue
+
+            # "[terminal] <title>": the AI names the chat (at most 28 characters) while it answers
+            title_task = _start_terminal_naming(orchestrator, session_id, user_input)
 
             # Process the message
             console.print()
@@ -1391,6 +1458,16 @@ async def chat_mode(project: str | None = None) -> None:
             # Tanpa ini, Enter/karakter yang terketik saat streaming akan
             # langsung dikonsumsi console.input() berikutnya → re-trigger.
             _flush_stdin_buffer()
+
+            if title_task is not None:
+                # Only the folder made for this session is renamed, never a project the user opened.
+                own = started_in if auto_project and active_workspace == started_in else None
+                renamed = await _finish_terminal_naming(orchestrator, session_id, title_task, own)
+                if renamed is not None and active_workspace == started_in:
+                    started_in = active_workspace = renamed
+                    session_stack.enter(session_id, active_workspace)
+                if renamed is not None or not conversation_store.needs_ai_title(session_id):
+                    console.print(f"[dim]🏷  {escape(conversation_store.label(session_id))}[/dim]")
     finally:
         if auto_project:
             _remove_if_unused(started_in)

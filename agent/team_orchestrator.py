@@ -43,10 +43,16 @@ from agent.team_outputs import (
 from config import credentials
 from config.constants import ResponseStatus
 from config.settings import get_settings
-from utils import session_settings, shared_files
+from utils import session_settings, shared_files, workspace_context
 from utils.logger import get_logger
 from utils.markdown_compact import fit_markdown
-from utils.workspace_context import SESSIONS_ROOT
+from utils.session_names import quick_title
+from utils.workspace_context import (
+    forget_session_folder,
+    name_session_folder,
+    reserve_session_name,
+    session_workspace,
+)
 
 logger = get_logger(__name__)
 MAX_TEAM_MEMBERS = 12
@@ -228,6 +234,8 @@ class TeamRun:
     trigger: dict[str, Any] = field(default_factory=dict)
     # The time and size limits this run started with. Empty means the standard ones.
     budget: dict[str, Any] = field(default_factory=dict)
+    # The AI's short title (at most 28 characters); the run's folder is "[team] <title>".
+    title: str = ""
 
     @property
     def finished(self) -> bool:
@@ -820,8 +828,34 @@ class TeamOrchestrator:
             task = self._tasks.pop(run_id, None)
             if task:
                 task.cancel()
-            shutil.rmtree(SESSIONS_ROOT / run_id, ignore_errors=True)
+            shutil.rmtree(session_workspace(run_id, create=False), ignore_errors=True)
+            forget_session_folder(run_id)
         return True
+
+    def name_old_folders(self) -> int:
+        """Give run folders made before the naming a ``[team] <title>`` name. Only at start, when no run works."""
+        done = 0
+        runs = [run for team in self.store.list_teams() for run in self.store.list_runs(team.id)]
+        for run in runs:
+            if not (workspace_context.SESSIONS_ROOT / run.id).is_dir() or not run.finished:
+                continue
+            if name_session_folder(run.id, "team", run.title or quick_title(run.task)):
+                done += 1
+        return done
+
+    async def _name_run(self, run: TeamRun) -> None:
+        """Title the run before its folder is made, so the folder is "[team] <title>" from the start."""
+        if not run.title:
+            title = None
+            ask = getattr(self.orchestrator, "title_for", None)
+            if ask is not None:
+                try:
+                    title = await asyncio.wait_for(ask(run.task), timeout=8)
+                except Exception:  # noqa: BLE001 - the quick title is fine
+                    title = None
+            run.title = title or quick_title(run.task)
+            self.store.put_run(run)
+        reserve_session_name(run.id, "team", run.title)
 
     async def start_run(self, team_id: str, task: str, trigger: dict[str, Any] | None = None) -> TeamRun:
         async with self._lock:
@@ -859,6 +893,7 @@ class TeamOrchestrator:
         run.status = "running"
         run.started_at = time.time()
         self._checkpoint(run, "run_started")
+        await self._name_run(run)
         # Everyone in a run shares one folder, so one agent can read another's files.
         stack = session_stack.enter(run.id)
         self._workspaces[run.id] = Path(stack.workspace)

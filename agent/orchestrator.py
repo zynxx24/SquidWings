@@ -63,6 +63,7 @@ from tool.registry.tool_registry import ToolRegistry
 from utils.exceptions import RateLimitError
 from utils.extract import intent_of
 from utils.logger import get_logger
+from utils.session_names import ai_title
 from utils.workspace_context import get_active_workspace
 
 from .agent_loop import AgentLoop, LoopResult
@@ -223,6 +224,8 @@ class Orchestrator:
         self._distill_every = 3
         self._turn_counts: dict[str, int] = {}
         self._background: set[asyncio.Task[Any]] = set()
+        # Picks a cheap model for small side jobs (chat titles); set by from_settings.
+        self._cheap_model: Callable[[], str | None] | None = None
 
     def _refresh_graph_later(self, workspace: str) -> None:
         """Update this session's code graph without making the user wait for it."""
@@ -308,7 +311,7 @@ class Orchestrator:
             config_path=settings.models_config_path, registry=registry
         )
 
-        return cls(
+        orchestrator = cls(
             api_client=client,
             registry=registry,
             classifier=classifier,
@@ -321,6 +324,12 @@ class Orchestrator:
             tool_registry=register_all_tools(),
             stream_enabled=settings.stream_enabled,
         )
+        orchestrator._cheap_model = cheapest_model
+        return orchestrator
+
+    async def title_for(self, text: str) -> str | None:
+        """A chat title of at most 28 characters from a cheap model, or None (the quick title stays)."""
+        return await ai_title(self._api_client, self._cheap_model, text)
 
     async def process(
         self,

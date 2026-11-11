@@ -126,6 +126,7 @@ tunnel-*.log
 /tests/test_quant_model.py
 /tests/test_scalp.py
 /tests/test_trading_news.py
+/tests/test_trading_playbook.py
 /tests/test_trading_server.py
 /tests/test_trading_snapshot.py
 /tests/test_trading_ui.py

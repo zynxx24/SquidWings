@@ -151,7 +151,7 @@ Pengaturan ada di tiga tempat. Yang di web langsung berlaku tanpa restart.
 | Memori | `HISTORY_SUMMARY_CHARS`, `HISTORY_MAX_TOKENS`, `OBSIDIAN_VAULT_PATH` |
 | Ponytail | `PONYTAIL_MODE`, `PONYTAIL_TASKS` |
 | Tim agent | `TEAM_RUN_SECONDS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TEAM_DB_POSTGRES_URL`, `TEAM_DB_MYSQL_URL`, `TEAM_DB_MONGODB_URL` |
-| Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `UPLOAD_INLINE_CHARS`, `DOCUMENT_OCR`, `OCR_MAX_IMAGES`, `SEND_IMAGES` |
+| Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `UPLOAD_INLINE_CHARS`, `DOCUMENT_OCR`, `OCR_MAX_IMAGES`, `OCR_TIER`, `OCR_IMAGE_S`, `OCR_TOTAL_S`, `SEND_IMAGES` |
 | Alat lokal | `GRAPHIFY_AUTO`, `AISLOP_AUTO`, `TOOLS_AUTO_UPDATE` |
 | Edisi | `ENTERPRISE_TRADING` (`0` mematikan modul Enterprise) |
 
@@ -285,7 +285,7 @@ Tes bertanda `enterprise` dilewati sendiri bila modul Enterprise tidak terpasang
 | Perintah agent ditolak | Pasang bubblewrap atau Docker, lalu jalankan `python main.py doctor` |
 | Koneksi ditolak | Periksa `API_BASE_URL` dan `API_KEY`, lalu jalankan `python main.py health` |
 | Hasil riset kurang lengkap | Pasang SearXNG atau isi `BRAVE_SEARCH_API_KEY` |
-| Gambar atau PDF scan tidak terbaca | Periksa `DOCUMENT_OCR=true`, lalu kirim scan yang lebih tajam |
+| Gambar atau PDF scan tidak terbaca | Periksa `DOCUMENT_OCR=true` dan `pip install -r requirements.txt` (rapidocr). `OCR_TIER=max` untuk scan sangat sulit |
 | Nilai env tidak terbaca | Pindahkan komentar ke baris sendiri |
 | Menu tim tidak muncul | Atur `WEB_TEAMS_ENABLED=true` |
 | Menu Trading tidak ada | Itu fitur Enterprise. Edisi Community memang tidak memuatnya |

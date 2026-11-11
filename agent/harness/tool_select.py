@@ -115,8 +115,11 @@ def _session() -> tuple[list[str], list[str]]:
 
 
 def _skill_tools(user_input: str, active: list[str], task: str) -> list[str]:
-    """Tools an awake contextual skill needs, in this session or woken by this request."""
-    return skills.tools_for([*active, *skills.woken(user_input, task)])
+    """Tools an awake contextual skill needs, in this session or woken by this request, and the tools
+    of the built-in companions (aislop_scan for a web page or a video made in code)."""
+    awake = [*active, *skills.woken(user_input, task)]
+    picked = [s.name for s in skills.select(user_input, active=awake, task=task)]
+    return list(dict.fromkeys(skills.tools_for([*awake, *picked])))
 
 
 def _named(by_name: dict[str, Any], lowered: str, deferred: frozenset[str]) -> list[str]:

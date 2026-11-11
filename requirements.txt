@@ -48,4 +48,5 @@ ruff>=0.5.0                   # Linter & formatter
 mypy>=1.10                    # Type checking
 pdfplumber>=0.11
 pypdfium2>=4
-rapidocr-onnxruntime>=1.4
+rapidocr-onnxruntime>=1.4      # OCR tier "fast": PP-OCRv4 models inside, offline
+rapidocr>=3.10                # OCR tiers "best" and "max": PP-OCRv6 (models fetched once)

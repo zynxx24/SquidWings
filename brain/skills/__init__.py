@@ -22,6 +22,11 @@ an awake contextual skill must be offered, even on a small model's short list.
 From then on it stays active for that session only, so "lanjutkan" does not
 lose it halfway, and other chats never see it.
 
+A skill with ``companion: build-web, animate`` is built in to those works: it is
+always added when one of them is picked, or when its own triggers match, on top
+of the usual limit. ``aislop`` is one: every web page, video or image comes with
+its no-AI-slop check, even on image requests that otherwise get no skills.
+
 The most relevant skills are placed in the prompt automatically, because small
 models rarely ask for help on their own. The rest stay available through the
 ``load_skill`` tool, so they cost one line of prompt until needed. Set SKILLS_DIR
@@ -57,6 +62,8 @@ class Skill:
     # Task types this guide is for. Empty means all. "bingung" in a coding request is not a heart-to-heart.
     tasks: tuple[str, ...] = ()
     tools: tuple[str, ...] = ()
+    # Skills this one always comes with (it is built in to those works); see the module notes.
+    companion: tuple[str, ...] = ()
     # Set for folder skills: where the companion files live, and which guides there are.
     root: Path | None = None
     guides: tuple[str, ...] = field(default=())
@@ -107,6 +114,7 @@ def _parse(path: Path) -> Skill | None:
         context=tuple(c.strip().lower() for c in fields.get("context", "").split(",") if c.strip()),
         tasks=tuple(t.strip().lower() for t in fields.get("tasks", "").split(",") if t.strip()),
         tools=tuple(t.strip() for t in fields.get("tools", "").split(",") if t.strip()),
+        companion=tuple(c.strip() for c in fields.get("companion", "").split(",") if c.strip()),
         root=path.parent if folder else None,
         guides=_guides(path.parent) if folder else (),
     )
@@ -168,7 +176,17 @@ def select(user_input: str, limit: int = 2, active: tuple[str, ...] | list[str] 
         if score:
             scored.append((score, skill))
     scored.sort(key=lambda item: item[0], reverse=True)
-    return [skill for _, skill in scored[:limit]]
+    chosen = [skill for _, skill in scored if not skill.companion][:limit]
+    return chosen + companions(text, [skill.name for skill in chosen])
+
+
+def companions(text: str, picked: list[str]) -> list[Skill]:
+    """Built-in skills that come with this work: a picked skill they accompany, or their own trigger."""
+    lowered = text.lower()
+    return [
+        s for s in load_all().values()
+        if s.companion and (set(s.companion) & set(picked) or _score(s, lowered))
+    ]
 
 
 def tools_for(active: tuple[str, ...] | list[str]) -> list[str]:
