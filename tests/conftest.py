@@ -20,6 +20,7 @@ os.environ["MT4_RECORD_TICKS"] = "0"     # bridge tests must not write into trad
 os.environ["TRADE_NEWS_AUTO"] = "0"      # proposals must not fetch the live economic calendar
 os.environ["QUANT_WORKER"] = "0"          # keep backtests in the test process
 os.environ["DOCUMENT_OCR"] = "false"      # each image would be a model call
+os.environ["AUTO_UPDATE"] = "false"       # tests must not pull from GitHub or restart
 os.environ["SEND_IMAGES"] = "false"       # a developer .env with SEND_IMAGES=true must not change upload tests
 os.environ["TOOLS_AUTO_UPDATE"] = "false"   # no network or global installs during tests
 # Learned model stats must not land in the real .agent_memory: every test run would add fake failures.

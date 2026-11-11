@@ -55,7 +55,7 @@ from security import sandbox
 from security.web_access import is_loopback_host
 from tool.execute.execute_edit_change_file.file_editor import FileEditor
 from tool.execute.execute_local_memory import user_profile
-from utils import cli_ui
+from utils import cli_ui, repo_update
 from utils.cli_formatter import (
     SESSION_CODE_TRACKER,
     TerminalFormatConfig,
@@ -1299,6 +1299,10 @@ async def _finish_terminal_naming(
     return target
 
 
+# Notices from the background update check, shown before the next prompt (not mid-typing).
+_update_notices: list[str] = []
+
+
 async def chat_mode(project: str | None = None) -> None:
     """Interactive chat REPL that works inside a project folder from the start.
 
@@ -1359,6 +1363,8 @@ async def chat_mode(project: str | None = None) -> None:
             session_stack.enter(session_id, active_workspace)
             chat_name = "" if conversation_store.needs_ai_title(session_id) else conversation_store.label(session_id)
             console.print(cli_ui.context_line(override_model, active_workspace, chat_name))
+            while _update_notices:
+                console.print(_update_notices.pop(0))
             try:
                 user_input = _read_user_input(cli_ui.PROMPT)
             except (EOFError, KeyboardInterrupt):
@@ -1788,7 +1794,12 @@ Examples:
   python main.py web --tunnel             Web GUI with optional public tunnel
   python main.py web --replace            Stop the SquidWings already on the port, then start
   python main.py trading --tunnel         Trading panel + MT4 bridge (Enterprise edition)
+  python main.py --no-update web          Start without pulling the newest code from GitHub
         """,
+    )
+    parser.add_argument(
+        "--no-update", action="store_true",
+        help="Do not pull the newest commits from GitHub at start (AUTO_UPDATE=false does the same)",
     )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -1850,6 +1861,13 @@ Examples:
     )
 
     args = parser.parse_args()
+
+    if not args.no_update:
+        # Fast-forward to GitHub's newest commit, then restart on it (only when something changed).
+        repo_update.update_at_start(console.print)
+        if args.command in ("chat", "web", None):
+            notify = console.print if args.command == "web" else _update_notices.append
+            repo_update.start_background(notify)
 
     if args.command == "chat" or args.command is None:
         _run_async(chat_mode, getattr(args, "project", None))
