@@ -23,7 +23,7 @@ from . import playbooks
 logger = get_logger(__name__)
 
 _MIN_QUERY_CHARS = 12
-_NO_SKILLS = frozenset({TaskType.MATH, TaskType.GENERATE_IMG, TaskType.MULTIMODAL})
+_NO_SKILLS = frozenset({TaskType.MATH, TaskType.MULTIMODAL})
 
 
 async def _vault_notes(query: str) -> str:
@@ -64,11 +64,7 @@ def skill_guidance(user_input: str, task_type: TaskType, max_chars: int) -> tupl
     """
     try:
         if task_type in _NO_SKILLS:
-            # No playbooks for an image request, but its built-in check (aislop) still comes along.
-            if task_type != TaskType.GENERATE_IMG or max_chars <= 0:
-                return "", []
-            extra = [s for s in skills.companions(user_input, []) if len(s.body) <= max_chars][:1]
-            return ("\n\n" + extra[0].body, [extra[0].name]) if extra else ("", [])
+            return "", []
         active = _active_skills(user_input, task_type.value)
         index = skills.index_text(active, task_type.value)
         if not index:

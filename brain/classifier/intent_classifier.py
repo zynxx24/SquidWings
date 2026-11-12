@@ -26,6 +26,37 @@ _COMPLEX_RE = re.compile(
 )
 
 
+# A page, app or slide is built in code, and "this picture" already exists: neither asks for a new image.
+_MADE_IN_CODE = re.compile(
+    r"(?<![a-z0-9])(?:landing\s*page|website|web|webapp|halaman|page|ui|ux|dashboard|css|html|svg|frontend|"
+    r"komponen|component|aplikasi|app|slide|slides|pptx|powerpoint|presentasi|figma|wireframe|mockup|template)"
+    r"(?![a-z0-9])"
+)
+_EXISTING_IMAGE = re.compile(
+    r"(?<![a-z0-9])(?:(?:gambar|foto|image|picture|screenshot|logo)(?:nya)?\s+(?:ini|itu|tersebut|this|that|saya|aku|ku)|"
+    r"di\s+(?:pdf|dokumen|file)|dari\s+(?:gambar|foto)|baca|read|edit|ubah|crop|resize|kompres|compress|"
+    r"hapus\s+background|remove\s+background|perbaiki|analisis|jelaskan)(?![a-z0-9])"
+)
+
+
+def not_a_new_picture(text: str) -> bool:
+    """True when an "image" request is really UI work or about a picture that already exists."""
+    lowered = text.lower()
+    return bool(_MADE_IN_CODE.search(lowered) or _EXISTING_IMAGE.search(lowered))
+
+
+def _second_choice(result: ClassificationResult) -> ClassificationResult:
+    """The best other task type, or ACTIVITY (which has file tools) when there is none."""
+    others = {k: v for k, v in result.all_scores.items() if k != TaskType.GENERATE_IMG.value and v > 0}
+    if others:
+        best = max(others, key=lambda k: others[k])
+        task, confidence = TaskType(best), others[best]
+    else:
+        task, confidence = TaskType.ACTIVITY, result.confidence
+    return ClassificationResult(task, round(confidence, 3), result.all_scores,
+                                [*result.matched_rules, f"guard:not_a_new_picture->{task.value}"])
+
+
 class IntentClassifier:
     """Classifies user input into a TaskType.
 
@@ -77,6 +108,8 @@ class IntentClassifier:
 
         # Step 3: Score and combine
         result = self.scorer.score(keyword_matches, pattern_matches)
+        if result.task_type == TaskType.GENERATE_IMG and not_a_new_picture(user_input):
+            result = _second_choice(result)
 
         # Step 4: Log and return
         logger.info(
@@ -108,6 +141,8 @@ class IntentClassifier:
             ]
             return result
 
+        if refined is not None and refined.task_type == TaskType.GENERATE_IMG and not_a_new_picture(user_input):
+            refined = _second_choice(refined)
         if refined is not None and refined.confidence >= result.confidence:
             refined.matched_rules = [
                 *result.matched_rules,

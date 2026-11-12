@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
 import inspect
 import io
 import json
@@ -41,7 +42,7 @@ from security import sandbox
 from security.headers import embeddable_headers, shell_headers
 from security.web_access import WebSecurityMiddleware, is_loopback_host, set_public_mode
 from tool.execute.execute_code_intel import quality_tools
-from utils import local_ocr, shared_files
+from utils import daily_brief, local_ocr, shared_files
 from utils.extract import DOCUMENT_SUFFIXES, Extracted, extract, save_images
 from utils.extract import Image as ExtractedImage
 from utils.helpers import format_tokens, generate_session_id, is_valid_session_id
@@ -112,11 +113,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # sync. In the background: a slow provider must not delay startup.
     sync_task = asyncio.create_task(_startup_sync())
     refresh_task = asyncio.create_task(_model_refresh_loop())
+    brief_task = asyncio.create_task(_brief_loop())
     if app.state.team_orchestrator:
         app.state.team_orchestrator.start_scheduler()
     yield
     sync_task.cancel()
     refresh_task.cancel()
+    brief_task.cancel()
     await shutdown_event()
 
 
@@ -320,6 +323,21 @@ async def _model_refresh_loop() -> None:
             await ensure_models(force=True)
         except Exception as exc:  # noqa: BLE001 - a failed sync keeps the last good list
             logger.warning(f"[web] scheduled model refresh failed: {exc}")
+
+
+async def _brief_loop() -> None:
+    """Write the daily brief when the server starts and again at BRIEF_TIME every day."""
+    if not daily_brief.enabled():
+        return
+    first = True
+    while True:
+        try:
+            store = get_orchestrator().conversation_store
+            await asyncio.to_thread(daily_brief.ensure_today, store, None, None, force=not first)
+        except Exception as exc:  # noqa: BLE001 - a brief is a nicety; the server must not care
+            logger.warning(f"[web] daily brief failed: {exc}")
+        first = False
+        await asyncio.sleep(daily_brief.seconds_until(daily_brief.brief_time()) + 1)
 
 
 async def _startup_sync() -> None:
@@ -744,6 +762,23 @@ async def session_stats(session_id: str) -> dict[str, Any]:
     orch.session_manager.get_or_create_session(session_id)
     stats = orch.session_manager.get_session_stats(session_id)
     return stats
+
+
+@app.get("/api/brief")
+async def get_brief(refresh: bool = False) -> dict[str, Any]:
+    """Today's brief: what happened since yesterday and what is still hanging."""
+    store = get_orchestrator().conversation_store
+    brief = await asyncio.to_thread(daily_brief.ensure_today, store, None, None, force=refresh)
+    return {"enabled": daily_brief.enabled(), "brief": brief, "markdown": daily_brief.render(brief),
+            "shown": not daily_brief.due(channel="web")}
+
+
+@app.post("/api/brief/seen")
+async def brief_seen() -> dict[str, Any]:
+    """The page showed today's brief; it stays closed until tomorrow's."""
+    day = dt.datetime.now().astimezone().strftime("%Y-%m-%d")
+    daily_brief.mark_seen(day, channel="web")
+    return {"ok": True, "day": day}
 
 
 @app.get("/api/sessions")

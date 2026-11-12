@@ -20,6 +20,7 @@
     menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
     clip: '<path d="m21 11-9.2 9.2a6 6 0 0 1-8.5-8.5l8.6-8.5a4 4 0 0 1 5.7 5.6l-8.6 8.5a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
     send: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+    mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
     stop: '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/>',
     team: '<circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 5a3.2 3.2 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6"/>',
     chat: '<path d="M4 5h16v11H9l-5 4z"/>',

@@ -41,7 +41,7 @@ Repositori ini berisi **SquidWings Community**: harness, chat, tim agent, toolbo
 
 | | Community (repo ini) | Enterprise |
 |---|:---:|:---:|
-| Chat terminal dan web, tim agent, toolbox 124 tool | ✅ | ✅ |
+| Chat terminal dan web, tim agent, toolbox 127 tool | ✅ | ✅ |
 | Execution harness, router model, sandbox, keamanan | ✅ | ✅ |
 | Panel trading `/trading`, chart, dan tiket order | — | ✅ |
 | Jembatan EA MT4 dan adapter MT5 | — | ✅ |
@@ -62,7 +62,7 @@ Lisensi Enterprise: lihat [Lisensi dan pembelian](#-lisensi-dan-pembelian).
 | 📄 Baca dokumen | Teks dan gambar dari PDF, Office, EPUB, ZIP, dan scan, lalu agent menentukan langkahnya |
 | 🔌 Provider bebas | Cukup URL dan API key dari endpoint yang kompatibel dengan OpenAI. Daftar model diambil otomatis |
 | 🧠 Execution harness | Verifikasi hasil, deteksi loop, perbaikan argumen tool, dan eskalasi ke model lebih kuat |
-| 🧰 Toolbox | 124 tool tepat (hitung, tanggal, satuan, tabel, uang, peta, cuaca, kurs, kalkulator risiko, Office, PDF) yang tersembunyi sampai dibutuhkan |
+| 🧰 Toolbox | 127 tool tepat (hitung, tanggal, satuan, tabel, uang, peta, cuaca, kurs, kalkulator risiko, Office, PDF, voice-over ElevenLabs) yang tersembunyi sampai dibutuhkan |
 | 📑 Buat dokumen | Word, PowerPoint, Excel, CSV, dan PDF yang rapi, langsung muncul di chat untuk diunduh |
 | 🗺️ Google Maps | Impor hasil scrape, saring dan rangking tempat, jarak, dan ekspor ke Excel atau GeoJSON |
 | 👥 Tim agent | Kanvas alur seperti n8n: delay, gate OR, jadwal, Telegram, dan database |
@@ -153,6 +153,7 @@ Pengaturan ada di tiga tempat. Yang di web langsung berlaku tanpa restart.
 | Tim agent | `TEAM_RUN_SECONDS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TEAM_DB_POSTGRES_URL`, `TEAM_DB_MYSQL_URL`, `TEAM_DB_MONGODB_URL` |
 | Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `UPLOAD_INLINE_CHARS`, `DOCUMENT_OCR`, `OCR_MAX_IMAGES`, `OCR_TIER`, `OCR_IMAGE_S`, `OCR_TOTAL_S`, `SEND_IMAGES` |
 | Alat lokal | `GRAPHIFY_AUTO`, `AISLOP_AUTO`, `TOOLS_AUTO_UPDATE` |
+| Suara dan brief | `VOICE_LANG`, `VOICE_STT_MODEL`, `ELEVENLABS_API_KEY`, `DAILY_BRIEF`, `BRIEF_TIME` |
 | Edisi | `ENTERPRISE_TRADING` (`0` mematikan modul Enterprise) |
 
 </details>
@@ -221,7 +222,11 @@ python main.py health                   # cek koneksi API
 python main.py doctor                   # uji isolasi sandbox
 ```
 
-Perintah di dalam `chat`: `/model`, `/stack`, `/ponytail`, `/memory`, `/sandbox`, `/status`, dan `/help`.
+Perintah di dalam `chat`: `/model`, `/stack`, `/ponytail`, `/memory`, `/chats`, `/brief`, `/voice`, `/sandbox`, `/status`, dan `/help`.
+
+**Suara.** `/voice` merekam lewat mikrofon (perlu `arecord` atau `parecord`), mengubahnya jadi teks, lalu menampilkan hasilnya: Enter untuk kirim, atau ketik perbaikan. Pengenal suara memakai `faster-whisper` bila terpasang (lokal), kalau tidak `SpeechRecognition`, yang mengirim audio ke layanan online Google. `/voice on` membacakan jawaban dengan ElevenLabs (butuh API key dan `ffplay` atau `mpv`); `/voice status` menunjukkan apa yang sudah siap. Di Web UI ada tombol mikrofon di kotak pesan dan tombol *Bacakan* di bawah jawaban; keduanya memakai fitur suara browser, jadi tidak butuh key, dan pesan tidak pernah terkirim sendiri.
+
+**Brief harian.** Sekali sehari agent merangkum chat sejak kemarin: yang dikerjakan, file yang dibuat atau diubah, dan yang masih menggantung (pesan belum dijawab, pertanyaan untukmu, langkah gagal). Terminal menampilkannya saat start pertama hari itu, Web UI sebagai kartu di halaman kosong, dan `/brief` kapan saja. Dibuat dengan aturan biasa tanpa memanggil model, disimpan di `.agent_memory/briefs/`.
 
 ## 📎 Mengunggah dokumen
 
@@ -274,7 +279,10 @@ uv tool install graphifyy    # graph kode
 ```bash
 bash scripts/check_all.sh        # ruff, mypy, compile, pytest, import
 python -m pytest -m "not live"   # lewati tes yang memanggil API asli
+python -m tests.routing_eval     # akurasi routing: jenis tugas, skill, dan tool per prompt
 ```
+
+Kasus routing ada di `tests/eval_data/*.json`; menambah prompt tidak perlu menyentuh kode. Kasus bertanda `"gap": true` adalah kekurangan yang sudah diketahui: tesnya gagal-yang-diharapkan, jadi saat diperbaiki tes memintamu menghapus tandanya.
 
 Tes bertanda `enterprise` dilewati sendiri bila modul Enterprise tidak terpasang. Jangan pernah meng-commit `.env`: key disimpan di sana, dan `.env.example` hanya berisi contoh.
 

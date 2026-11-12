@@ -2,7 +2,7 @@
 name: jawab-tugas
 description: Answer homework and assignments in a natural human voice, correct first, with no AI-sounding filler.
 tasks: school_task, activity, reason
-triggers: tugas, pr, makalah, esai, essay, skripsi, laporan, resume, rangkuman, ringkasan, rangkum, ringkas, jelaskan, jelasin, pengertian, apa itu, soal, ujian, ulangan, kuis, materi, sekolah, kuliah, dosen, guru, sebutkan, uraikan, analisis, opini, paragraf, karangan, parafrase, homework, assignment
+triggers: tugas, pr, makalah, esai, essay, skripsi, laporan praktikum, laporan magang, laporan pkl, laporan buku, resume, rangkuman, ringkasan, rangkum, ringkas, jelaskan, jelasin, pengertian, apa itu, soal, ujian, ulangan, kuis, materi, sekolah, kuliah, dosen, guru, sebutkan, uraikan, analisis, opini, paragraf, karangan, parafrase, homework, assignment
 ---
 # Answering schoolwork like a person
 

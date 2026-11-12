@@ -60,7 +60,7 @@ def test_the_page_never_gets_a_secret_back():
     assert fields["telegram_bot_token"]["masked"] == "…mmnn" and fields["telegram_bot_token"]["set"]
     assert "AAbb" not in str(credentials.public())
     assert fields["telegram_chat_id"]["masked"] == "42", "an ID is not a secret"
-    assert {g["key"] for g in credentials.public()["groups"]} == {"telegram", "search", "database"}
+    assert {g["key"] for g in credentials.public()["groups"]} == {"telegram", "search", "voice", "database"}
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,9 @@
 """Looks for generated office files, so two documents in a row never come out the same.
 
 Each theme is a palette, a pair of fonts, and the shape of its title and slides. With no
-theme asked for, a tool takes one this chat has not used lately, at random, and says which
-it took, so files of one set (a report and its slides) can share it on purpose.
+theme asked for, a tool takes one that neither this chat nor the other recent chats used
+lately, at random, and says which it took, so files of one set (a report and its slides)
+can share it on purpose.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ import json
 import random
 from dataclasses import dataclass
 from pathlib import Path
+
+from utils import style_history
 
 from . import _files
 
@@ -59,6 +62,22 @@ THEMES: dict[str, Theme] = {t.name: t for t in (
           "Corbel", "Calibri", "plain", "dots", "FFFAFC"),
     Theme("klasik", "Klasik (hitam dan marun)", "1A1A1A", "7B1E3A", "F2F2F2", "1A1A1A",
           "Times New Roman", "Times New Roman", "rule", "bar", "FFFFFF"),
+    Theme("zaitun", "Zaitun (hijau zaitun dan karamel)", "556B2F", "B07D3B", "F3F1E6", "262A1E",
+          "Rockwell", "Franklin Gothic Book", "side", "corner", "FBFAF4"),
+    Theme("biru-tinta", "Tinta biru (biru tua dan jingga)", "14213D", "E8871E", "EEF0F5", "14213D",
+          "Bahnschrift", "Segoe UI", "band", "bar", "FFFFFF"),
+    Theme("rempah", "Rempah (cabai dan kunyit)", "A23E48", "C98C0A", "FBF1E3", "2E1F1A",
+          "Book Antiqua", "Gill Sans MT", "rule", "top", "FFFCF6"),
+    Theme("arsip", "Arsip (hijau tua dan sepia)", "3E4E3A", "9C6B30", "F1EBDD", "2A2620",
+          "Bookman Old Style", "Lucida Sans", "plain", "frame", "FAF6EC"),
+    Theme("es", "Es (biru baja dan biru muda)", "2E5E8C", "5DA9D6", "EAF3FA", "1E2A36",
+          "Gill Sans MT", "Segoe UI", "side", "dots", "FCFEFF"),
+    Theme("tropis", "Tropis (toska dan jingga)", "0F7173", "F05D23", "E9F5F2", "1C2B2D",
+          "Franklin Gothic Demi", "Calibri", "band", "corner", "FFFFFF"),
+    Theme("tinta-merah", "Cetak merah (merah poster dan hitam)", "C1121F", "1B1B1E", "F6E8EA", "1B1B1E",
+          "Impact", "Arial", "plain", "side", "FFFFFF"),
+    Theme("gelap-emas", "Malam emas (gelap dan emas)", "D4AF37", "A6785C", "262421", "EDEAE2",
+          "Garamond", "Gill Sans MT", "rule", "frame", "141414", dark=True),
 )}
 # For school and campus papers: black headings, no colour, Times New Roman.
 FORMAL = Theme("formal", "Formal akademik (hitam putih)", "000000", "333333", "F2F2F2", "000000",
@@ -111,10 +130,12 @@ def pick(requested: str | None, workspace_path: str | None, *, formal_hint: bool
     elif key in RANDOM_WORDS and formal_hint:
         theme = FORMAL
     else:
-        recent = set(_recent(workspace_path))
-        fresh = [t for t in THEMES.values() if t.name not in recent] or list(THEMES.values())
+        recent = set(_recent(workspace_path)) | set(style_history.recent("office"))
+        fresh = [t for t in THEMES.values() if t.name not in recent] or [
+            t for t in THEMES.values() if t.name not in set(_recent(workspace_path))] or list(THEMES.values())
         theme = (rng or random.SystemRandom()).choice(fresh)
     remember(theme.name, workspace_path)
+    style_history.remember("office", theme.name)
     return theme
 
 

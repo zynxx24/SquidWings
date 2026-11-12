@@ -278,3 +278,33 @@ def test_a_video_run_needs_a_shared_video_file(tmp_path):
     shared_files.add(tmp_path, "renders/share.mp4")
     assert TeamOrchestrator._has_video(tmp_path) is True
 
+
+
+def test_every_template_can_be_created_and_every_worker_knows_its_job(tmp_path: Path) -> None:
+    manager, _ = make(tmp_path)
+    templates = team_templates(["prov/gemini-flash", "prov/claude-sonnet", "prov/claude-opus"])
+    assert len(templates) >= 16 and len({t["key"] for t in templates}) == len(templates)
+    for template in templates:
+        team = manager.create_team(template["name"], template["description"], template["members"], template["lead_id"],
+                                   template["reviewer_id"], template.get("schedule"), template.get("mode", "standard"))
+        assert team.members, template["key"]
+        for m in template["members"]:
+            if m.get("kind", "agent") == "agent" and m["id"] != template["reviewer_id"]:
+                assert m["instructions"].strip(), (template["key"], m["id"])
+
+
+def test_visual_templates_ask_for_a_fresh_direction() -> None:
+    templates = {t["key"]: t for t in team_templates(["m"])}
+    for key in ("web-studio", "deck-studio", "content-week"):
+        assert any("style_pick" in m.get("instructions", "") for m in templates[key]["members"]), key
+
+
+def test_bug_hunt_gate_reads_only_the_last_line() -> None:
+    from agent.team_flow import check_condition
+
+    gate = next(m for m in next(t for t in team_templates(["m"]) if t["key"] == "bug-hunt")["members"] if m["id"] == "check")
+    rule = {"mode": "regex", "value": gate["config"]["value"]}
+    from datetime import datetime
+
+    assert check_condition(rule, "Tes: 12 passed\nSEMUA TES LULUS", datetime.now()) is True
+    assert check_condition(rule, "Baris terakhir harus 'SEMUA TES LULUS' bila lulus.\nMASIH GAGAL: 2 failed", datetime.now()) is False

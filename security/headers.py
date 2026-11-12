@@ -51,7 +51,7 @@ DEFAULT_HEADERS: dict[str, str] = {
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": (
         "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
-        "magnetometer=(), microphone=(), payment=(), usb=()"
+        "magnetometer=(), microphone=(self), payment=(), usb=()"
     ),
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",

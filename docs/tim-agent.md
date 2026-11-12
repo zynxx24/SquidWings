@@ -77,6 +77,18 @@ Template yang tersedia:
 - **Bot Telegram serba bisa**: berjalan saat kamu mengirim pesan ke bot. Switch memilah `/jadwal`, `/cuaca`, dan `/catat`, pesan lain dijawab agent umum, lalu balasan dikirim ke chat yang sama.
 - **Studio video animasi**: mode video, dari naskah sampai video yang bisa diputar di hasil tim.
 - **Asisten sehari-hari**: mencari fakta nyata, jeda, gate, menulis jawaban, lalu mengirim ke Telegram dan menyimpan ke database.
+- **Bangun dan verifikasi**, **Riset dan tulis**, **Pendapat kedua**: tiap agent kini punya instruksi kerja sendiri, bukan hanya nama peran.
+- **Studio landing page**: brief dengan arah gaya baru dari `style_pick`, copy tanpa kata pengisi, HTML/CSS mobile-first, QA (aislop dan 360px), lead memperbaiki, reviewer menilai. Tiap run tampil beda.
+- **Presentasi siap pakai**: riset, alur slide dengan tata letak yang berganti sesuai isi, lalu PowerPoint dengan tema yang belum dipakai di chat lain.
+- **Konten media sosial seminggu**: tren, kalender 7 hari, caption, tiga poster satu seri, semuanya dirangkum ke Excel.
+- **Buru bug sampai tes lulus**: reproduksi, akar masalah, perbaikan dengan tes regresi; gate membaca baris terakhir laporan, dan bila tes masih gagal model terkuat turun tangan.
+- **Keputusan lewat debat**: fakta, lalu pendukung, penentang, dan analis risiko paralel; hakim menulis memo keputusan.
+- **Ringkasan berita pagi**: tiap 06:30, berita 24 jam terakhir untuk topikmu, ke Telegram dan database.
+- **Laporan dan makalah rapi**: kerangka, riset bersumber, file Word (formal untuk sekolah dan kampus), pemeriksa klaim.
+- **Naskah dan voice-over**: naskah per baris, pemilihan suara, MP3 lewat ElevenLabs; tanpa key tetap dapat naskah dan cara menyambungkan.
+- **Pantau harga dan beri tanda**: tiap jam harga dari dua sumber dicatat; bila target tercapai, kabar lewat Telegram.
+
+Setiap agent pekerja menutup laporannya dengan **Hasil**, **Bukti**, dan **Belum pasti**. Lead memeriksa file yang disebut laporan sebelum memakainya, dan reviewer ikut mencari tanda AI slop pada karya visual.
 
 ## Kredensial
 
@@ -86,6 +98,7 @@ Tab **Kredensial** mengatur key dan ID tanpa membuka `.env` di server:
 |---|---|---|
 | Telegram | Bot token (dari @BotFather) dan Chat ID | Mengirim pesan tes ke chat itu |
 | Web search | Brave Search API key dan URL SearXNG, dipakai tool web search agent | Satu pencarian berisi satu hasil |
+| ElevenLabs (suara) | API key dan Voice ID bawaan, dipakai `voice_list` dan `voice_speak` | Mengambil daftar suara dan sisa kuota, tanpa memakai karakter |
 | Database | URL PostgreSQL, MySQL, dan MongoDB | Membuka koneksi lalu menutupnya, tanpa menulis apa pun |
 
 Untuk tahu Chat ID-mu, kirim pesan ke bot lalu buka `https://api.telegram.org/bot<TOKEN>/getUpdates`.

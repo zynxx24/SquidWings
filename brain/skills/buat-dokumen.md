@@ -5,7 +5,7 @@ tasks: activity, school_task, reason
 triggers: docx, ms word, file word, format word, dokumen word, bentuk word, ke word, jadi word, word nya, ppt, pptx, powerpoint, power point, presentasi, slide, slides, excel, xlsx, spreadsheet, lembar kerja, csv, pdf, file dokumen, bentuk file, dalam bentuk file
 scope: contextual
 context: buat, buatkan, bikin, bikinin, bikinkan, jadikan, ubah, ubahkan, convert, simpan, export, ekspor, kirim, kirimkan, download, unduh, file, format, template, rapikan, susun, siapkan, generate, make, create
-tools: doc_create, slides_create, sheet_create, office_to_pdf, share_file, table_convert
+tools: doc_create, slides_create, sheet_create, office_to_pdf, share_file, table_convert, style_pick
 ---
 # Membuat dokumen jadi
 

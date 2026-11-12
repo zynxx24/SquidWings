@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     # Search APIs, tried before the public result pages. Much better results.
     searxng_url: str = ""
     brave_search_api_key: str = Field(default="", repr=False)
+
+    # --- Voice (ElevenLabs) ---
+    elevenlabs_api_key: str = Field(default="", repr=False)
+    elevenlabs_voice_id: str = ""
     # Render JavaScript-only pages in a local headless Chrome or Chromium.
     web_browser_enabled: bool = True
     web_search_timeout_seconds: float = 15.0

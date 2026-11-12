@@ -102,10 +102,10 @@ KEYWORD_RULES: dict[TaskType, list[tuple[str, float]]] = {
     ],
     TaskType.GENERATE_IMG: [
         # Indonesian
+        # "desain"/"design" alone is not here: "desain landing page" is UI work made in code.
         ("gambar", 0.8),
         ("buat gambar", 0.95),
         ("generate gambar", 0.95),
-        ("desain", 0.7),
         ("ilustrasi", 0.85),
         ("logo", 0.7),
         ("foto", 0.6),
@@ -114,7 +114,6 @@ KEYWORD_RULES: dict[TaskType, list[tuple[str, float]]] = {
         ("create image", 0.95),
         ("draw", 0.8),
         ("illustration", 0.85),
-        ("design", 0.6),
         ("picture", 0.7),
     ],
     TaskType.REASON: [

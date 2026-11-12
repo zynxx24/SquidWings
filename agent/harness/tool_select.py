@@ -31,7 +31,11 @@ _BY_TASK: dict[TaskType, list[str]] = {
     TaskType.MATH: ["calc", "execute_command", "solve_equation", "stats_describe", "unit_convert", "fraction"],
     TaskType.REASON: ["web_research", "web_read", "read_file", "vault_recall", "load_skill"],
     TaskType.MULTIMODAL: ["read_file", "web_read"],
-    TaskType.GENERATE_IMG: [],
+    # No image model here: a picture is drawn in code (SVG, HTML or canvas), rendered, and shared.
+    TaskType.GENERATE_IMG: [
+        "style_pick", "file_write", "execute_command", "share_file", "read_file", "load_skill", "file_patch",
+        "media_convert", "web_research", "list_directory",
+    ],
 }
 
 # How many of the task's tools always make the cut. A mention of "memory" must
@@ -148,9 +152,6 @@ def select_tools(
     """
     by_name = {s.get("function", {}).get("name", ""): s for s in schemas}
     by_name = {name: s for name, s in by_name.items() if name and name not in disabled}
-
-    if task_type == TaskType.GENERATE_IMG:
-        return []
 
     lowered = user_input.lower()
     deferred = execute_toolbox.deferred_names()

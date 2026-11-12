@@ -18,9 +18,11 @@ from . import (  # noqa: F401 - importing registers the tools in the catalog
     geo_maps_tools,
     math_tools,
     office_tools,
+    style_tools,
     text_encode_tools,
     trading_live_tools,
     units_time_tools,
+    voice_tools,
 )
 from .catalog import CATALOG, GROUPS, groups_line, match, search
 

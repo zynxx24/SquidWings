@@ -21,6 +21,7 @@ os.environ["TRADE_NEWS_AUTO"] = "0"      # proposals must not fetch the live eco
 os.environ["QUANT_WORKER"] = "0"          # keep backtests in the test process
 os.environ["DOCUMENT_OCR"] = "false"      # each image would be a model call
 os.environ["AUTO_UPDATE"] = "false"       # tests must not pull from GitHub or restart
+os.environ["DAILY_BRIEF"] = "false"       # the start-up brief would write into the developer's real .agent_memory
 os.environ["SEND_IMAGES"] = "false"       # a developer .env with SEND_IMAGES=true must not change upload tests
 os.environ["TOOLS_AUTO_UPDATE"] = "false"   # no network or global installs during tests
 # Learned model stats must not land in the real .agent_memory: every test run would add fake failures.
@@ -29,6 +30,7 @@ import tempfile as _tempfile  # noqa: E402
 os.environ["MODEL_STATS_PATH"] = os.path.join(_tempfile.mkdtemp(prefix="model-stats-"), "stats.json")
 # Router providers and the token log must not touch the real web/data/router.
 os.environ["ROUTER_STORE_DIR"] = _tempfile.mkdtemp(prefix="router-store-")
+os.environ["STYLE_HISTORY_FILE"] = os.path.join(_tempfile.mkdtemp(prefix="style-history-"), "h.json")  # looks used, across chats
 os.environ["ROUTER_IMPORT_ENV"] = "0"      # the server's start-up must not copy .env endpoints into it
 
 import pytest

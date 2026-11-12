@@ -12,7 +12,9 @@ from config.constants import TaskType
 # Ordered by specificity (most specific first)
 PATTERNS: list[tuple[str, TaskType, float]] = [
     # Code patterns
-    (r"(?:buat|tulis|generate|create|write)\s+(?:kode|code|program|script|fungsi|function|class)", TaskType.CODE, 0.95),
+    # "write a function", "buatkan fungsi", "create a simple script": an article and one describing word may come between.
+    (r"\b(?:buat|buatkan|bikin|bikinin|tulis|tuliskan|generate|create|write)\s+(?:(?:an?|the|sebuah|satu)\s+)?(?:\w+\s+)?"
+     r"(?:kode|code|program|script|fungsi|function|class)\b", TaskType.CODE, 0.95),
     (r"(?:debug|fix|perbaiki)\s+(?:bug|error|kode|code)", TaskType.CODE, 0.9),
     (r"(?:refactor|optimize|optimasi)\s+(?:kode|code)", TaskType.CODE, 0.85),
     (r"```\w+\n", TaskType.CODE, 0.8),  # Contains code block
@@ -34,8 +36,8 @@ PATTERNS: list[tuple[str, TaskType, float]] = [
     (r"(?:ujian|ulangan|kuis|quiz)\s+(?:tentang|about|materi)", TaskType.SCHOOL_TASK, 0.85),
 
     # Image patterns
-    (r"(?:buat|generate|create)\s+(?:gambar|image|foto|picture|ilustrasi)", TaskType.GENERATE_IMG, 0.95),
-    (r"(?:desain|design)\s+(?:logo|banner|poster|icon)", TaskType.GENERATE_IMG, 0.85),
+    (r"(?:buat|buatkan|bikin|generate|create|make|draw)\s+(?:(?:an?|sebuah)\s+)?(?:gambar|image|foto|picture|ilustrasi|illustration)", TaskType.GENERATE_IMG, 0.95),
+    (r"(?:desain|design|buat|buatkan|bikin|create|make)\s+(?:(?:an?|sebuah)\s+)?(?:logo|banner|poster|icon|ikon)", TaskType.GENERATE_IMG, 0.85),
 
     # Multimodal patterns
     (r"(?:lihat|analisis|analyze)\s+(?:gambar|image|foto|picture)\s+(?:ini|this)", TaskType.MULTIMODAL, 0.9),

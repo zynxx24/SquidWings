@@ -1,7 +1,7 @@
 """Keys and IDs for the flow's integrations, set on the web page instead of in ``.env``.
 
 The team page's Kredensial tab writes here: the Telegram bot and chat, web search (Brave and
-SearXNG), and the database URLs a flow can save to. Every reader asks ``get(name)``: a value
+SearXNG), the ElevenLabs voice key, and the database URLs a flow can save to. Every reader asks ``get(name)``: a value
 typed on the page wins, else the one from ``.env`` (``Settings``), else empty. Nothing needs a
 restart: the Telegram poller, the search tool and the database node read it on every use.
 
@@ -46,6 +46,12 @@ FIELDS: tuple[Field, ...] = (
           "Dari api-dashboard.search.brave.com. Ada paket gratis.", r"[A-Za-z0-9_-]{10,200}", "BSA..."),
     Field("searxng_url", "URL SearXNG", "search", False, "SEARXNG_URL",
           "Instance SearXNG milikmu, dengan format JSON aktif.", r"https?://\S{3,300}", "http://127.0.0.1:8888"),
+    Field("elevenlabs_api_key", "ElevenLabs API key", "voice", True, "ELEVENLABS_API_KEY",
+          "Dari elevenlabs.io → Developers → API Keys. Ada paket gratis. Dipakai tool voice_speak untuk voice-over.",
+          r"[A-Za-z0-9_-]{20,200}", "sk_..."),
+    Field("elevenlabs_voice_id", "Voice ID bawaan", "voice", False, "ELEVENLABS_VOICE_ID",
+          "Opsional. Suara yang dipakai bila agent tidak memilih. Lihat daftarnya dengan tool voice_list.",
+          r"[A-Za-z0-9]{10,40}", "21m00Tcm4TlvDq8ikWAM"),
     Field("team_db_postgres_url", "PostgreSQL URL", "database", True, "TEAM_DB_POSTGRES_URL",
           "", r"postgres(ql)?://\S{3,500}", "postgresql://user:pass@host:5432/db"),
     Field("team_db_mysql_url", "MySQL URL", "database", True, "TEAM_DB_MYSQL_URL",
@@ -57,6 +63,7 @@ BY_KEY = {f.key: f for f in FIELDS}
 GROUPS = {
     "telegram": {"label": "Telegram", "description": "Kirim hasil ke Telegram dan jalankan alur dari pesan Telegram."},
     "search": {"label": "Web search", "description": "Sumber pencarian untuk tool web search agent. Tanpa ini memakai pencarian bawaan."},
+    "voice": {"label": "ElevenLabs (suara)", "description": "Voice-over dan text to speech. Tanpa ini tool suara menjelaskan cara menyambungkannya."},
     "database": {"label": "Database", "description": "Tujuan node Database. SQLite lokal selalu tersedia tanpa diisi."},
 }
 

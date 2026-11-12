@@ -72,3 +72,31 @@ def test_csp_allows_only_self_scripts() -> None:
     assert "'unsafe-inline'" not in directive[0]
     assert "'unsafe-eval'" not in directive[0]
     assert "'self'" in directive[0]
+
+
+def test_voice_script_and_mic_button_are_wired(index_html: str) -> None:
+    assert "/static/js/voice.js" in _SCRIPT_SRC.findall(index_html)
+    assert 'id="mic"' in index_html
+    # The button stays hidden until the browser proves it can recognise speech.
+    assert re.search(r'id="mic"[^>]*class="[^"]*\bhidden\b', index_html)
+
+
+def test_microphone_is_allowed_for_this_site_only() -> None:
+    from security.headers import DEFAULT_HEADERS
+
+    policy = DEFAULT_HEADERS["Permissions-Policy"]
+    assert "microphone=(self)" in policy
+    for blocked in ("camera=()", "geolocation=()", "usb=()", "payment=()"):
+        assert blocked in policy
+
+
+def test_voice_script_never_sends_the_message_by_itself() -> None:
+    source = (STATIC / "js" / "voice.js").read_text(encoding="utf-8")
+    assert ".submit" not in source and "requestSubmit" not in source and "getElementById('send')" not in source
+
+
+def test_brief_card_is_wired_and_built_without_innerhtml(index_html: str) -> None:
+    assert "/static/js/brief.js" in _SCRIPT_SRC.findall(index_html)
+    assert re.search(r'id="brief"[^>]*class="[^"]*\bhidden\b', index_html)
+    source = (STATIC / "js" / "brief.js").read_text(encoding="utf-8")
+    assert "innerHTML" not in source, "the brief holds text from chats: build it with textContent"

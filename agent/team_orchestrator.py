@@ -456,6 +456,12 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
         "- Setiap hari 12:00 makan siang, 21:30 siapkan barang untuk besok, 22:30 tidur\n\n"
         "Catatan hari ini: {{task}}"
     )
+    evidence = "Tulis apa yang benar-benar dijalankan dan keluarannya, bukan apa yang seharusnya terjadi."
+
+    def visual(medium: str) -> str:
+        return (f"Panggil style_pick(medium='{medium}', subject=<topik dan brand dari tugas>) dulu dan pakai arahnya "
+                "persis: palet, font, tata letak, motif. Tulis nama arahnya dan kenapa cocok. Jangan memakai gaya bawaan.")
+
     from_agenda = (
         "Ambil jadwal hanya dari [AGENDA] di laporan sebelumnya, jangan mengarang kegiatan. "
         "Pakai time_now untuk memastikan hari dan jam. "
@@ -604,10 +610,22 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
             "name": "Bangun dan verifikasi",
             "description": "Model murah merencanakan, membangun, dan menguji. Model kuat menilai hasilnya.",
             "members": [
-                member("planner", "Perencana", "Memecah tugas menjadi langkah kecil yang bisa dicek", mid),
-                member("builder", "Pembangun", "Menulis kode dan file sesuai rencana", lite, "planner"),
-                member("tester", "Penguji", "Menjalankan hasilnya dan melaporkan yang benar-benar rusak", lite, "builder"),
-                member("lead", "Lead", "Memperbaiki temuan penguji dan menulis jawaban akhir", mid),
+                {**member("planner", "Perencana", "Memecah tugas menjadi langkah kecil yang bisa dicek", mid),
+                 "instructions": (
+                     "Baca dulu file yang ada (project_overview, list_directory, read_file) sebelum merencanakan. "
+                     "Tulis plan.md: tujuan satu kalimat, file yang akan diubah atau dibuat, 3-7 langkah kecil yang "
+                     "masing-masing bisa dicek dengan satu perintah, dan perintah tes yang membuktikan selesai.")},
+                {**member("builder", "Pembangun", "Menulis kode dan file sesuai rencana", lite, "planner"),
+                 "instructions": (
+                     "Ikuti plan.md langkah demi langkah. Baca file sebelum mengubahnya, ubah sekecil mungkin "
+                     "(file_patch), dan jalankan perintah cek setiap langkah. Jangan meninggalkan stub atau TODO.")},
+                {**member("tester", "Penguji", "Menjalankan hasilnya dan melaporkan yang benar-benar rusak", lite, "builder"),
+                 "instructions": (
+                     "Jalankan tes dan perintah dari plan.md, lalu coba satu kasus tepi yang belum dites. Laporkan "
+                     "hanya yang benar-benar gagal, dengan perintah, keluaran persis, dan file:baris. "
+                     f"{evidence}")},
+                {**member("lead", "Lead", "Memperbaiki temuan penguji dan menulis jawaban akhir", mid),
+                 "instructions": "Perbaiki setiap temuan penguji di file, jalankan tesnya lagi, dan sebutkan hasil tes terakhir."},
                 member("reviewer", "Reviewer", "Memeriksa hasil terhadap tugas secara independen", top),
             ],
             "lead_id": "lead",
@@ -618,9 +636,18 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
             "name": "Riset dan tulis",
             "description": "Dua peneliti bekerja paralel, penulis menyatukan, pemeriksa fakta memverifikasi.",
             "members": [
-                member("sources", "Pencari sumber", "Mencari sumber utama dan fakta penting", lite),
-                member("analyst", "Analis", "Mencari argumen tandingan dan celah", lite),
-                member("writer", "Penulis", "Menyatukan riset menjadi satu jawaban yang jelas", mid),
+                {**member("sources", "Pencari sumber", "Mencari sumber utama dan fakta penting", lite),
+                 "instructions": (
+                     "Pakai web_research dan web_read. Utamakan sumber primer (data resmi, jurnal, dokumen asli). "
+                     f"Untuk tiap fakta: kalimatnya, angka, tanggal, dan URL. {real_answers}")},
+                {**member("analyst", "Analis", "Mencari argumen tandingan dan celah", lite),
+                 "instructions": (
+                     "Cari pendapat yang berlawanan, data yang tidak cocok, dan batasan studi. Untuk tiap celah: "
+                     "apa klaimnya, kenapa diragukan, dan sumbernya.")},
+                {**member("writer", "Penulis", "Menyatukan riset menjadi satu jawaban yang jelas", mid),
+                 "instructions": (
+                     "Jawab pertanyaannya di paragraf pertama. Setiap klaim memakai sumber dari laporan, ditandai [1], [2], "
+                     "dengan daftar sumber di akhir. Sebut juga yang masih diperdebatkan.")},
                 member("checker", "Pemeriksa fakta", "Mencocokkan klaim dengan sumbernya", top),
             ],
             "lead_id": "writer",
@@ -631,11 +658,273 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
             "name": "Pendapat kedua",
             "description": "Model murah menjawab, model kuat memeriksa. Cara termurah menangkap kesalahan.",
             "members": [
-                member("worker", "Pekerja", "Mengerjakan tugas dan menunjukkan alasannya", lite),
+                {**member("worker", "Pekerja", "Mengerjakan tugas dan menunjukkan alasannya", lite),
+                 "instructions": "Tunjukkan langkah dan alasannya. Pakai tool untuk hitungan, tanggal, dan fakta, bukan perkiraan."},
                 member("reviewer", "Reviewer", "Mencari kesalahan dan meminta perbaikan", top),
             ],
             "lead_id": "worker",
             "reviewer_id": "reviewer",
+        },
+        {
+            "key": "web-studio",
+            "name": "Studio landing page",
+            "description": (
+                "Brief dan arah gaya baru tiap kali, copy tanpa basa-basi, halaman HTML/CSS siap buka, QA aislop "
+                "dan 360px, lalu lead memperbaiki dan reviewer menilai. Tiap run tampil beda."
+            ),
+            "members": [
+                {**member("brief", "Penyusun brief", "Tujuan, pengunjung, isi halaman, dan arah gaya", mid),
+                 "instructions": (
+                     f"Tulis site/brief.md: tujuan halaman, siapa pengunjungnya, satu aksi utama, urutan bagian, dan "
+                     f"konten nyata dari permintaan (tanpa angka, testimoni, atau logo karangan). {visual('web')}")},
+                {**member("copy", "Penulis copy", "Teks setiap bagian halaman", lite, "brief"),
+                 "instructions": (
+                     "Tulis site/copy.md untuk setiap bagian di brief, dalam bahasa user. Headline menyebut apa yang "
+                     "dijual atau dilakukan, bukan pujian. Tanpa kata pengisi seperti 'Tingkatkan', 'Solusi terbaik', "
+                     "'Di era digital', 'Unlock', 'Seamless'. Satu ajakan utama, ditulis spesifik.")},
+                {**member("builder", "Pembangun halaman", "Membangun HTML dan CSS dari brief dan copy", mid, "brief", "copy"),
+                 "instructions": (
+                     "Buat site/index.html dan site/style.css: HTML semantik, mobile-first dari 360px, warna sebagai "
+                     "variabel CSS dari palet di brief, font dari fonts_css di brief, tata letak dan motif sesuai arah "
+                     "gaya (bukan hero tengah + tiga kartu). Jalankan aislop_scan pada site/ dan perbaiki temuannya, "
+                     f"lalu share_file site/index.html. {evidence}")},
+                {**member("qa", "QA", "Memeriksa halaman terhadap brief dan tanda AI slop", lite, "builder"),
+                 "instructions": (
+                     "Baca site/index.html dan style.css. Cek: setiap bagian brief ada, tidak ada lorem ipsum atau angka "
+                     "karangan, kontras teks cukup, gambar punya alt, tidak ada lebar tetap yang membuat scroll "
+                     "samping di 360px, warna dan font sesuai brief, tanda slop dari skill aislop. Jalankan aislop_scan. "
+                     "Laporkan tiap masalah dengan file:baris dan perbaikannya.")},
+                {**member("lead", "Lead", "Memperbaiki temuan QA dan menyerahkan halaman", mid),
+                 "instructions": (
+                     "Perbaiki setiap temuan QA langsung di file, jalankan aislop_scan sekali lagi, dan share_file "
+                     "site/index.html. Jawaban: arah gaya dan alasannya satu kalimat, isi halaman, skor aislop, dan yang dicek.")},
+                member("reviewer", "Reviewer desain", "Menilai halaman terhadap permintaan dan tanda AI slop", top),
+            ],
+            "lead_id": "lead",
+            "reviewer_id": "reviewer",
+        },
+        {
+            "key": "deck-studio",
+            "name": "Presentasi siap pakai",
+            "description": (
+                "Riset fakta, alur slide dengan tata letak yang berganti sesuai isi, lalu file PowerPoint dengan tema "
+                "yang belum dipakai di chat lain. Reviewer memeriksa isi dan tampilannya."
+            ),
+            "members": [
+                {**member("research", "Peneliti", "Fakta, angka, dan contoh untuk presentasi", mid),
+                 "instructions": f"8-12 poin fakta untuk topik ini, masing-masing dengan angka atau contoh nyata. {real_answers}"},
+                {**member("outline", "Penyusun alur", "Alur slide dan catatan pembicara", lite, "research"),
+                 "instructions": (
+                     "Susun 8-12 slide sebagai cerita: pembuka yang menyebut masalah, isi, dan penutup berupa langkah "
+                     "berikutnya (bukan 'Terima kasih' atau 'Ada pertanyaan?'). Tiap slide: judul yang berupa kalimat "
+                     "kesimpulan, layout yang cocok dengan isinya (title, section, bullets, two_column, table, image) "
+                     "dan tidak sama berturut-turut, maksimal 4 poin pendek, dan catatan pembicara 2-3 kalimat.")},
+                {**member("designer", "Desainer slide", "Membuat file PowerPoint dari alur", mid),
+                 "instructions": (
+                     f"{visual('slides')} Buat file dengan slides_create dari alur di laporan, pakai theme=office_theme "
+                     "dari style_pick, slide pertama layout title. File akan muncul di chat. Jawaban: nama file, tema, "
+                     "jumlah slide, dan ringkasan isi per slide.")},
+                member("reviewer", "Reviewer", "Memeriksa fakta, alur, dan tampilan slide", top),
+            ],
+            "lead_id": "designer",
+            "reviewer_id": "reviewer",
+        },
+        {
+            "key": "content-week",
+            "name": "Konten media sosial seminggu",
+            "description": (
+                "Riset tren dan audiens, kalender 7 hari, caption, tiga desain poster satu seri dengan gaya baru, "
+                "lalu semuanya dirangkum dalam satu file Excel."
+            ),
+            "members": [
+                {**member("trend", "Peneliti tren", "Audiens, topik yang sedang dicari, dan contoh konten yang berhasil", mid),
+                 "instructions": f"Cari apa yang dibicarakan audiens ini sekarang. Beri 7 ide konten dengan alasan masing-masing. {real_answers}"},
+                {**member("planner", "Perencana konten", "Kalender 7 hari", lite, "trend"),
+                 "instructions": (
+                     "Pakai time_now untuk tanggal mulai besok. Susun 7 hari: tanggal, pilar konten, format (feed, "
+                     "carousel, reels, story), hook kalimat pertama, dan ajakan. Variasikan format dan pilar.")},
+                {**member("copywriter", "Copywriter", "Caption tiap post", lite, "planner"),
+                 "instructions": (
+                     "Tulis caption untuk tiap hari: hook di baris pertama, isi 2-4 kalimat, ajakan spesifik, dan "
+                     "maksimal 5 hashtag yang relevan. Suara brand dari permintaan, tanpa kata pengisi dan emoji berlebihan.")},
+                {**member("designer", "Desainer poster", "Tiga poster satu seri", mid, "planner"),
+                 "instructions": (
+                     f"{visual('image')} Satu arah gaya untuk seluruh seri. Buat 3 poster SVG 1080x1350 di konten/ untuk "
+                     "tiga post terpenting, dengan hook-nya sebagai teks. Render ke PNG bila bisa (execute_command), "
+                     "lalu share_file. Sebut nama file per hari.")},
+                {**member("lead", "Manajer konten", "Menyatukan kalender, caption, dan desain", mid),
+                 "instructions": (
+                     "Buat kalender-konten.xlsx dengan sheet_create: tanggal, format, pilar, hook, caption, hashtag, file "
+                     "desain. Jawaban: ringkasan minggu ini dan file yang dibuat.")},
+                member("reviewer", "Reviewer", "Memeriksa kesesuaian brand, fakta, dan tanda AI slop", top),
+            ],
+            "lead_id": "lead",
+            "reviewer_id": "reviewer",
+        },
+        {
+            "key": "bug-hunt",
+            "name": "Buru bug sampai tes lulus",
+            "description": (
+                "Reproduksi error, cari akar masalah, perbaiki dengan tes regresi. Gate memeriksa tes: kalau masih "
+                "gagal, model terkuat turun tangan."
+            ),
+            "members": [
+                {**member("repro", "Pereproduksi", "Mereproduksi error dengan perintah yang pasti", lite),
+                 "instructions": (
+                     "Jalankan tes atau perintah yang memunculkan error. Laporkan perintah, keluaran persis, dan "
+                     "file:baris yang terlibat. Kalau tidak bisa direproduksi, katakan begitu dan apa yang sudah dicoba.")},
+                {**member("cause", "Analis akar masalah", "Menemukan penyebab sebenarnya", mid, "repro"),
+                 "instructions": (
+                     "Baca kode di jalur error (find_symbol, read_file, git_diff). Jelaskan penyebab dalam 2-3 kalimat, "
+                     "bukti dari kode, dan rencana perbaikan terkecil. Bedakan penyebab dari gejala.")},
+                {**member("fixer", "Perbaikan", "Menerapkan perbaikan dan tes regresi", mid, "cause"),
+                 "instructions": (
+                     "Terapkan perbaikan terkecil (file_patch), tambahkan tes yang gagal sebelum perbaikan, lalu jalankan "
+                     "seluruh tes terkait. Baris terakhir laporan harus persis 'SEMUA TES LULUS' bila semuanya lulus, "
+                     "atau 'MASIH GAGAL' beserta keluaran tes.")},
+                # The last line decides: a report that only quotes the instruction must not pass.
+                node("check", "Tes lulus?", "gate", {"mode": "regex", "value": r"SEMUA TES LULUS\W*$"}, "fixer"),
+                {**node("ok", "Lulus", "set", {"text": "{{input}}"}, "check"), "branch": "A"},
+                {**member("rescue", "Penyelamat", "Memperbaiki saat tes masih gagal", top, "check"),
+                 "branch": "B",
+                 "instructions": (
+                     "Tes masih gagal setelah perbaikan pertama. Baca laporan sebelumnya, cari yang terlewat, perbaiki, "
+                     "dan jalankan tes lagi. Laporkan hasil tes terakhir apa adanya.")},
+                node("joined", "Gabung jalur", "merge", {"mode": "any"}, "ok", "rescue"),
+                {**member("lead", "Lead", "Menulis ringkasan perbaikan", mid),
+                 "instructions": "Jawaban: penyebab, file yang diubah, tes yang ditambahkan, dan keluaran tes terakhir."},
+                member("reviewer", "Reviewer", "Memeriksa perbaikan dan tesnya secara independen", top),
+            ],
+            "lead_id": "lead",
+            "reviewer_id": "reviewer",
+        },
+        {
+            "key": "decision",
+            "name": "Keputusan lewat debat",
+            "description": (
+                "Fakta dulu, lalu pendukung, penentang, dan analis risiko bekerja paralel. Hakim dengan model terkuat "
+                "menulis memo keputusan."
+            ),
+            "members": [
+                {**member("facts", "Pengumpul fakta", "Fakta dan angka yang menentukan keputusan", mid),
+                 "instructions": f"Kumpulkan fakta, biaya, angka, dan aturan yang relevan. {real_answers}"},
+                {**member("pro", "Pendukung", "Argumen terkuat untuk melakukannya", lite, "facts"),
+                 "instructions": "Bangun argumen terkuat untuk melakukannya, hanya dari fakta di laporan. Sebut juga kelemahan argumenmu."},
+                {**member("contra", "Penentang", "Argumen terkuat untuk tidak melakukannya", lite, "facts"),
+                 "instructions": "Bangun argumen terkuat untuk tidak melakukannya atau memilih alternatif, hanya dari fakta di laporan."},
+                {**member("risk", "Analis risiko", "Pre-mortem dan tanda bahaya", lite, "facts"),
+                 "instructions": (
+                     "Bayangkan keputusan ini gagal 6 bulan lagi: tulis 3 penyebab paling mungkin, tanda awalnya, dan "
+                     "cara mencegahnya. Hitung skenario terburuk dengan calc bila ada angka.")},
+                {**member("judge", "Hakim", "Menimbang dan menulis memo keputusan", top),
+                 "instructions": (
+                     "Memo keputusan: rekomendasi dalam satu kalimat, tiga alasan terkuat, apa yang membuat keputusan ini "
+                     "harus dibalik, dan langkah 7 hari pertama. Adil pada kedua sisi.")},
+            ],
+            "lead_id": "judge",
+            "reviewer_id": None,
+        },
+        {
+            "key": "news-brief",
+            "name": "Ringkasan berita pagi",
+            "description": "Setiap pagi: berita 24 jam terakhir untuk topikmu, diringkas untuk HP, dikirim ke Telegram dan disimpan.",
+            "members": [
+                node("topics", "Topik", "set", {"text": "Sekarang {{day}}, {{date}} jam {{time}}.\n[TOPIK]\n{{task}}"}),
+                {**member("news", "Pencari berita", "Berita 24 jam terakhir per topik", mid, "topics"),
+                 "instructions": (
+                     "Untuk tiap topik di [TOPIK]: pakai time_now, lalu web_research berita 24 jam terakhir. Ambil 3 "
+                     "berita per topik dengan judul, satu kalimat isi, tanggal, dan sumber. Buang yang tanggalnya tidak "
+                     f"pasti. {real_answers}")},
+                {**member("editor", "Editor", "Meringkas untuk dibaca di HP", lite, "news"),
+                 "instructions": (
+                     f"{direct_style} Paling banyak 12 baris: dikelompokkan per topik, satu kalimat per berita dengan "
+                     "nama sumber di akhir. Mulai dari yang paling penting.")},
+                node("send", "Kirim ke Telegram", "telegram", {"chat_id": ""}, "editor"),
+                node("store", "Simpan ke database", "database", {"database": "sqlite", "table": "berita_pagi"}, "send"),
+            ],
+            "lead_id": None,
+            "reviewer_id": None,
+            "schedule": {"mode": "daily", "time": "06:30", "times": ["06:30"], "days": [0, 1, 2, 3, 4, 5, 6],
+                         "task": "Teknologi AI, ekonomi Indonesia, dan cuaca Jakarta hari ini."},
+        },
+        {
+            "key": "paper",
+            "name": "Laporan dan makalah rapi",
+            "description": (
+                "Kerangka, riset dengan sumber nyata, lalu file Word yang rapi (formal untuk sekolah dan kampus). "
+                "Pemeriksa mencocokkan setiap klaim dengan sumbernya."
+            ),
+            "members": [
+                {**member("outline", "Penyusun kerangka", "Struktur sesuai jenis tulisan", mid),
+                 "instructions": (
+                     "Tentukan jenisnya (makalah, laporan praktikum, proposal, laporan kerja) dan susun kerangkanya "
+                     "sesuai kebiasaan jenis itu, dengan perkiraan panjang tiap bagian.")},
+                {**member("research", "Peneliti", "Sumber dan kutipan untuk tiap bagian", mid, "outline"),
+                 "instructions": f"Untuk tiap bagian kerangka: 2-3 sumber nyata dengan judul, penulis, tahun, URL, dan poin yang dipakai. {real_answers}"},
+                {**member("writer", "Penulis", "Menulis dan membuat file Word", mid),
+                 "instructions": (
+                     "Tulis isi lengkap sesuai kerangka, dengan kutipan dan daftar pustaka hanya dari sumber di laporan. "
+                     "Buat file dengan doc_create: theme='formal' untuk tugas sekolah atau kampus; selain itu panggil "
+                     "style_pick(medium='document') dan pakai office_theme-nya. Jawaban: nama file dan ringkasan isi.")},
+                member("checker", "Pemeriksa", "Mencocokkan klaim, kutipan, dan format", top),
+            ],
+            "lead_id": "writer",
+            "reviewer_id": "checker",
+        },
+        {
+            "key": "voice-over",
+            "name": "Naskah dan voice-over",
+            "description": (
+                "Naskah yang enak diucapkan, pemilihan suara, lalu MP3 per baris lewat ElevenLabs. Tanpa API key, "
+                "kamu tetap dapat naskahnya dan cara menyambungkan ElevenLabs."
+            ),
+            "members": [
+                {**member("script", "Penulis naskah", "Naskah per baris yang enak diucapkan", mid),
+                 "instructions": (
+                     "Tulis voice/script.md: baris-baris pendek bernomor (id, teks), paling banyak 3,5 kata per detik, "
+                     "angka dan nama ditulis seperti diucapkan, jeda ditandai. Sebut perkiraan durasi dan jumlah karakter.")},
+                {**member("caster", "Pemilih suara", "Memilih suara yang cocok", lite, "script"),
+                 "instructions": (
+                     "Panggil voice_list (dengan filter seperti 'female' atau 'narration' bila cocok) dan pilih satu suara "
+                     "yang cocok dengan naskah, dengan alasannya. Kalau hasilnya connected=false, tulis 'ElevenLabs belum "
+                     "tersambung' dan salin langkah setup-nya.")},
+                {**member("voice", "Pengisi suara", "Membuat MP3 per baris", lite),
+                 "instructions": (
+                     "Kalau ElevenLabs tersambung: voice_speak tiap baris naskah ke voice/<id>.mp3 dengan suara pilihan, "
+                     "lalu sebut total karakter yang dipakai. Kalau belum: serahkan naskahnya (share_file voice/script.md) "
+                     "dan langkah menyambungkan ElevenLabs di halaman Kredensial.")},
+            ],
+            "lead_id": "voice",
+            "reviewer_id": None,
+        },
+        {
+            "key": "price-watch",
+            "name": "Pantau harga dan beri tanda",
+            "description": (
+                "Tiap jam mencari harga terkini dari dua sumber dan mencatatnya. Kalau mencapai targetmu, "
+                "kamu dikabari lewat Telegram."
+            ),
+            "members": [
+                {**member("check", "Pemantau harga", "Harga terkini dari dua sumber", mid),
+                 "instructions": (
+                     "Pakai time_now dan web_research. Cari harga terkini barang di tugas dari dua sumber berbeda, dengan "
+                     "waktu dan sumbernya. Baris terakhir: 'HARGA: <angka>' memakai sumber yang paling baru. "
+                     f"{real_answers}")},
+                node("log", "Catat harga", "database", {"database": "sqlite", "table": "harga"}, "check"),
+                node(
+                    "hit", "Sudah kena target?", "gate",
+                    {"mode": "ai", "value": "Apakah harga di laporan ini sudah mencapai target yang disebut di tugas?"},
+                    "check", model=lite,
+                ),
+                {**member("alert", "Penulis peringatan", "Pesan singkat saat target tercapai", lite, "hit"),
+                 "branch": "A",
+                 "instructions": f"{direct_style} Tiga baris: harga sekarang dan sumbernya, targetnya, dan saran langkah berikutnya."},
+                node("send", "Kirim ke Telegram", "telegram", {"chat_id": ""}, "alert"),
+            ],
+            "lead_id": None,
+            "reviewer_id": None,
+            "schedule": {"mode": "interval", "minutes": 60,
+                         "task": "Harga emas Antam 1 gram. Kabari kalau sudah di bawah Rp1.300.000."},
         },
     ]
 
@@ -1326,7 +1615,9 @@ class TeamOrchestrator:
                 f"You are {member.name}, the lead of an AI team. Role: {member.role}.{instruction}\n"
                 "The specialists have independently worked on the user's task below. "
                 "Read their reports critically, resolve conflicts, and produce one complete final answer. "
-                "Do not mention internal orchestration or invent work not present in the reports. "
+                "Before you rely on a file a report names, check that it exists (list_directory or read_file); "
+                "fix small problems yourself instead of describing them, and give the user every finished file "
+                "with share_file. Do not mention internal orchestration or invent work not present in the reports. "
                 "If specialists failed, use the useful available reports and note important limitations."
             )
         if mode == "revision":
@@ -1340,14 +1631,18 @@ class TeamOrchestrator:
                 f"You are {member.name}, an independent reviewer. Role: {member.role}.{instruction}\n"
                 "Check the draft below against the user's task. If the team wrote files, open them "
                 "and check them yourself. Look for wrong facts, missing requirements, and claims the "
-                "work does not support. The first line of your reply must be exactly VERDICT: PASS or "
+                "work does not support. For visual work (a page, slides, a picture, a video) also look for the "
+                "AI-slop tells: a template layout, default fonts, purple gradients, invented numbers or "
+                "testimonials, filler words. The first line of your reply must be exactly VERDICT: PASS or "
                 "VERDICT: REVISE. If REVISE, list each concrete problem and how to fix it."
             )
         return (
             f"You are {member.name}, a specialist in an AI team. Role: {member.role}.{instruction}\n"
-            "Independently analyze and complete your part of the user's task. Give concrete, "
-            "actionable findings for the lead. Stay within your role, avoid repeating the whole task, "
-            "and explicitly identify risks or missing information. Return only your report."
+            "Independently complete your part of the user's task. Do the work with tools instead of "
+            "describing it: write the files, run the commands, look up the facts. Stay within your role "
+            "and do not repeat the whole task. Return only your report, ending with three short parts: "
+            "Hasil (what you made or found), Bukti (files written, commands run and their output, sources), "
+            "and Belum pasti (risks and what you could not check)."
         )
 
     @staticmethod

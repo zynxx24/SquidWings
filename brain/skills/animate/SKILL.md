@@ -5,7 +5,7 @@ triggers: animasi, animasikan, animate, animation, animated, video animasi, moti
 scope: contextual
 context: video, mp4, film, klip, clip, reel, reels, shorts, tiktok, explainer, storyboard, render, youtube, durasi, detik
 requires: node, ffmpeg
-tools: execute_command, load_skill, share_file, read_file, file_write, file_patch, web_research
+tools: execute_command, load_skill, share_file, read_file, file_write, file_patch, web_research, voice_list, voice_speak, style_pick
 ---
 # Animating in code
 

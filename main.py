@@ -35,6 +35,7 @@ from typing import Any
 
 from rich import box
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.markup import escape
 from rich.panel import Panel
 from rich.rule import Rule
@@ -55,7 +56,7 @@ from security import sandbox
 from security.web_access import is_loopback_host
 from tool.execute.execute_edit_change_file.file_editor import FileEditor
 from tool.execute.execute_local_memory import user_profile
-from utils import cli_ui, repo_update
+from utils import cli_ui, daily_brief, repo_update, voice_io
 from utils.cli_formatter import (
     SESSION_CODE_TRACKER,
     TerminalFormatConfig,
@@ -162,6 +163,94 @@ def _read_user_input(prompt: str) -> str:
         console.print(f"  [dim cyan]📋 Multi-line paste terdeteksi ({len(lines)} baris)[/dim cyan]")
 
     return total_text
+
+
+class _VoiceState:
+    """Whether answers are read aloud in this terminal session (/voice on|off)."""
+
+    speak = False
+
+
+async def _voice_command(arg: str, state: _VoiceState) -> str | None:
+    """/voice: record one message and return it as text. /voice on|off|status only return None."""
+    caps = voice_io.capabilities()
+    if arg in ("on", "off"):
+        if arg == "on" and not caps.can_speak:
+            console.print(f"  [yellow]Belum bisa membacakan jawaban: {escape(_why_cannot_speak(caps))}[/yellow]")
+            return None
+        state.speak = arg == "on"
+        console.print(f"  [bright_cyan]🔊 Jawaban {'dibacakan' if state.speak else 'tidak dibacakan'}.[/bright_cyan]")
+        return None
+    if arg in ("status", "?", "help", "-h"):
+        ok = lambda flag: "[green]siap[/green]" if flag else "[red]belum[/red]"  # noqa: E731
+        console.print(f"  🎙  Bicara ke agent: {ok(caps.can_listen)}  [dim](perekam: {caps.recorder or '-'}, pengenal: {caps.stt or '-'})[/dim]")
+        console.print(f"  🔊 Jawaban dibacakan: {ok(caps.can_speak)}  [dim](ElevenLabs key: {'ada' if caps.tts else 'belum'}, pemutar: {caps.player or '-'})[/dim]")
+        console.print(f"  [dim]Sekarang: {'membacakan jawaban' if state.speak else 'jawaban tidak dibacakan'}. /voice rekam · /voice on|off[/dim]")
+        return None
+    if not caps.can_listen:
+        console.print(f"  [yellow]Belum bisa mendengar: {escape(_why_cannot_listen(caps))}[/yellow]")
+        return None
+    if caps.stt == "google":
+        console.print("  [dim]Catatan: suara dikirim ke layanan pengenal online Google. Pasang faster-whisper agar lokal.[/dim]")
+    console.print(f"  [bold bright_cyan]🎙  Bicara sekarang…[/bold bright_cyan] [dim]tekan Enter kalau sudah (maks {voice_io.MAX_RECORD_SECONDS} detik)[/dim]")
+    try:
+        heard = await asyncio.to_thread(
+            voice_io.listen, input, voice_io.MAX_RECORD_SECONDS, lambda: console.print("  [dim]Mengenali suara…[/dim]")
+        )
+    except voice_io.VoiceIOError as exc:
+        console.print(f"  [yellow]{escape(str(exc))}[/yellow]")
+        return None
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        console.print("  [dim]Rekaman dibatalkan.[/dim]")
+        return None
+    if not heard:
+        console.print("  [yellow]Tidak ada suara yang terdengar. Coba lagi, lebih dekat ke mikrofon.[/yellow]")
+        return None
+    # The agent can edit files, so a misheard sentence is checked before it is sent.
+    console.print(f"  🗣  [white]{escape(heard)}[/white]")
+    try:
+        answer = input("  Enter = kirim · ketik perbaikan · x = batal  ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return None
+    if answer.lower() == "x":
+        console.print("  [dim]Dibatalkan.[/dim]")
+        return None
+    return answer or heard
+
+
+def _why_cannot_listen(caps: voice_io.Capabilities) -> str:
+    if caps.recorder is None:
+        return "tidak ada perekam. Pasang alsa-utils (arecord) atau pulseaudio-utils (parecord)."
+    return "tidak ada pengenal suara. pip install faster-whisper (lokal) atau SpeechRecognition."
+
+
+def _why_cannot_speak(caps: voice_io.Capabilities) -> str:
+    if not caps.tts:
+        return "isi ElevenLabs API key di halaman Tim → Kredensial (atau ELEVENLABS_API_KEY di .env)."
+    return "tidak ada pemutar audio. Pasang ffmpeg (ffplay) atau mpv."
+
+
+def _show_brief(store: Any, *, force: bool = False) -> None:
+    """The daily brief as Markdown in the terminal. At start-up it appears once a day, and only when there is something to say."""
+    try:
+        brief = daily_brief.ensure_today(store, force=force)
+        if not force and (brief["empty"] or not daily_brief.due()):
+            return
+        console.print()
+        console.print(Panel(Markdown(daily_brief.render(brief)), title="☀ Brief", border_style="bright_cyan", padding=(0, 2)))
+        daily_brief.mark_seen(brief["day"])
+    except Exception as exc:  # noqa: BLE001 - a brief is a nicety; it must never stop the chat from starting
+        logger.warning("[chat_mode] daily brief failed: %s", exc)
+
+
+async def _speak_reply(text: str) -> None:
+    """Read an answer aloud; a failure is a dim note, never an error for the chat."""
+    try:
+        await voice_io.say(text)
+    except voice_io.VoiceIOError as exc:
+        console.print(f"  [dim yellow]🔇 {escape(str(exc))}[/dim yellow]")
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        console.print("  [dim]🔇 Dihentikan.[/dim]")
 
 
 def _get_provider_theme(provider: str) -> dict[str, str]:
@@ -870,9 +959,15 @@ def _display_help() -> None:
             ("/md", "Tampilkan ulang jawaban terakhir sebagai Markdown"),
             ("/paste", "Tempel teks beberapa baris"),
         ]),
+        ("Suara", [
+            ("/voice", "Rekam pesan lewat mikrofon, cek hasilnya, lalu kirim"),
+            ("/voice on|off", "Bacakan jawaban dengan ElevenLabs (perlu API key)"),
+            ("/voice status", "Apa yang sudah siap: perekam, pengenal suara, pemutar"),
+        ]),
         ("Chat", [
             ("/chats", "Chat terakhir: [terminal] dan [web], dengan judul dari AI"),
             ("/chats <nomor>", "Lanjutkan chat itu di proyek aktif"),
+            ("/brief", "Ringkasan sejak kemarin: yang dikerjakan dan yang masih menggantung"),
             ("/help, /h, /?", "Bantuan ini"),
             ("clear", "Hapus riwayat obrolan sesi ini"),
             ("exit, quit, q", "Keluar"),
@@ -1345,6 +1440,7 @@ async def chat_mode(project: str | None = None) -> None:
 
     # Track user-selected model override
     override_model: str | None = None
+    voice = _VoiceState()
 
     cli_ui.enable_line_editing()
     cli_ui.banner(
@@ -1355,6 +1451,8 @@ async def chat_mode(project: str | None = None) -> None:
         project=started_in,
     )
     conversation_store.set_source(session_id, "terminal")
+    if daily_brief.enabled():
+        _show_brief(conversation_store)
 
     try:
         while True:
@@ -1413,6 +1511,17 @@ async def chat_mode(project: str | None = None) -> None:
                     cli_ui.chats_table(console, chats, session_id)
                 continue
 
+            elif user_input.lower() in ("/brief", "/ringkasan"):
+                _show_brief(conversation_store, force=True)
+                continue
+
+            # Talk to the agent, or have its answers read aloud
+            elif user_input.lower().split(" ")[0] in ("/voice", "/suara"):
+                spoken = await _voice_command(user_input.partition(" ")[2].strip().lower(), voice)
+                if not spoken:
+                    continue
+                user_input = spoken
+
             # Handle IDE slash commands
             elif user_input.startswith("/"):
                 handled, new_model, new_ws = _handle_ide_command(
@@ -1437,8 +1546,9 @@ async def chat_mode(project: str | None = None) -> None:
 
             # Process the message
             console.print()
+            reply = ""
             try:
-                await process_input(
+                reply = await process_input(
                     user_input=user_input,
                     session_id=session_id,
                     orchestrator=orchestrator,
@@ -1457,6 +1567,9 @@ async def chat_mode(project: str | None = None) -> None:
             except Exception as proc_err:
                 logger.exception(f"[chat_mode] Unhandled error during process_input: {proc_err}")
                 cli_ui.error_panel(console, str(proc_err))
+
+            if voice.speak and reply:
+                await _speak_reply(reply)
 
             # ──── AI SELESAI ────────────────────────────────────────────────
             # Flush stdin buffer: buang semua keystroke yang tidak sengaja

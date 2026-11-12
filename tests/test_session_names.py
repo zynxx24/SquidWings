@@ -146,8 +146,8 @@ def test_an_image_request_still_gets_the_aislop_guide():
     from config.constants import TaskType
 
     text, chosen = skill_guidance("buat gambar poster konser jazz", TaskType.GENERATE_IMG, 8000)
-    assert chosen == ["aislop"]
-    assert "AI slop" in text
+    assert "aislop" in chosen
+    assert "AI slop" in text and "style_pick" in text
 
 
 def test_sessions_root_is_the_patched_one():

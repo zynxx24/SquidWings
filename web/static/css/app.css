@@ -323,6 +323,21 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); }
   display: block; width: 100%; max-height: 220px; padding: 2px 5px; resize: none; border: 0 !important;
   background: none; box-shadow: none !important; line-height: 1.5; overflow-y: hidden;
 }
+.icon-btn.listening { color: var(--err); background: var(--err-soft); animation: mic-pulse 1.2s ease-in-out infinite; }
+@keyframes mic-pulse { 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .icon-btn.listening { animation: none; } }
+.voice-btn { display: inline-flex; align-items: center; gap: 4px; }
+.voice-btn.speaking { color: var(--accent); opacity: 1; }
+.brief { display: none; margin-bottom: 14px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); text-align: left; }
+.view.is-empty .brief:not(.hidden) { display: block; }
+.brief-head { display: flex; align-items: center; justify-content: space-between; }
+.brief-head h2 { font-size: 15px; font-weight: 650; }
+.brief .brief-close { opacity: 1; margin: 0; }
+.brief-sum { margin-top: 2px; color: var(--muted); font-size: 13px; }
+.brief-block { margin-top: 10px; }
+.brief-block h3 { font-size: 12px; font-weight: 650; letter-spacing: 0.02em; text-transform: uppercase; color: var(--faint); }
+.brief-block ul { margin: 4px 0 0; padding-left: 18px; font-size: 13.5px; line-height: 1.5; }
+.brief-block li { overflow-wrap: anywhere; }
 .composer-row { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
 .model-select { min-height: 32px !important; max-width: min(230px, 46vw); padding: 0 6px !important; border-color: transparent !important; color: var(--muted); font-size: 13px; }
 .model-select:hover { background: var(--surface-2); }

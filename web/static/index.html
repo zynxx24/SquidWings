@@ -63,6 +63,7 @@
           <h2>Mau kerjakan apa?</h2>
           <p>Setiap chat punya folder, vault, graph kode, dan memorinya sendiri.</p>
         </div>
+        <section id="brief" class="brief hidden" aria-label="Brief harian"></section>
         <form id="composer" class="composer">
           <div id="chips" class="chips"></div>
           <textarea id="input" rows="1" placeholder="Tulis tugas atau pertanyaan" aria-label="Pesan"></textarea>
@@ -71,6 +72,7 @@
               <span data-icon="clip"></span>
               <input id="file-input" type="file" multiple class="visually-hidden">
             </label>
+            <button id="mic" type="button" class="icon-btn hidden" title="Bicara" aria-label="Bicara" aria-pressed="false" data-icon="mic"></button>
             <select id="model-select" class="model-select" aria-label="Model"></select>
             <span class="composer-hint hide-small">Enter kirim · Shift+Enter baris baru</span>
             <button id="send" type="submit" class="send" aria-label="Kirim" data-icon="send"></button>
@@ -230,5 +232,7 @@
 <script src="/static/js/highlight.min.js"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/team.js"></script>
+<script src="/static/js/voice.js"></script>
+<script src="/static/js/brief.js"></script>
 </body>
 </html>

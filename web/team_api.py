@@ -133,9 +133,24 @@ async def _test_search() -> list[str]:
     return done
 
 
+async def _test_voice() -> str:
+    """List the account's voices: proves the key works without spending a character."""
+    from tool.execute.execute_toolbox import voice_tools
+
+    out = await voice_tools.voice_list()
+    if not out.get("ok"):
+        raise OutputError(out.get("error") or voice_tools.SETUP)
+    quota = out.get("quota") or {}
+    left = ""
+    if quota:
+        number = f"{quota['characters_left']:,}".replace(",", ".")  # Indonesian thousands: 8.800
+        left = f", sisa {number} karakter"
+    return f"ElevenLabs tersambung: {out['count']} suara{left}."
+
+
 @router.post("/credentials/test", dependencies=[Depends(admin)])
 async def test_credentials(payload: CredentialTest) -> dict[str, Any]:
-    """Try the saved keys for real: a Telegram message, a one-result search, or a database connection."""
+    """Try the saved keys for real: a Telegram message, a one-result search, the ElevenLabs voices, or a database."""
     try:
         if payload.group == "telegram":
             await send_telegram("Tes dari SquidWings: Telegram sudah tersambung.")
@@ -143,6 +158,8 @@ async def test_credentials(payload: CredentialTest) -> dict[str, Any]:
         if payload.group == "search":
             done = await _test_search()
             return {"ok": True, "message": f"{' dan '.join(done)} menjawab."}
+        if payload.group == "voice":
+            return {"ok": True, "message": await _test_voice()}
         await check_database(payload.database or "sqlite")
         return {"ok": True, "message": "Database tersambung."}
     except OutputError as exc:

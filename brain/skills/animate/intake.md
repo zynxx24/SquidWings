@@ -17,7 +17,7 @@ Ask only what you can't infer from the request. AskUserQuestion takes up to 4 qu
 
 3. **Voice?**
    - Music only; the year/caption tags carry it *(recommended for a short social piece)*
-   - A narrated voice-over: you write the script, the voice comes from the ElevenLabs connector (if they have it connected) or their own recording, and the picture is timed to the words (SKILL.md → Voice-over) *(recommended for an explainer over ~30s)*
+   - A narrated voice-over: you write the script, the voice comes from ElevenLabs (`voice_speak`, once the key is in Kredensial) or their own recording, and the picture is timed to the words (SKILL.md → Voice-over) *(recommended for an explainer over ~30s)*
    - On-screen handwritten narration
 
 4. **The look?** *(skip the gallery when the request already names a style or brings references — go to new-style.md or the named style)* Build the gallery (`node tools/gallery.mjs <out.png> [<project>/styles]`), show it, then ask:

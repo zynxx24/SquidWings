@@ -1,7 +1,7 @@
 ---
 name: baca-dokumen
 description: Work out what an uploaded document needs and do it, instead of asking what to do with it.
-triggers: [dokumen]
+triggers: dokumen, baca pdf, baca dokumen, pdf ini, dokumen ini, berkas ini, lampiran
 ---
 # When someone uploads a document
 

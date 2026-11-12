@@ -1,12 +1,15 @@
 ---
 name: design-ui
 description: Make interfaces look deliberate - hierarchy, spacing, type, color, and states.
-tasks: code, activity
-triggers: desain, design, ui, ux, tampilan, warna, layout, cantik, bagus, modern, dashboard, landing page, styling, css
+tasks: code, activity, generate_img
+triggers: desain, design, ui, ux, tampilan, warna, layout, cantik, bagus, modern, dashboard, landing page, styling, css, poster, logo, banner, ilustrasi, gambar
+tools: style_pick
 ---
 # Designing an interface
 
 Generic AI output is recognisable: purple gradients, everything centred, identical rounded cards, emoji as icons. Avoid it by making real decisions.
+
+**Commit to one direction.** Call `style_pick` with the medium and subject before you style anything, and use its palette, fonts, layout and motifs throughout. It skips looks used in recent chats, so two requests never come out the same. Follow an existing product's look instead when there is one.
 
 **Start from the content.** Write the real headings and data first. Decide the one thing each screen is for, and make that the most prominent element. Never use lorem ipsum, or fake stats and testimonials.
 

@@ -1,0 +1,472 @@
+# Design directions for style_pick. One entry is a whole look a designer would commit to:
+# palette variants, type, layout, motifs, motion, how a picture of it is made, and what to avoid.
+#
+# media: web, slides, image, video, document. fits: subject words (Indonesian and English) that
+# make the direction more likely for a request. office_theme: the closest slides_create/doc_create
+# theme. Fonts are Google Fonts (web, video, SVG); office files use office_theme.
+# Add a direction by copying an entry. Keep every palette's text readable on its background.
+
+- id: koran-pagi
+  name: Koran pagi (editorial)
+  media: [web, slides, document, image]
+  fits: [berita, news, blog, majalah, magazine, artikel, article, opini, esai, essay, riset, research, laporan, report, jurnal]
+  palettes:
+    - {bg: "#F4F1EA", ink: "#141414", accent: "#C8102E", muted: "#6B6B6B"}
+    - {bg: "#FFFFFF", ink: "#1B1B1B", accent: "#1F4E79", muted: "#76736E"}
+  type: {heading: "Playfair Display", body: "Source Serif 4", ui: "Schibsted Grotesk"}
+  layout: Asymmetric 12-column grid, a wide lead column and a narrow side column, hairline rules between sections, a drop cap on the lead paragraph.
+  motifs: Column rules, small-caps kickers above headlines, folio numbers, large italic pull quotes.
+  motion: Almost none. Rules draw in, text rises 8px and fades in.
+  image: editorial photograph, natural window light, 35mm, muted colour grade, one strong subject off-centre
+  office_theme: klasik
+  avoid: Rounded cards, gradients, icon circles, centred hero text.
+
+- id: swiss-grid
+  name: Swiss grid (tipografi internasional)
+  media: [web, slides, image, video, document]
+  fits: [arsitektur, architecture, konsultan, consulting, agency, studio, portfolio, event, konferensi, conference, museum, data]
+  palettes:
+    - {bg: "#FFFFFF", ink: "#111111", accent: "#E30613", muted: "#8C8C8C"}
+    - {bg: "#F2F0EB", ink: "#101820", accent: "#0057B8", muted: "#7C7F83"}
+  type: {heading: "Archivo", body: "Archivo", ui: "Archivo Narrow"}
+  layout: Strict modular grid, flush-left ragged-right text, huge numerals or one oversized word as the visual, lots of white space.
+  motifs: Thick horizontal bars, numbered sections (01, 02), one red square, type as image.
+  motion: Hard cuts and slides along the grid, 200ms, no easing flourishes. Kinetic type on a baseline.
+  image: flat graphic poster, strict grid, two colours plus black, bold sans-serif typography, geometric shapes
+  office_theme: grafit
+  avoid: Drop shadows, decorative illustrations, more than one accent.
+
+- id: kertas-hangat
+  name: Kertas hangat (buku catatan dan kerajinan)
+  media: [web, slides, image, video]
+  fits: [kopi, coffee, kafe, cafe, roti, bakery, kuliner, food, umkm, kerajinan, craft, handmade, tutorial, kelas, edukasi]
+  palettes:
+    - {bg: "#F3EBDD", ink: "#1F2430", accent: "#E8622C", muted: "#8A8070"}
+    - {bg: "#EFE6D2", ink: "#2B2118", accent: "#2F7D7A", muted: "#8B7B64"}
+  type: {heading: "Bricolage Grotesque", body: "Newsreader", ui: "JetBrains Mono"}
+  layout: Notebook grid paper background, content on offset "cards" with a hard ink shadow, slight rotations (under 2 degrees).
+  motifs: Hand-drawn underlines, tape strips, stamps, ink outlines with 8px offset shadow.
+  motion: Springy pops with slight overshoot, a slow drifting grid.
+  image: warm paper texture, ink line illustration with flat fills, slight misregistration, hand-lettered labels
+  office_theme: kopi
+  avoid: Glass, glow, perfect symmetry, stock photos.
+
+- id: risograph
+  name: Risograph dua warna
+  media: [web, image, video, slides]
+  fits: [musik, music, konser, concert, gig, festival, zine, komunitas, community, seni, art, poster, acara, event, buku, book]
+  palettes:
+    - {bg: "#F6F1E7", ink: "#2B2A8C", accent: "#FF5C8A", muted: "#9A95C9"}
+    - {bg: "#FBF4E9", ink: "#0B6E4F", accent: "#FF7F11", muted: "#9CB8A8"}
+  type: {heading: "Rubik Mono One", body: "Space Mono", ui: "Space Mono"}
+  layout: Overlapping shapes and type that print over each other (multiply), off-grid on purpose, big halftone areas.
+  motifs: Halftone dots, grain, misregistered second colour, overprint where two inks meet.
+  motion: Stepped at 12fps, colour layers slip apart and snap back.
+  image: risograph print, two spot inks (blue and fluorescent pink), halftone dots, grain, slight misregistration
+  office_theme: lavender
+  avoid: Smooth gradients, photoreal 3D, more than two inks.
+
+- id: brutalist-mono
+  name: Brutalist monospace
+  media: [web, slides, video]
+  fits: [developer, dev, api, open source, startup, tool, cli, hacker, teknologi, tech, portfolio, coding, software]
+  palettes:
+    - {bg: "#FFFFFF", ink: "#000000", accent: "#0000FF", muted: "#5E5E5E"}
+    - {bg: "#E8E8E3", ink: "#111111", accent: "#FF3B00", muted: "#6D6D66"}
+  type: {heading: "IBM Plex Mono", body: "IBM Plex Mono", ui: "IBM Plex Mono"}
+  layout: Raw document flow, visible borders (2px solid), tables as layout, underlined links, no rounded corners at all.
+  motifs: ASCII dividers, bracketed labels [like this], blinking cursor, timestamps.
+  motion: Instant state changes, a typewriter reveal, cursor blink.
+  image: monochrome screen print of terminal text, hard pixels, high contrast
+  office_theme: grafit
+  avoid: Gradients, soft shadows, illustrations, pastel.
+
+- id: bauhaus
+  name: Bauhaus primer
+  media: [web, image, slides, video]
+  fits: [sekolah, school, anak, kids, edukasi, education, desain, design, workshop, pameran, exhibition, mainan, toy]
+  palettes:
+    - {bg: "#F1E9DA", ink: "#1D1D1B", accent: "#D7263D", second: "#1B4E9B", third: "#F4B71A"}
+    - {bg: "#FFFFFF", ink: "#202020", accent: "#E4572E", second: "#29335C", third: "#F3A712"}
+  type: {heading: "Syne", body: "Familjen Grotesk", ui: "Familjen Grotesk"}
+  layout: Composition from circles, squares and triangles in primaries, diagonals, type set along shape edges.
+  motifs: Primary geometric shapes, quarter circles, thick black lines.
+  motion: Shapes roll, rotate and stack into place with weight.
+  image: bauhaus poster, primary red, blue and yellow geometric shapes, off-white paper, bold sans-serif
+  office_theme: grafit
+  avoid: Soft pastels, photos, rounded cards.
+
+- id: batik-modern
+  name: Batik modern (motif Nusantara)
+  media: [web, slides, image, video, document]
+  fits: [indonesia, budaya, culture, batik, wisata, tourism, pariwisata, kerajinan, fashion, wedding, pernikahan, kemerdekaan, 17an, agustus, desa]
+  palettes:
+    - {bg: "#F5EFE3", ink: "#22223B", accent: "#9A3B23", second: "#C9A227", muted: "#7D6E5A"}
+    - {bg: "#1F2041", ink: "#F3EEE3", accent: "#D9A441", second: "#B5523B", muted: "#9C99B4"}
+  type: {heading: "Young Serif", body: "Plus Jakarta Sans", ui: "Plus Jakarta Sans"}
+  layout: Calm centred-left content framed by a single motif band; motif is a border or corner, never wallpaper behind text.
+  motifs: Kawung or parang line patterns drawn as SVG, gold hairlines, soga brown fields.
+  motion: Pattern lines draw on slowly, a gentle parallax on the motif band.
+  image: modern batik-inspired line pattern, indigo and soga brown with gold hairlines, flat, hand-drawn canting texture
+  office_theme: batik
+  avoid: Generic "ethnic" clip art, motifs behind body text, too many motifs at once.
+
+- id: tropis-pop
+  name: Tropis pop
+  media: [web, image, video, slides]
+  fits: [minuman, drink, jus, juice, es, pantai, beach, liburan, holiday, promo, diskon, sale, produk, product, makanan, snack]
+  palettes:
+    - {bg: "#FFF4E0", ink: "#1C2B2D", accent: "#F05D23", second: "#0F7173", muted: "#6B7F7E"}
+    - {bg: "#E9F7EF", ink: "#13293D", accent: "#FF3366", second: "#2EC4B6", muted: "#5F7A80"}
+  type: {heading: "Shrikhand", body: "Outfit", ui: "Outfit"}
+  layout: Big product or subject cut-out, chunky type, stickers and price tags placed at angles.
+  motifs: Leaf shapes, sun circles, sticker borders, wavy dividers.
+  motion: Bouncy, playful squash and stretch, things slap onto the screen.
+  image: flat vector illustration, tropical leaves, saturated orange and teal, thick outlines, sticker style
+  office_theme: tropis
+  avoid: Dark mode, glassmorphism, thin fonts.
+
+- id: blueprint
+  name: Blueprint teknis
+  media: [web, image, video, slides]
+  fits: [engineering, teknik, konstruksi, construction, arsitektur, robot, iot, hardware, manufaktur, sains, science, proses, process, cara kerja]
+  palettes:
+    - {bg: "#163A63", ink: "#EAF2FB", accent: "#FFD166", muted: "#8FB3D9"}
+    - {bg: "#F4F7FA", ink: "#14324F", accent: "#E4572E", muted: "#7E95AD"}
+  type: {heading: "Chivo Mono", body: "Chivo", ui: "Chivo Mono"}
+  layout: Grid lines, dimension lines and callouts that point to parts, labels in mono caps.
+  motifs: Dimension arrows, crosshairs, title block in the corner, dashed construction lines.
+  motion: Lines draw like a plotter, callouts slide out along their leaders.
+  image: technical blueprint drawing, white lines on deep blue, dimension annotations, isometric parts
+  office_theme: biru-tinta
+  avoid: Photos, emoji, playful fonts.
+
+- id: jepang-ma
+  name: Ma (minimal Jepang)
+  media: [web, slides, image, video, document]
+  fits: [spa, wellness, teh, tea, skincare, kecantikan, beauty, meditasi, yoga, hotel, interior, keramik, ceramic, fashion]
+  palettes:
+    - {bg: "#F7F4EE", ink: "#2A2A28", accent: "#B23A2B", muted: "#9A958C"}
+    - {bg: "#EDEBE4", ink: "#1E2422", accent: "#3D5A4C", muted: "#8E928C"}
+  type: {heading: "Shippori Mincho", body: "Zen Kaku Gothic New", ui: "Zen Kaku Gothic New"}
+  layout: Very few elements, large empty fields, vertical rhythm, one red seal as accent, text small and widely spaced.
+  motifs: Single brush stroke, seal stamp, thin vertical rule.
+  motion: Slow fades (600ms+), one element at a time.
+  image: minimal composition, lots of negative space, soft daylight, washi paper texture, one red accent
+  office_theme: sakura
+  avoid: Filling the space, many colours, bold display fonts.
+
+- id: data-gelap
+  name: Data gelap (dashboard terminal)
+  media: [web, slides, video]
+  fits: [dashboard, analytics, analitik, data, metrik, metrics, monitoring, trading, keuangan, finance, crypto, saham, laporan keuangan]
+  palettes:
+    - {bg: "#0E1116", ink: "#E6E9EF", accent: "#4CC38A", second: "#F5A524", muted: "#7D8590"}
+    - {bg: "#111318", ink: "#ECEDEE", accent: "#5B9DFF", second: "#FF6B6B", muted: "#80868F"}
+  type: {heading: "IBM Plex Sans Condensed", body: "IBM Plex Sans", ui: "IBM Plex Mono"}
+  layout: Dense, aligned panels with tabular numbers, sparklines next to values, labels small and muted, values large.
+  motifs: Hairline separators, status dots, deltas with arrows, monospace numbers.
+  motion: Numbers count up, lines draw left to right, nothing bounces.
+  image: dark data visualisation, thin lines, one green accent, subtle grid
+  office_theme: malam
+  avoid: Neon glow, gradients on panels, decorative charts without data.
+
+- id: mid-century
+  name: Mid-century hangat
+  media: [web, image, video, slides]
+  fits: [furnitur, furniture, rumah, home, properti, property, keluarga, family, retro, vintage, radio, podcast, travel]
+  palettes:
+    - {bg: "#F2E8D5", ink: "#2D2A26", accent: "#D9822B", second: "#3E7C6D", muted: "#9B8B73"}
+    - {bg: "#EFE3CF", ink: "#2B2B2B", accent: "#C0392B", second: "#E0A458", muted: "#8F806B"}
+  type: {heading: "Gloock", body: "Lexend", ui: "Lexend"}
+  layout: Organic blobs and boomerang shapes behind content, generous rounded type, two-column with an illustration.
+  motifs: Starbursts, boomerangs, atomic dots, textured flat fills.
+  motion: Gentle swings and rotations, like a mobile.
+  image: mid-century modern illustration, flat textured shapes, mustard, teal and burnt orange, starbursts
+  office_theme: zaitun
+  avoid: Neon, thin hairline UI, cold blues.
+
+- id: arsip-museum
+  name: Arsip museum
+  media: [web, slides, document, image]
+  fits: [sejarah, history, museum, sekolah, kampus, universitas, skripsi, makalah, tesis, sastra, literature, budaya, perpustakaan, library]
+  palettes:
+    - {bg: "#F1EBDD", ink: "#2A2620", accent: "#3E4E3A", second: "#9C6B30", muted: "#8A8172"}
+    - {bg: "#FAF8F2", ink: "#1F1D1A", accent: "#6B2737", muted: "#8C877D"}
+  type: {heading: "Libre Caslon Display", body: "Libre Caslon Text", ui: "Work Sans"}
+  layout: Catalogue entries with accession numbers, captions under images, footnotes in the margin, centred title page.
+  motifs: Index cards, catalogue numbers, sepia photos with thin frames, marginalia.
+  motion: Page-turn slides, captions type in.
+  image: archival photograph or engraving style, sepia, paper grain, museum label beside it
+  office_theme: arsip
+  avoid: Bright accents, modern sans everywhere, icons.
+
+- id: anak-krayon
+  name: Krayon anak
+  media: [web, image, video, slides]
+  fits: [anak, kids, tk, paud, sd, sekolah dasar, mainan, toy, dongeng, cerita, story, lagu anak, belajar]
+  palettes:
+    - {bg: "#FFF9EC", ink: "#2E2A47", accent: "#FF6F59", second: "#43AA8B", third: "#FFC43D"}
+    - {bg: "#F2FAFF", ink: "#26324B", accent: "#F25C54", second: "#7768AE", third: "#F7B267"}
+  type: {heading: "Baloo 2", body: "Nunito", ui: "Nunito"}
+  layout: Big rounded shapes, wobbly crayon outlines, characters that point at the content, very large tap targets.
+  motifs: Crayon texture, scribbles, stars and doodles, wobbly hand-drawn borders.
+  motion: Boiling lines (outline jitter at 8fps), bouncy characters.
+  image: children's book illustration, crayon and gouache texture, friendly characters, warm palette
+  office_theme: mint
+  avoid: Small text, dark backgrounds, sarcasm, realistic photos.
+
+- id: luxe-serif
+  name: Luxe serif gelap
+  media: [web, slides, image, video]
+  fits: [parfum, perfume, perhiasan, jewelry, fine dining, restoran, restaurant, wine, hotel, wedding, fashion, premium, mewah, luxury]
+  palettes:
+    - {bg: "#141414", ink: "#EDEAE2", accent: "#C8A96A", muted: "#8A857A"}
+    - {bg: "#1B1A17", ink: "#F2EEE6", accent: "#A6785C", muted: "#8E8678"}
+  type: {heading: "Cormorant Garamond", body: "Jost", ui: "Jost"}
+  layout: Large photography or a single object, wide letter-spaced caps, text in small blocks, thin gold rules.
+  motifs: Hairline frames, monogram, tracked small caps, numbered collection items.
+  motion: Slow crossfades and slow push-ins (Ken Burns at 2%), never bouncing.
+  image: studio still life, low-key lighting, deep shadows, one warm rim light, velvet black background
+  office_theme: gelap-emas
+  avoid: Bright colours, playful fonts, busy layouts, gold gradients everywhere.
+
+- id: zine-kolase
+  name: Zine kolase
+  media: [web, image, video]
+  fits: [komunitas, community, musik, music, skate, streetwear, anak muda, youth, gen z, kampanye, campaign, aktivis, protest]
+  palettes:
+    - {bg: "#EDEDE6", ink: "#111111", accent: "#FF2E63", second: "#FFDE03", muted: "#7A7A73"}
+    - {bg: "#F5F0E6", ink: "#1A1A1A", accent: "#2D6BFF", second: "#FF8A00", muted: "#76716A"}
+  type: {heading: "Anton", body: "Courier Prime", ui: "Courier Prime"}
+  layout: Cut-paper layers, photocopied textures, ransom-note headings, tape and staples, rotated blocks.
+  motifs: Torn edges, xerox grain, highlighter marks, stamped dates.
+  motion: Stop-motion jitter, pieces slap on with a small shake.
+  image: photocopied collage, torn paper, halftone photo cutouts, marker scribbles, high contrast
+  office_theme: tinta-merah
+  avoid: Clean corporate grids, gradients, stock icons.
+
+- id: korporat-tenang
+  name: Korporat tenang (terpercaya)
+  media: [web, slides, document]
+  fits: [bank, asuransi, insurance, hukum, law, legal, perusahaan, company, b2b, saas, konsultan, pemerintah, government, rumah sakit, hospital]
+  palettes:
+    - {bg: "#FFFFFF", ink: "#1C2B39", accent: "#1F6FEB", muted: "#6A7785", soft: "#EEF3F8"}
+    - {bg: "#FBFBF9", ink: "#1E2B24", accent: "#0F766E", muted: "#6B756F", soft: "#EDF4F2"}
+  type: {heading: "Source Serif 4", body: "Source Sans 3", ui: "Source Sans 3"}
+  layout: Clear left-aligned sections, a real photo of the team or place, numbers set as proof, one call to action per section.
+  motifs: Thin dividers, simple line icons drawn in one stroke weight, quiet accent underline.
+  motion: Subtle (150ms) fades, no parallax.
+  image: candid documentary photograph of real people at work, natural light, no posing
+  office_theme: samudra
+  avoid: Stock handshake photos, fake stats, "Trusted by 10,000+" bars, purple gradients.
+
+- id: pixel-retro
+  name: Pixel retro
+  media: [web, image, video]
+  fits: [game, gaming, esport, retro, 8bit, arcade, kuis, quiz, gamifikasi, gamification, komunitas game]
+  palettes:
+    - {bg: "#1A1C2C", ink: "#F4F4F4", accent: "#FFCD75", second: "#38B764", third: "#EF7D57"}
+    - {bg: "#F4F4F4", ink: "#1A1C2C", accent: "#B13E53", second: "#3B5DC9", third: "#A7F070"}
+  type: {heading: "Press Start 2P", body: "VT323", ui: "VT323"}
+  layout: Everything on an 8px grid, chunky panels with pixel borders, dialogue boxes, health-bar progress.
+  motifs: Pixel sprites, dithering, scanline option, sparkle pixels (not emoji).
+  motion: Stepped animation, no anti-aliasing, frame-by-frame sprites.
+  image: 16-bit pixel art, limited 16-colour palette, dithering, crisp pixels, side view
+  office_theme: malam
+  avoid: Smooth gradients, blurred pixels, mixing pixel and vector art.
+
+- id: botani
+  name: Botani (herbarium)
+  media: [web, image, slides, video, document]
+  fits: [tanaman, plant, kebun, garden, pertanian, agriculture, organik, organic, herbal, jamu, lingkungan, environment, alam, nature, sustainability]
+  palettes:
+    - {bg: "#F4F1E8", ink: "#24302A", accent: "#4F7942", second: "#B5651D", muted: "#8C9184"}
+    - {bg: "#EEF2EA", ink: "#1F2A22", accent: "#7A9E7E", second: "#C97B63", muted: "#87907F"}
+  type: {heading: "Fraunces", body: "Karla", ui: "Karla"}
+  layout: Specimen layout, a pressed plant illustration with Latin label, generous margins, notes in the side.
+  motifs: Botanical line drawings, specimen labels, pressed-leaf shadows, numbered plates.
+  motion: Leaves sway gently, lines draw like ink on paper.
+  image: botanical illustration plate, fine ink linework with watercolour wash, cream paper, specimen label
+  office_theme: hutan
+  avoid: Clip-art leaves, green gradients, "eco" stock icons.
+
+- id: neo-brutal
+  name: Neo-brutal cerah
+  media: [web, slides, image]
+  fits: [startup, app, aplikasi, produk digital, saas, kampanye, campaign, launch, peluncuran, kreatif, creative, ai tool]
+  palettes:
+    - {bg: "#FFFDF5", ink: "#000000", accent: "#FF90E8", second: "#90F1EF", third: "#FFE14D"}
+    - {bg: "#F6F6F0", ink: "#111111", accent: "#B4F8C8", second: "#FBC4AB", third: "#A0C4FF"}
+  type: {heading: "Unbounded", body: "Darker Grotesque", ui: "Space Grotesk"}
+  layout: Thick black borders, hard 6px offset shadows, flat bright fills, blocks that look pressable.
+  motifs: Hard shadows, chunky buttons, labels in boxes, arrows drawn by hand.
+  motion: Press-down states (shadow shrinks), snappy 120ms.
+  image: flat bold illustration, thick black outlines, hard shadows, bright flat pastel fills
+  office_theme: lavender
+  avoid: Soft shadows, gradients, glass, thin borders.
+
+- id: kapur
+  name: Papan kapur
+  media: [video, image, slides, web]
+  fits: [pelajaran, lesson, matematika, math, fisika, physics, kimia, chemistry, guru, teacher, kursus, course, penjelasan, explainer, rumus]
+  palettes:
+    - {bg: "#2F3B35", ink: "#F1F1E6", accent: "#F7D774", second: "#F29E8E", muted: "#9DAA9F"}
+    - {bg: "#22303C", ink: "#EEF1F2", accent: "#8FD3FE", second: "#FFB4A2", muted: "#93A3B1"}
+  type: {heading: "Kalam", body: "Patrick Hand", ui: "Patrick Hand"}
+  layout: Board with handwritten headings, diagrams drawn step by step, one idea per board, erasing between ideas.
+  motifs: Chalk texture, smudges, underlines and circles, arrows.
+  motion: Strokes write on in drawing order, erased with a smudge wipe.
+  image: chalkboard drawing, dusty chalk strokes, hand-drawn diagram, slight smudges
+  office_theme: hutan
+  avoid: Perfect vector shapes, many fonts, tiny writing.
+
+- id: guntingan-kertas
+  name: Guntingan kertas (paper cut)
+  media: [video, image, web]
+  fits: [cerita, story, dongeng, fairy tale, anak, kids, lingkungan, environment, kampanye sosial, ngo, yayasan, foundation, sejarah]
+  palettes:
+    - {bg: "#F3E9D8", ink: "#2C2A29", accent: "#D1495B", second: "#00798C", third: "#EDAE49"}
+    - {bg: "#E8EEF2", ink: "#263238", accent: "#E07A5F", second: "#3D405B", third: "#81B29A"}
+  type: {heading: "Fredoka", body: "Nunito Sans", ui: "Nunito Sans"}
+  layout: Layered paper planes with soft drop shadows between layers, depth by stacking, scenes as dioramas.
+  motifs: Paper grain, cut edges, small tabs, layered hills and clouds.
+  motion: Parallax between layers, pieces hinge on paper joints like puppets.
+  image: layered paper-cut diorama, soft shadows between paper layers, matte paper texture, warm side light
+  office_theme: senja
+  avoid: Glossy surfaces, thin lines, photoreal elements.
+
+- id: isometrik
+  name: Isometrik bersih
+  media: [image, video, web, slides]
+  fits: [sistem, system, arsitektur software, cloud, server, alur, workflow, logistik, logistics, kota, city, pabrik, factory, proses]
+  palettes:
+    - {bg: "#F5F7FA", ink: "#1F2937", accent: "#F97316", second: "#0EA5A4", muted: "#94A3B8"}
+    - {bg: "#FFF8F0", ink: "#2D2A32", accent: "#3A86FF", second: "#FF006E", muted: "#A39E9A"}
+  type: {heading: "Sora", body: "Manrope", ui: "Manrope"}
+  layout: One isometric scene that explains the system, labels on leader lines, flat colour planes, three tones per material.
+  motifs: Isometric blocks, conveyor paths, dashed data flows, tiny people for scale.
+  motion: Packets travel along paths, blocks assemble from below.
+  image: clean isometric illustration, 30-degree angles, three-tone flat shading, soft palette, small human figures for scale
+  office_theme: es
+  avoid: Random floating 3D blobs, gradients on every face, perspective errors.
+
+- id: tinta-sumi
+  name: Tinta sumi (kuas)
+  media: [image, video, slides]
+  fits: [puisi, poetry, kaligrafi, calligraphy, filosofi, philosophy, refleksi, quote, kutipan, seni bela diri, martial art, teh]
+  palettes:
+    - {bg: "#F5F1E6", ink: "#151515", accent: "#A61C1C", muted: "#8E8A80"}
+    - {bg: "#EAE6DA", ink: "#1C1C1C", accent: "#264653", muted: "#8A867C"}
+  type: {heading: "Noto Serif Display", body: "Noto Serif", ui: "Noto Sans"}
+  layout: One bold brush gesture, a short line of text, a seal; everything else is paper.
+  motifs: Dry-brush edges, ink splatter used once, red seal.
+  motion: Brush stroke paints on with pressure, ink bleeds slightly.
+  image: sumi-e ink wash painting, expressive brush strokes, rice paper texture, red seal stamp, generous empty space
+  office_theme: klasik
+  avoid: Many colours, digital-looking strokes, centred clip art.
+
+- id: komik-panel
+  name: Panel komik
+  media: [video, image, web, slides]
+  fits: [cerita, story, tutorial, onboarding, humor, lucu, funny, edukasi, explainer, kampanye, produk, langkah, step]
+  palettes:
+    - {bg: "#FFFBF0", ink: "#111111", accent: "#E63946", second: "#1D3557", third: "#FFD166"}
+    - {bg: "#FFFFFF", ink: "#121212", accent: "#06D6A0", second: "#EF476F", third: "#FFD166"}
+  type: {heading: "Bangers", body: "Comic Neue", ui: "Comic Neue"}
+  layout: Panels with gutters, speech balloons with tails, one action per panel, read order left to right.
+  motifs: Halftone shading, speed lines, onomatopoeia used sparingly, thick panel borders.
+  motion: Panel-to-panel camera moves, balloons pop in, smear frames on fast actions.
+  image: comic book panel, bold ink outlines, halftone shading, flat colours, dynamic angle
+  office_theme: tinta-merah
+  avoid: Comic Sans, stuffing text into panels, emoji as reactions.
+
+- id: cetak-linoleum
+  name: Cukil linoleum
+  media: [image, web, slides]
+  fits: [kopi, coffee, bir, craft beer, pasar, market, petani, farmer, kerajinan, craft, label, kemasan, packaging, buku, cover]
+  palettes:
+    - {bg: "#EFE7D6", ink: "#1B1B1B", accent: "#B23A48", muted: "#8C8371"}
+    - {bg: "#F2EEE3", ink: "#14213D", accent: "#E07A1F", muted: "#8A8475"}
+  type: {heading: "DM Serif Display", body: "Libre Franklin", ui: "Libre Franklin"}
+  layout: A central carved illustration with type in a banner or arc, borders cut with uneven edges.
+  motifs: Gouge marks, carved line hatching, uneven ink coverage.
+  motion: Ink roll reveal across the print.
+  image: linocut print, carved hatching lines, one colour on cream paper, uneven ink coverage, hand-carved border
+  office_theme: rempah
+  avoid: Smooth vector lines, gradients, more than two colours.
+
+- id: foto-dokumenter
+  name: Foto dokumenter
+  media: [web, slides, video]
+  fits: [ngo, yayasan, foundation, laporan tahunan, annual report, jurnalisme, journalism, kemanusiaan, humanitarian, desa, village, profil, profile]
+  palettes:
+    - {bg: "#FAFAF7", ink: "#151515", accent: "#E85D04", muted: "#7A7A75"}
+    - {bg: "#0F0F0F", ink: "#F2F2F2", accent: "#FFBA08", muted: "#8C8C8C"}
+  type: {heading: "Newsreader", body: "Public Sans", ui: "Public Sans"}
+  layout: Full-bleed real photographs carry the story, short captions with place and date, numbers set large beside photos.
+  motifs: Caption lines, location pins as text, chapter numbers.
+  motion: Slow push-ins on photos, captions fade in after the photo settles.
+  image: documentary photograph, available light, candid, real place, slight grain, no retouching
+  office_theme: samudra
+  avoid: Stock photos, AI-perfect faces, overlays on faces.
+
+- id: es-krim-pastel
+  name: Pastel lembut (clay)
+  media: [web, image, video, slides]
+  fits: [aplikasi, app, fintech, kesehatan, health, mental health, wellness, bayi, baby, kosmetik, cosmetics, dessert, kue, cake]
+  palettes:
+    - {bg: "#FFF6F0", ink: "#2E2A3A", accent: "#FF8FAB", second: "#9BDEAC", third: "#B8C0FF"}
+    - {bg: "#F4F7F5", ink: "#24303A", accent: "#F4A261", second: "#90DBF4", third: "#CDB4DB"}
+  type: {heading: "Fraunces", body: "Figtree", ui: "Figtree"}
+  layout: Soft rounded objects with real volume (clay shading), one object per section, calm spacing.
+  motifs: Clay-like 3D shapes with matte shading, soft contact shadows, pill shapes.
+  motion: Gentle squish on hover/press, slow float.
+  image: matte clay 3D render, soft studio light, pastel colours, rounded forms, visible fingerprint texture
+  office_theme: sakura
+  avoid: Glossy plastic, purple-blue gradient, floating blobs with no meaning.
+
+- id: poster-konstruktivis
+  name: Poster konstruktivis
+  media: [image, web, video, slides]
+  fits: [kampanye, campaign, pemilu, organisasi, organization, buruh, labor, demo, seminar, lomba, competition, olahraga, sport, turnamen]
+  palettes:
+    - {bg: "#EDE6D6", ink: "#111111", accent: "#C1121F", muted: "#7A7466"}
+    - {bg: "#F1EDE4", ink: "#1A1A1A", accent: "#D35400", muted: "#7E786C"}
+  type: {heading: "Big Shoulders Display", body: "Barlow Condensed", ui: "Barlow"}
+  layout: Strong diagonals, type at 15 to 30 degrees, big red wedge, photo cut-outs in black and white.
+  motifs: Wedges, circles, bold bars, condensed caps.
+  motion: Diagonal slams and wipes, type stamps in.
+  image: constructivist poster, red and black on cream, strong diagonals, halftone black-and-white photo cut-outs
+  office_theme: tinta-merah
+  avoid: Soft colours, centred calm layouts.
+
+- id: cyanotype
+  name: Cyanotype biru
+  media: [image, web, slides]
+  fits: [fotografi, photography, seni, art, pameran, exhibition, sains, science, laut, ocean, sea, botani, memori, memory]
+  palettes:
+    - {bg: "#1F4E79", ink: "#F3F6F8", accent: "#F3F6F8", muted: "#8FB0C9"}
+    - {bg: "#F3F1EA", ink: "#173F5F", accent: "#2C6E9B", muted: "#8EA6B8"}
+  type: {heading: "Instrument Serif", body: "Instrument Sans", ui: "Instrument Sans"}
+  layout: Prussian blue fields with white silhouettes of objects, hand-written labels, rough brushed edges.
+  motifs: Brushed emulsion edges, sun-print silhouettes, fingerprints.
+  motion: Exposure reveal (white to blue), slow.
+  image: cyanotype sun print, prussian blue, white silhouettes of leaves and objects, brushed edges, paper texture
+  office_theme: biru-tinta
+  avoid: Other colours, digital shapes, gradients.
+
+- id: kinetik-tipografi
+  name: Tipografi kinetik
+  media: [video, web]
+  fits: [quote, kutipan, motivasi, pengumuman, announcement, teaser, launch, intro, opening, lirik, lyrics, iklan, ad]
+  palettes:
+    - {bg: "#0D0D0D", ink: "#F5F5F0", accent: "#F2C14E", muted: "#7A7A75"}
+    - {bg: "#F5F5F0", ink: "#0D0D0D", accent: "#3D5AFE", muted: "#7A7A75"}
+  type: {heading: "Bebas Neue", body: "Inter Tight", ui: "Inter Tight"}
+  layout: Words are the picture; one to three words on screen, size by importance, cut on the beat.
+  motifs: Masks and reveals, words stacking, one accent word per line.
+  motion: Cut on rhythm, mask reveals 6 to 10 frames, holds long enough to read (about 3 words per second).
+  image: bold typographic poster, condensed caps, high contrast, one accent colour
+  office_theme: grafit
+  avoid: Everything zooming, random fonts, text too fast to read.
