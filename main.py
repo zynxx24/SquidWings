@@ -1812,6 +1812,54 @@ def _update_cmd() -> int:
     return 1
 
 
+def _tools_cmd(action: str, names: list[str]) -> int:
+    """``python main.py tools [install ...]``: what the media tools can use, and installing what is missing."""
+    from utils import toolkit
+
+    def show() -> list[dict[str, Any]]:
+        entries = toolkit.status()
+        table = Table(box=box.SIMPLE_HEAD, show_lines=False)
+        for column in ("", "Program", "Versi", "Dari", "Untuk"):
+            table.add_column(column)
+        for e in entries:
+            mark = "[green]✓[/green]" if e["ready"] else ("[dim]·[/dim]" if e["optional"] else "[red]✗[/red]")
+            table.add_row(mark, e["label"], e["version"] or "-", e["source"] or "-", e["purpose"])
+        console.print(table)
+        for e in entries:
+            if not e["ready"]:
+                label = f"{e['label']} (opsional)" if e["optional"] else e["label"]
+                console.print(f"  [yellow]{escape(label)}[/yellow]: {escape(e.get('note', 'belum terpasang'))}")
+                console.print(f"    [dim]{escape(e['install'])}[/dim]")
+        return entries
+
+    if action == "status":
+        entries = show()
+        return 0 if all(e["ready"] or e["optional"] for e in entries) else 1
+    wanted = names or [e["key"] for e in toolkit.status() if not e["ready"] and not e["optional"]]
+    unknown = [n for n in wanted if n not in toolkit.BY_KEY]
+    if unknown:
+        console.print(f"[red]Tidak dikenal: {', '.join(unknown)}[/red]. Pilih: {', '.join(toolkit.BY_KEY)}")
+        return 2
+    if not wanted:
+        console.print("[green]✓ Semua yang wajib sudah terpasang.[/green]")
+        return 0
+    failed = 0
+    for key in wanted:
+        console.print(f"[cyan]Memasang {key}…[/cyan]")
+        result = toolkit.install(key)
+        if result["ok"]:
+            console.print(f"  [green]✓ {key} {escape(result.get('version', ''))}[/green]")
+            continue
+        failed += 1
+        console.print(f"  [yellow]✗ {escape(result.get('error', 'gagal'))}[/yellow]")
+        hint = result.get("manual") or result.get("output")
+        if hint:
+            console.print(f"    [dim]{escape(hint)}[/dim]")
+    console.print()
+    show()
+    return 1 if failed else 0
+
+
 def _run_async(coro_fn: Callable[..., Any], *fn_args: Any, **fn_kwargs: Any) -> None:
     """Run a coroutine function and exit quietly when the user hits Ctrl+C.
 
@@ -1961,6 +2009,7 @@ Examples:
   python main.py trading --tunnel         Trading panel + MT4 bridge (Enterprise edition)
   python main.py --no-update web          Start without pulling the newest code from GitHub
   python main.py update                   Get the newest version now (a ZIP download too)
+  python main.py tools                    Which media programs are installed (tools install: add the rest)
         """,
     )
     parser.add_argument(
@@ -1996,6 +2045,13 @@ Examples:
 
     # update command
     subparsers.add_parser("update", help="Get the newest version from GitHub now (also works for a ZIP download)")
+
+    # tools command
+    tools_parser = subparsers.add_parser(
+        "tools", help="Media programs: ffmpeg, yt-dlp, faster-whisper, Node, HyperFrames, Remotion, Homebrew",
+    )
+    tools_parser.add_argument("action", nargs="?", choices=["status", "install"], default="status")
+    tools_parser.add_argument("names", nargs="*", help="What to install (default: everything that is missing)")
 
     # web command
     web_parser = subparsers.add_parser("web", help="Start the Web GUI server")
@@ -2052,6 +2108,8 @@ Examples:
         sys.exit(0 if _display_doctor() else 1)
     elif args.command == "update":
         sys.exit(_update_cmd())
+    elif args.command == "tools":
+        sys.exit(_tools_cmd(args.action, args.names))
     elif args.command == "trading":
         from config.edition import ENTERPRISE_NOTE, trading_enabled
 

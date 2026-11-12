@@ -147,17 +147,13 @@ def _recorder_error(proc: subprocess.Popen[bytes]) -> str:
 
 # ── Speech to text ───────────────────────────────────────────────────────────
 
-_whisper = None
-
-
 def _transcribe_whisper(path: Path) -> str:
-    global _whisper
-    from faster_whisper import WhisperModel
+    from utils import whisper_stt
 
-    if _whisper is None:
-        _whisper = WhisperModel(os.getenv("VOICE_STT_MODEL", "").strip() or "base", device="cpu", compute_type="int8")
-    segments, _ = _whisper.transcribe(str(path), language=language(), vad_filter=True, beam_size=5)
-    return " ".join(s.text.strip() for s in segments).strip()
+    try:
+        return whisper_stt.transcribe(path, language()).text
+    except whisper_stt.STTError as exc:
+        raise VoiceIOError(str(exc)) from exc
 
 
 def _transcribe_google(path: Path) -> str:

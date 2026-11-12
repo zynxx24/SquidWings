@@ -45,8 +45,9 @@ def test_upgrades_only_the_tool_that_is_behind(tmp_path, monkeypatch):
     state = tmp_path / "tool_updates.json"
     monkeypatch.setattr(tool_updates, "latest_pypi", lambda *_: "0.9.99")
     monkeypatch.setattr(tool_updates, "latest_npm", lambda *_: "0.19.1")
-    versions = {"graphify": "0.9.91", "aislop": "0.19.1"}
+    versions = {"graphify": "0.9.91", "aislop": "0.19.1", "hyperframes": "0.19.1"}
     monkeypatch.setattr(tool_updates, "installed_version", lambda cmd: versions[cmd])
+    monkeypatch.setattr(tool_updates, "_ytdlp_version", lambda: "0.9.99")
     monkeypatch.setattr(tool_updates.shutil, "which", lambda name: f"/usr/bin/{name}")
     ran = []
 
@@ -58,7 +59,7 @@ def test_upgrades_only_the_tool_that_is_behind(tmp_path, monkeypatch):
     monkeypatch.setattr(tool_updates, "_run_upgrade", fake_upgrade)
     out = tool_updates.run_check(state, force=True, now=5.0)
     actions = {r["tool"]: r["action"] for r in out["results"]}
-    assert actions == {"graphify": "upgraded", "aislop": "none"}
+    assert actions == {"graphify": "upgraded", "aislop": "none", "yt-dlp": "none", "hyperframes": "none"}
     assert ran == [["uv", "tool", "upgrade", "graphifyy"]]
     assert json.loads(state.read_text(encoding="utf-8"))["checked_at"] == 5.0
 
@@ -68,3 +69,26 @@ def test_missing_upgrader_is_reported_not_guessed(tmp_path, monkeypatch):
     monkeypatch.setattr(tool_updates.shutil, "which", lambda name: None)
     result = tool_updates._update_one("aislop", "aislop", "0.2.0", ["npm", "install", "-g", "aislop@latest"])
     assert result["action"].startswith("newer version available")
+
+
+def test_ytdlp_is_upgraded_inside_this_apps_python(tmp_path, monkeypatch):
+    """A yt-dlp a few months old stops working on YouTube, so it is kept current where the app runs it."""
+    import sys
+
+    monkeypatch.setattr(tool_updates, "latest_pypi", lambda name: "2026.11.1" if name == "yt-dlp" else None)
+    monkeypatch.setattr(tool_updates, "latest_npm", lambda *_: None)
+    monkeypatch.setattr(tool_updates, "installed_version", lambda cmd: None)
+    version = {"now": "2026.1.1"}
+    monkeypatch.setattr(tool_updates, "_ytdlp_version", lambda: version["now"])
+    ran = []
+
+    def fake_upgrade(argv):
+        ran.append(argv)
+        version["now"] = "2026.11.1"
+        return True, ""
+
+    monkeypatch.setattr(tool_updates, "_run_upgrade", fake_upgrade)
+    out = tool_updates.run_check(tmp_path / "state.json", force=True, now=1.0)
+    ytdlp = next(r for r in out["results"] if r["tool"] == "yt-dlp")
+    assert ytdlp["action"] == "upgraded" and ytdlp["installed_after"] == "2026.11.1"
+    assert ran and ran[0][0] in (sys.executable, "uv") and ran[0][-1] == "yt-dlp[default]"

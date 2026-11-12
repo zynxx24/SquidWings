@@ -18,6 +18,7 @@ from . import (  # noqa: F401 - importing registers the tools in the catalog
     finance_id_tools,
     geo_maps_tools,
     math_tools,
+    media_tools,
     office_tools,
     style_tools,
     text_encode_tools,

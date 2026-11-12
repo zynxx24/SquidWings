@@ -407,7 +407,11 @@ def test_contextual_skills_stay_dormant_without_context() -> None:
     # "animasi" for a CSS hover is not a video: the context words must match too.
     assert skills.woken("tambah animasi hover di tombol") == []
     assert "animate" not in [s.name for s in skills.select("tambah animasi hover di tombol")]
-    assert skills.woken("bikin video animasi 30 detik") == ["animate"]
+    # A video request also wakes video-audio, whose table sends illustrated animation to animate
+    # and other videos to HyperFrames or Remotion.
+    assert skills.woken("bikin video animasi 30 detik") == ["animate", "video-audio"]
+    assert skills.woken("tolong ringkas video youtube ini") == ["video-audio"]
+    assert skills.woken("buat laporan penjualan bulan ini") == []
 
 
 def test_a_woken_skill_stays_for_that_session_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

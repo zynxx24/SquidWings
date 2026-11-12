@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import random
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
@@ -122,7 +123,7 @@ def with_retry(
             raise last_exception  # type: ignore[misc]
 
         # Return the appropriate wrapper based on function type
-        if asyncio.iscoroutinefunction(func):
+        if inspect.iscoroutinefunction(func):
             return async_wrapper  # type: ignore[return-value]
         return sync_wrapper  # type: ignore[return-value]
 

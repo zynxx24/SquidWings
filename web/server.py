@@ -530,13 +530,26 @@ if _env_bool("VIDEO_UPLOAD_ENABLED", False):
 
 
 def _ffmpeg_exe() -> str:
-    import imageio_ffmpeg
+    from utils.toolkit import ffmpeg_exe
 
-    return str(imageio_ffmpeg.get_ffmpeg_exe())
+    found = ffmpeg_exe()
+    if found is None:
+        raise RuntimeError("ffmpeg is not installed (python main.py tools install ffmpeg)")
+    return found
+
+
+def _transcribe_locally(wav: Path) -> str | None:
+    """The speech in a WAV, read on this machine by faster-whisper. None when it is not installed."""
+    from utils import whisper_stt
+
+    if not whisper_stt.available():
+        return None
+    language = os.getenv("VOICE_LANG", "").strip().lower()
+    return whisper_stt.transcribe(wav, language).text
 
 
 def _transcribe(name: str, data: bytes, is_video: bool) -> str:
-    """Extract mono 16k WAV with ffmpeg, then transcribe it via MarkItDown."""
+    """Extract mono 16k WAV with ffmpeg, then transcribe it: locally with faster-whisper, else via MarkItDown."""
     import subprocess
     import tempfile
 
@@ -555,13 +568,16 @@ def _transcribe(name: str, data: bytes, is_video: bool) -> str:
         )
         if proc.returncode != 0 or not wav.exists():
             raise RuntimeError("No audio track could be extracted")
-        try:
-            result = _markitdown.convert_stream(io.BytesIO(wav.read_bytes()), stream_info=StreamInfo(extension=".wav"))
-            text = result.markdown.strip()
-        except Exception as exc:
-            if "UnknownValueError" not in str(exc):
-                raise
-            text = ""  # audio had no recognisable speech
+        text = _transcribe_locally(wav)
+        if text is None:
+            # Without faster-whisper, MarkItDown sends the audio to Google's online recogniser.
+            try:
+                result = _markitdown.convert_stream(io.BytesIO(wav.read_bytes()), stream_info=StreamInfo(extension=".wav"))
+                text = result.markdown.strip()
+            except Exception as exc:
+                if "UnknownValueError" not in str(exc):
+                    raise
+                text = ""  # audio had no recognisable speech
     kind = "Video" if is_video else "Audio"
     return f"[{kind} transcript of {name}]\n{text or '(no speech detected)'}"
 

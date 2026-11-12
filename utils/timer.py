@@ -18,8 +18,8 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import functools
+import inspect
 import time
 from collections.abc import Callable
 from typing import Any
@@ -108,7 +108,7 @@ def timed[F: Callable[..., Any]](func: F) -> F:
         with Timer(func.__qualname__):
             return func(*args, **kwargs)
 
-    if asyncio.iscoroutinefunction(func):
+    if inspect.iscoroutinefunction(func):
         return async_wrapper  # type: ignore[return-value]
     return sync_wrapper  # type: ignore[return-value]
 

@@ -262,7 +262,10 @@ async def test_media_convert_validates_before_running(ws: Path) -> None:
 async def test_media_convert_without_ffmpeg(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from tool.execute.execute_local_ops import power_tools
 
+    from utils import toolkit
+
     monkeypatch.setattr(power_tools.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(toolkit, "ffmpeg_exe", lambda: None)      # no system ffmpeg and no bundled copy
     result = await media_convert(source="renders/a.mp4", output="o.mp4", preset="mp4", workspace_path=w(ws))
     assert not result["ok"] and "apt install ffmpeg" in result["error"]
 

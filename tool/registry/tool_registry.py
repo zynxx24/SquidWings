@@ -9,6 +9,7 @@ registration.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -180,7 +181,7 @@ class _ToolEntry:
     def __init__(self, schema: ToolSchema, executor: ToolExecutor) -> None:
         self.schema = schema
         self.executor = executor
-        self.is_async = asyncio.iscoroutinefunction(executor)
+        self.is_async = inspect.iscoroutinefunction(executor)
 
 
 class ToolRegistry:

@@ -764,9 +764,11 @@ def _media_convert_sync(
     workspace: Path, source: str, output: str, preset: str, fps: int | None, width: int | None,
     start: float | None, duration: float | None, at_second: float, overwrite: bool, timeout: int,
 ) -> dict[str, Any]:
-    ffmpeg = shutil.which("ffmpeg")
+    from utils.toolkit import ffmpeg_exe, install_hint
+
+    ffmpeg = ffmpeg_exe()      # the system's, else the copy bundled with imageio-ffmpeg
     if not ffmpeg:
-        return _error("ffmpeg is not installed. Install it with: sudo apt install ffmpeg")
+        return _error(f"ffmpeg is not installed. Install it with: {install_hint('ffmpeg')}")
     preset = (preset or "").strip().lower()
     if preset not in _PRESET_SUFFIX:
         return _error(f"preset must be one of {', '.join(_PRESET_SUFFIX)}")

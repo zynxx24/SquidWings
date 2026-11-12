@@ -7,7 +7,7 @@
 Ngobrol, mengerjakan tugas, membaca dokumen, meriset web, dan mengerjakan kode sungguhan:
 mengubah file, menjalankan perintah di sandbox, dan memeriksa hasilnya sendiri.
 
-![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.12%20%7C%203.14-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-555)
 ![API](https://img.shields.io/badge/API-OpenAI--compatible-10a37f)
 ![Sandbox](https://img.shields.io/badge/sandbox-bubblewrap%20%7C%20Docker-orange)
@@ -24,13 +24,19 @@ mengubah file, menjalankan perintah di sandbox, dan memeriksa hasilnya sendiri.
 ```bash
 git clone https://github.com/zynxx24/SquidWings.git
 cd SquidWings
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
+curl -LsSf https://astral.sh/uv/install.sh | sh    # sekali saja: uv memasang Python 3.14 tanpa sudo
+uv venv --seed --python 3.14 .venv && source .venv/bin/activate
+uv pip install -r requirements.txt
 cp .env.example .env        # opsional: provider dan API key bisa diatur di http://127.0.0.1:8080/router
 sudo apt install bubblewrap # sandbox untuk perintah agent
 python main.py doctor       # memastikan sandbox benar-benar mengisolasi
+python main.py tools        # ffmpeg, Node.js, dan program media lain: apa yang sudah ada
 python main.py web          # buka http://127.0.0.1:8080
 ```
+
+Diuji di Python 3.14 (direkomendasikan) dan 3.12, yang juga bisa dipakai dengan `python3 -m venv .venv && pip install -r requirements.txt`.
+
+**Sudah terpasang dengan Python lama?** Hentikan SquidWings, lalu jalankan `bash scripts/upgrade_python.sh`. Skrip ini memasang Python 3.14 lewat uv (python3 bawaan sistem tidak diubah), menyimpan venv lama sebagai `.venv-py3.12`, membuat venv baru, dan memeriksanya. Kalau ada langkah yang gagal, venv lama dikembalikan otomatis.
 
 ### 🔄 Pembaruan otomatis
 
@@ -50,7 +56,7 @@ Repositori ini berisi **SquidWings Community**: harness, chat, tim agent, toolbo
 
 | | Community (repo ini) | Enterprise |
 |---|:---:|:---:|
-| Chat terminal dan web, tim agent, toolbox 127 tool | ✅ | ✅ |
+| Chat terminal dan web, tim agent, toolbox 144 tool | ✅ | ✅ |
 | Execution harness, router model, sandbox, keamanan | ✅ | ✅ |
 | Panel trading `/trading`, chart, dan tiket order | — | ✅ |
 | Jembatan EA MT4 dan adapter MT5 | — | ✅ |
@@ -71,7 +77,8 @@ Lisensi Enterprise: lihat [Lisensi dan pembelian](#-lisensi-dan-pembelian).
 | 📄 Baca dokumen | Teks dan gambar dari PDF, Office, EPUB, ZIP, dan scan, lalu agent menentukan langkahnya |
 | 🔌 Provider bebas | Cukup URL dan API key dari endpoint yang kompatibel dengan OpenAI. Daftar model diambil otomatis |
 | 🧠 Execution harness | Verifikasi hasil, deteksi loop, perbaikan argumen tool, dan eskalasi ke model lebih kuat |
-| 🧰 Toolbox | 127 tool tepat (hitung, tanggal, satuan, tabel, uang, peta, cuaca, kurs, kalkulator risiko, Office, PDF, voice-over ElevenLabs) yang tersembunyi sampai dibutuhkan |
+| 🧰 Toolbox | 144 tool tepat (hitung, tanggal, satuan, tabel, uang, peta, cuaca, kurs, kalkulator risiko, Office, PDF, voice-over ElevenLabs, video dan audio) yang tersembunyi sampai dibutuhkan |
+| 🎬 Video dan audio | Unduh video, audio, atau subtitle dari YouTube dan ±1800 situs (yt-dlp), transkripsi lokal (faster-whisper), dan video dari kode lalu render ke MP4 (HyperFrames atau Remotion) |
 | 📑 Buat dokumen | Word, PowerPoint, Excel, CSV, dan PDF yang rapi, langsung muncul di chat untuk diunduh |
 | 🗺️ Google Maps | Impor hasil scrape, saring dan rangking tempat, jarak, dan ekspor ke Excel atau GeoJSON |
 | 👥 Tim agent | Kanvas alur seperti n8n: delay, gate OR, jadwal, Telegram, dan database |
@@ -229,11 +236,25 @@ python main.py web --replace            # port dipakai SquidWings lama: matikan 
 python main.py models                   # daftar model
 python main.py health                   # cek koneksi API
 python main.py doctor                   # uji isolasi sandbox
+python main.py tools                    # program media yang terpasang (ffmpeg, yt-dlp, Node, ...)
+python main.py tools install            # pasang yang belum ada, tanpa sudo
+python main.py update                   # ambil versi terbaru dari GitHub sekarang
 ```
 
 Perintah di dalam `chat`: `/model`, `/stack`, `/ponytail`, `/memory`, `/chats`, `/brief`, `/voice`, `/sandbox`, `/status`, dan `/help`.
 
-**Suara.** `/voice` merekam lewat mikrofon (perlu `arecord` atau `parecord`), mengubahnya jadi teks, lalu menampilkan hasilnya: Enter untuk kirim, atau ketik perbaikan. Pengenal suara memakai `faster-whisper` bila terpasang (lokal), kalau tidak `SpeechRecognition`, yang mengirim audio ke layanan online Google. `/voice on` membacakan jawaban dengan ElevenLabs (butuh API key dan `ffplay` atau `mpv`); `/voice status` menunjukkan apa yang sudah siap. Di Web UI ada tombol mikrofon di kotak pesan dan tombol *Bacakan* di bawah jawaban; keduanya memakai fitur suara browser, jadi tidak butuh key, dan pesan tidak pernah terkirim sendiri.
+**Suara.** `/voice` merekam lewat mikrofon (perlu `arecord` atau `parecord`), mengubahnya jadi teks, lalu menampilkan hasilnya: Enter untuk kirim, atau ketik perbaikan. Pengenal suara memakai `faster-whisper` (lokal, sudah termasuk di `requirements.txt`; model diunduh sekali saat pertama dipakai). Bila tidak terpasang, `SpeechRecognition` dipakai, yang mengirim audio ke layanan online Google. Transkripsi audio dan video yang diunggah ke chat memakai mesin yang sama. `/voice on` membacakan jawaban dengan ElevenLabs (butuh API key dan `ffplay` atau `mpv`); `/voice status` menunjukkan apa yang sudah siap. Di Web UI ada tombol mikrofon di kotak pesan dan tombol *Bacakan* di bawah jawaban; keduanya memakai fitur suara browser, jadi tidak butuh key, dan pesan tidak pernah terkirim sendiri.
+
+**Video dan audio.** Minta saja dalam chat, misalnya "ringkas video YouTube ini", "unduh audionya", "buat subtitle dari rekaman rapat ini", atau "bikin video intro 15 detik vertikal". Skill `video-audio` memilih tool-nya:
+
+| Tool | Untuk |
+|---|---|
+| `media_info`, `media_download` | Info, video (MP4), audio (MP3), atau hanya subtitle dari satu link lewat yt-dlp. Hanya alamat publik, tidak pernah satu playlist sekaligus |
+| `transcribe` | Suara ke `.txt`, `.srt`, `.vtt`, dan waktu per kata, dihitung di mesin ini |
+| `video_new`, `video_docs`, `video_check`, `video_render` | Proyek **HyperFrames** (HTML + GSAP) atau **Remotion** (React), diperiksa, lalu dirender ke MP4 dan tampil di chat |
+| `media_tools_status` | Apa yang terpasang dan perintah pasang untuk sisanya |
+
+Program di luar Python (ffmpeg, Node.js 22+ untuk HyperFrames, Deno opsional untuk YouTube) dicek dengan `python main.py tools` dan dipasang dengan `python main.py tools install`, lewat **Homebrew** bila ada. Homebrew sendiri dipasang sekali dengan perintah resminya, yang ditampilkan oleh `python main.py tools`. yt-dlp ikut diperbarui otomatis setiap hari (`TOOLS_AUTO_UPDATE`), karena versi yang tertinggal beberapa bulan biasanya sudah tidak bisa mengunduh dari YouTube.
 
 **Brief harian.** Sekali sehari agent merangkum chat sejak kemarin: yang dikerjakan, file yang dibuat atau diubah, dan yang masih menggantung (pesan belum dijawab, pertanyaan untukmu, langkah gagal). Terminal menampilkannya saat start pertama hari itu, Web UI sebagai kartu di halaman kosong, dan `/brief` kapan saja. Dibuat dengan aturan biasa tanpa memanggil model, disimpan di `.agent_memory/briefs/`.
 

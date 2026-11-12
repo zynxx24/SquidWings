@@ -112,11 +112,17 @@ def _install_deps(root: Path) -> str:
     req = root / "requirements.txt"
     if not req.exists() or _env("AUTO_UPDATE_DEPS", "true") in ("false", "0", "off", "no"):
         return ""
+    # A venv made by uv has no pip of its own; uv then installs into it.
+    import importlib.util
+
+    if importlib.util.find_spec("pip") is not None:
+        argv = [sys.executable, "-m", "pip", "install", "-q", "-r", str(req)]
+    elif shutil.which("uv"):
+        argv = ["uv", "pip", "install", "-q", "--python", sys.executable, "-r", str(req)]
+    else:
+        return "; packages not installed (this Python has no pip and uv is not installed)"
     try:
-        done = subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-q", "-r", str(req)],
-            cwd=root, capture_output=True, text=True, timeout=_PIP_TIMEOUT, check=False,
-        )
+        done = subprocess.run(argv, cwd=root, capture_output=True, text=True, timeout=_PIP_TIMEOUT, check=False)
     except (OSError, subprocess.SubprocessError) as exc:
         return f"; packages not installed ({exc})"
     if done.returncode != 0:

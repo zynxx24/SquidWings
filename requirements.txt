@@ -51,7 +51,8 @@ pypdfium2>=4
 rapidocr-onnxruntime>=1.4      # OCR tier "fast": PP-OCRv4 models inside, offline
 rapidocr>=3.10                # OCR tiers "best" and "max": PP-OCRv6 (models fetched once)
 cryptography>=42                # Google Sheets: signs the service-account login (RS256)
-# Optional, for /voice in the terminal (not installed by default). Local, offline speech-to-text:
-#   pip install faster-whisper
-# or the online Google recogniser (sends the audio to Google):
-#   pip install SpeechRecognition
+faster-whisper>=1.2.1          # Speech to text on this machine: /voice, uploads, the transcribe tool
+av>=11,<19                     # PyAV 19 dropped an argument faster-whisper 1.2.1 still passes; lift after its next release
+yt-dlp[default]>=2026.10.26    # Video/audio/subtitle downloads; [default] brings the YouTube JS solver
+# Python 3.12-3.14. Programs outside Python (ffmpeg, Node.js for HyperFrames and Remotion, Homebrew):
+#   python main.py tools

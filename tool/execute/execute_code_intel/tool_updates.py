@@ -1,10 +1,13 @@
-"""Keeps the local code tools (graphify and aislop) current.
+"""Keeps the local tools current: graphify, aislop, yt-dlp and (when installed globally) HyperFrames.
 
 Once a day, in a background thread, this compares the installed version of each program with
 the newest release and upgrades it when there is a newer one. It never blocks a request.
 
 * graphify is a Python tool: upgraded with ``uv tool upgrade`` (package ``graphifyy``).
 * aislop is an npm package: upgraded with ``npm install -g aislop@latest``.
+* yt-dlp lives in this app's own Python and is upgraded there: sites like YouTube change often,
+  and a yt-dlp a few months old stops downloading from them.
+* HyperFrames, only when installed with ``npm install -g hyperframes`` (``npx`` always fetches the newest).
 
 Set ``TOOLS_AUTO_UPDATE=false`` to turn it off. Tests turn it off too, because they must not
 touch the network or the global installs. The last check and its result go to
@@ -21,6 +24,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +40,8 @@ _UPGRADE_TIMEOUT = 600
 
 GRAPHIFY_PACKAGE = "graphifyy"
 AISLOP_PACKAGE = "aislop"
+YTDLP_PACKAGE = "yt-dlp"
+HYPERFRAMES_PACKAGE = "hyperframes"
 
 _started = threading.Lock()
 _started_once = False
@@ -101,8 +107,19 @@ def _run_upgrade(argv: list[str]) -> tuple[bool, str]:
     return done.returncode == 0, tail
 
 
-def _update_one(name: str, command: str, latest: str | None, upgrade: list[str]) -> dict[str, Any]:
-    installed = installed_version(command)
+def _ytdlp_version() -> str | None:
+    """yt-dlp in this app's Python; one on PATH is the system's and is left alone."""
+    import importlib.metadata
+
+    try:
+        return importlib.metadata.version(YTDLP_PACKAGE)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _update_one(name: str, command: str | Callable[[], str | None], latest: str | None,
+                upgrade: list[str]) -> dict[str, Any]:
+    installed = command() if callable(command) else installed_version(command)
     result: dict[str, Any] = {"tool": name, "installed": installed, "latest": latest, "action": "none"}
     if installed is None:
         result["action"] = "not installed"
@@ -113,9 +130,18 @@ def _update_one(name: str, command: str, latest: str | None, upgrade: list[str])
         result["action"] = f"newer version available, but {upgrade[0]} is not installed"
         return result
     ok, tail = _run_upgrade(upgrade)
-    after = installed_version(command)
+    after = command() if callable(command) else installed_version(command)
     result.update(action="upgraded" if ok else "upgrade failed", installed_after=after, output=tail if not ok else "")
     return result
+
+
+def _pip_upgrade(requirement: str) -> list[str]:
+    import importlib.util
+    import sys
+
+    if importlib.util.find_spec("pip") is not None:
+        return [sys.executable, "-m", "pip", "install", "-q", "-U", requirement]
+    return ["uv", "pip", "install", "-q", "--python", sys.executable, "-U", requirement]
 
 
 def run_check(state_path: Path, *, force: bool = False, now: float | None = None) -> dict[str, Any]:
@@ -132,6 +158,9 @@ def run_check(state_path: Path, *, force: bool = False, now: float | None = None
                     ["uv", "tool", "upgrade", GRAPHIFY_PACKAGE]),
         _update_one("aislop", "aislop", latest_npm(AISLOP_PACKAGE),
                     ["npm", "install", "-g", f"{AISLOP_PACKAGE}@latest"]),
+        _update_one("yt-dlp", _ytdlp_version, latest_pypi(YTDLP_PACKAGE), _pip_upgrade("yt-dlp[default]")),
+        _update_one("hyperframes", "hyperframes", latest_npm(HYPERFRAMES_PACKAGE),
+                    ["npm", "install", "-g", f"{HYPERFRAMES_PACKAGE}@latest"]),
     ]
     out = {"checked_at": now, "results": results}
     try:

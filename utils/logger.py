@@ -87,8 +87,8 @@ def _setup_logging(level: str = "INFO", log_file: Path | None = None) -> None:
     )
 
     # Silence noisy third-party loggers
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    for noisy in ("httpx", "httpx2", "httpcore", "huggingface_hub", "faster_whisper"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     _logging_configured = True
 
