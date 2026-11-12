@@ -919,7 +919,7 @@ class Orchestrator:
         tools: list[dict[str, Any]] = []
         tools_on = os.getenv("AGENT_TOOLS_ENABLED", "true").lower() != "false"
         if tools_on and (not limits or limits.max_tools > 0):
-            tools = select_tools(schemas, task_type, user_input, scaffold, disabled)
+            tools = select_tools(schemas, task_type, user_input, scaffold, disabled, limits)
         # Models without native tool calling use the same tools through their text.
         native = bool(model.supports_tools)
         text_protocol = text_tool_protocol(tools) if tools and not native else ""
@@ -946,6 +946,7 @@ class Orchestrator:
             on_reset=on_reset,
         )
 
+        restricted = bool(limits and limits.only_tools is not None)
         if tools:
             protocol = protocol_text(scaffold)
             if protocol:
@@ -953,19 +954,20 @@ class Orchestrator:
             if text_protocol:
                 self._append_system(messages, text_protocol)
             hint = toolbox_hint(tools)
-            if hint:
+            if hint and not restricted:
                 self._append_system(messages, hint)
-            guides, harness.stats.skills_used = skill_guidance(
-                user_input, task_type, scaffold.skill_chars
-            )
-            if guides:
-                self._append_system(messages, guides)
-            briefing, used = await build_briefing(
-                user_input, task_type, workspace, scaffold.briefing_chars
-            )
-            harness.stats.playbooks_used = used
-            if briefing:
-                self._append_system(messages, briefing)
+            if not restricted:
+                guides, harness.stats.skills_used = skill_guidance(
+                    user_input, task_type, scaffold.skill_chars
+                )
+                if guides:
+                    self._append_system(messages, guides)
+                briefing, used = await build_briefing(
+                    user_input, task_type, workspace, scaffold.briefing_chars
+                )
+                harness.stats.playbooks_used = used
+                if briefing:
+                    self._append_system(messages, briefing)
         return harness
 
     @staticmethod

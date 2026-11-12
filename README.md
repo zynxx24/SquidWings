@@ -150,7 +150,7 @@ Pengaturan ada di tiga tempat. Yang di web langsung berlaku tanpa restart.
 | Riset web | `SEARXNG_URL`, `BRAVE_SEARCH_API_KEY`, `WEB_BROWSER_ENABLED` |
 | Memori | `HISTORY_SUMMARY_CHARS`, `HISTORY_MAX_TOKENS`, `OBSIDIAN_VAULT_PATH` |
 | Ponytail | `PONYTAIL_MODE`, `PONYTAIL_TASKS` |
-| Tim agent | `TEAM_RUN_SECONDS`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TEAM_DB_POSTGRES_URL`, `TEAM_DB_MYSQL_URL`, `TEAM_DB_MONGODB_URL` |
+| Tim agent | `WEB_TEAMS_ENABLED`. Selebihnya (batas tim, Telegram, database, Google Sheets, SQLite) diatur di UI: Tim agent > Kredensial. Nama env lama tetap berlaku sebagai cadangan |
 | Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `UPLOAD_INLINE_CHARS`, `DOCUMENT_OCR`, `OCR_MAX_IMAGES`, `OCR_TIER`, `OCR_IMAGE_S`, `OCR_TOTAL_S`, `SEND_IMAGES` |
 | Alat lokal | `GRAPHIFY_AUTO`, `AISLOP_AUTO`, `TOOLS_AUTO_UPDATE` |
 | Suara dan brief | `VOICE_LANG`, `VOICE_STT_MODEL`, `ELEVENLABS_API_KEY`, `DAILY_BRIEF`, `BRIEF_TIME` |

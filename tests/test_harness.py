@@ -385,6 +385,34 @@ async def test_disabled_tool_is_refused_even_if_named_directly(registry, tmp_pat
     assert not (tmp_path / "a.py").exists()
 
 
+async def test_a_run_held_to_a_list_refuses_everything_else(registry, tmp_path) -> None:
+    from agent.harness import RunLimits
+
+    limits = RunLimits(max_rounds=10, tokens=10_000_000, deadline=time.time() + 600, only_tools=frozenset({"read_file"}))
+    harness = make_harness(registry, tmp_path, limits=limits)
+    client = FakeClient(reply("", [("file_write", {"path": "a.py", "content": "x"})]), reply("Tidak bisa."))
+    await run(client, registry, harness)
+    assert not (tmp_path / "a.py").exists()
+    assert "tidak tersedia" in client.requests[-1]["messages"][-1]["content"]
+
+
+def test_a_list_means_exactly_that_list_and_extra_tools_are_added() -> None:
+    from agent.harness import RunLimits
+    from tool.register_tools import register_all_tools
+
+    schemas = register_all_tools().get_all_schemas()
+    lite = scaffold_for("x-flash")
+    soon = time.time() + 60
+    held = RunLimits(max_rounds=5, tokens=1, deadline=soon, only_tools=frozenset({"time_now", "db_read", "nope"}))
+    chosen = {s["function"]["name"] for s in select_tools(schemas, TaskType.CODE, "cari kaos di katalog dan tulis file", lite, limits=held)}
+    assert chosen == {"time_now", "db_read"}                         # nothing else, however the request is worded
+    granted = RunLimits(max_rounds=5, tokens=1, deadline=soon, extra_tools=("db_read", "db_append"))
+    chosen = {s["function"]["name"] for s in select_tools(schemas, TaskType.CODE, "halo", lite, limits=granted)}
+    assert {"db_read", "db_append"} <= chosen
+    plain = {s["function"]["name"] for s in select_tools(schemas, TaskType.CODE, "halo", lite)}
+    assert "db_read" not in plain and "db_append" not in plain      # the toolbox stays hidden for everyone else
+
+
 async def test_text_tool_calls_become_real_calls(registry, tmp_path) -> None:
     text = 'Saya tulis.\n```tool:file_write\n{"path": "t.txt", "content": "hi"}\n```'
     harness = make_harness(registry, tmp_path)

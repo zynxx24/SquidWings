@@ -57,6 +57,11 @@ class RunLimits:
     warn_at: float = 0.7
     # Share after which an agent that has written nothing yet is told to start writing.
     idle_at: float = 0.35
+    # The only tools this run may call (an agent that answers customers). None means no such limit. Calls to
+    # anything else are refused even when the model names them, and skills and playbooks are left out.
+    only_tools: frozenset[str] | None = None
+    # Tools offered on top of the usual choice, such as the data tools a team agent was granted.
+    extra_tools: tuple[str, ...] = ()
 
     def apply(self, scaffold: Scaffold) -> Scaffold:
         if self.override_tier:

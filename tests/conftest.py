@@ -65,6 +65,12 @@ def block_all_network(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def isolated_credentials_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
+    """Keys and limits typed on the web page live in a file; tests must neither read nor write the real one."""
+    monkeypatch.setenv("CREDENTIALS_FILE", str(tmp_path / "credentials.json"))
+
+
+@pytest.fixture(autouse=True)
 def isolated_workspace_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """Team runs and web sessions create folders; keep them out of the real workspace."""
     from utils import workspace_context

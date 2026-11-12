@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from brain import skills
 from config.constants import TaskType
@@ -14,6 +14,9 @@ from utils import session_settings
 from utils.workspace_context import get_active_workspace
 
 from .tiers import Scaffold
+
+if TYPE_CHECKING:
+    from .runtime import RunLimits
 
 # Most important first: the list is cut to the tier's limit.
 _BY_TASK: dict[TaskType, list[str]] = {
@@ -144,6 +147,7 @@ def select_tools(
     user_input: str,
     scaffold: Scaffold,
     disabled: frozenset[str] = frozenset(),
+    limits: RunLimits | None = None,
 ) -> list[dict[str, Any]]:
     """Return the schemas to offer, most relevant first, capped for the tier.
 
@@ -152,6 +156,10 @@ def select_tools(
     """
     by_name = {s.get("function", {}).get("name", ""): s for s in schemas}
     by_name = {name: s for name, s in by_name.items() if name and name not in disabled}
+    if limits is not None and limits.only_tools is not None:
+        # A run held to a short list gets exactly that list: no skills, no toolbox search, nothing it asks for.
+        return [_for_model(by_name[n]) for n in sorted(limits.only_tools) if n in by_name]
+    extra = list(limits.extra_tools) if limits is not None else []
 
     lowered = user_input.lower()
     deferred = execute_toolbox.deferred_names()
@@ -161,7 +169,7 @@ def select_tools(
     matched = execute_toolbox.match(user_input, limit=_MATCHED_TOOLS)
 
     if scaffold.max_tools is None:
-        asked = {*named, *for_skills, *unlocked, *matched}
+        asked = {*named, *extra, *for_skills, *unlocked, *matched}
         names = [n for n in by_name if n not in deferred or n in asked]
         return [_for_model(by_name[n]) for n in sorted(names)]
 
@@ -169,7 +177,7 @@ def select_tools(
     # A tool the user names is always offered, then what an awake skill needs, then
     # the task's core tools and find_tools, then what the request's words pull in,
     # then what this chat unlocked earlier, then the task's remaining tools.
-    wanted = [*named, *for_skills, *base[:_CORE_TOOLS], execute_toolbox.FIND_TOOLS, *matched]
+    wanted = [*named, *extra, *for_skills, *base[:_CORE_TOOLS], execute_toolbox.FIND_TOOLS, *matched]
     for pattern, names in _ON_DEMAND_RE:
         if pattern.search(lowered):
             wanted.extend(names)

@@ -22,6 +22,13 @@ GATE_COMBINES = ("and", "or")
 MERGE_MODES = ("any", "all")
 HTTP_METHODS = ("GET", "POST")
 SCHEDULE_MODES = ("off", "interval", "daily", "cron", "once", "telegram")
+AUDIENCES = ("owner", "public")
+MAX_DATA_GRANTS = 8
+MAX_HIDDEN_COLUMNS = 12
+DEFAULT_HISTORY_TURNS = 6
+MAX_HISTORY_TURNS = 20
+DEFAULT_DAILY_CAP = 300
+MAX_DAILY_CAP = 5000
 BRANCHES = ("A", "B", "C", "D")
 MAX_CONDITIONS = 5
 MAX_SWITCH_RULES = 3
@@ -39,6 +46,7 @@ _PLACEHOLDER_RE = re.compile(r"\{\{\s*([\w.-]+)\s*\}\}")
 _DAY_NAMES = ("Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu")
 _CHAT_ID_RE = re.compile(r"-?\d{1,20}|@\w{1,64}")
 _TABLE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,62}")
+_SOURCE_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
 _YES_RE = re.compile(r"\W*(ya|iya|yes|benar|true)\b", re.IGNORECASE)
 _NO_RE = re.compile(r"\W*(tidak|bukan|no|false)\b", re.IGNORECASE)
 
@@ -69,6 +77,18 @@ def _times(schedule: dict[str, Any]) -> list[str]:
     return times
 
 
+def _bounded(value: Any, default: int, low: int, high: int, label: str) -> int:
+    if value in (None, ""):
+        return default
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} harus berupa angka.") from None
+    if not low <= number <= high:
+        raise ValueError(f"{label} harus {low} sampai {high}.")
+    return number
+
+
 def normalize_schedule(schedule: dict[str, Any] | None) -> dict[str, Any]:
     """Check a team's trigger. Raises ValueError with a message for the user."""
     schedule = schedule or {}
@@ -83,7 +103,16 @@ def normalize_schedule(schedule: dict[str, Any] | None) -> dict[str, Any]:
         keyword = str(schedule.get("keyword") or "").strip()
         if keyword and not _KEYWORD_RE.fullmatch(keyword):
             raise ValueError("Kata pemicu Telegram satu kata saja, misalnya /jadwal.")
-        return {"mode": mode, "keyword": keyword, "task": task}
+        audience = str(schedule.get("audience") or "owner")
+        if audience not in AUDIENCES:
+            raise ValueError("Penerima pesan Telegram hanya pemilik atau pelanggan (publik).")
+        if audience == "owner":
+            return {"mode": mode, "keyword": keyword, "task": task}
+        return {
+            "mode": mode, "keyword": keyword, "task": task, "audience": audience,
+            "history": _bounded(schedule.get("history"), DEFAULT_HISTORY_TURNS, 0, MAX_HISTORY_TURNS, "Riwayat percakapan"),
+            "daily_cap": _bounded(schedule.get("daily_cap"), DEFAULT_DAILY_CAP, 1, MAX_DAILY_CAP, "Batas balasan per hari"),
+        }
     if not task:
         raise ValueError("Jadwal butuh tugas yang akan dijalankan.")
     if mode == "interval":
@@ -246,9 +275,46 @@ def uses_ai(config: dict[str, Any]) -> bool:
     return config.get("mode") == "ai" or any(item.get("mode") == "ai" for item in items)
 
 
+def _data_grants(raw: Any) -> list[dict[str, Any]]:
+    """The data sources an agent may use: [{source, access, hide}]. Access is one of the rights in utils.datastore."""
+    from utils.datastore.access import RIGHTS
+
+    if not raw:
+        return []
+    if not isinstance(raw, list) or len(raw) > MAX_DATA_GRANTS:
+        raise ValueError(f"Akses data maksimal {MAX_DATA_GRANTS} sumber per agent.")
+    grants: dict[str, dict[str, Any]] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("Akses data tiap sumber berbentuk {source, access}.")
+        source = str(item.get("source") or "").strip().lower()
+        if not _SOURCE_RE.fullmatch(source):
+            raise ValueError("Nama sumber data hanya huruf kecil, angka, - dan _.")
+        access = str(item.get("access") or "read")
+        if access not in RIGHTS:
+            raise ValueError(f"Hak akses data tidak dikenal: {access}. Pilih {', '.join(RIGHTS)}.")
+        hide = item.get("hide") or []
+        if isinstance(hide, str):
+            hide = hide.split(",")
+        names = list(dict.fromkeys(str(h).strip()[:60] for h in hide if str(h).strip()))
+        if len(names) > MAX_HIDDEN_COLUMNS:
+            raise ValueError(f"Kolom yang disembunyikan maksimal {MAX_HIDDEN_COLUMNS} per sumber.")
+        grants[source] = {"source": source, "access": access, "hide": names}
+    return list(grants.values())
+
+
 def normalize_node_config(kind: str, config: dict[str, Any] | None, database_ids: tuple[str, ...]) -> dict[str, Any]:
     """Keep only the settings a kind of node uses, and check them."""
     config = config or {}
+    if kind == "agent":
+        # Only what differs from the default is kept, so teams saved before these settings stay as they were.
+        kept: dict[str, Any] = {}
+        if config.get("direct"):
+            kept["direct"] = True
+        grants = _data_grants(config.get("data"))
+        if grants:
+            kept["data"] = grants
+        return kept
     if kind == "delay":
         seconds = int(config.get("seconds") or 0)
         if not 1 <= seconds <= MAX_DELAY_SECONDS:
@@ -330,8 +396,12 @@ def clock_values(now: datetime) -> dict[str, str]:
     }
 
 
-def telegram_task(schedule: dict[str, Any], text: str) -> str | None:
-    """The task a Telegram message starts, or None if it is not for this team."""
+def telegram_task(schedule: dict[str, Any], text: str, history: str = "", sender: str = "") -> str | None:
+    """The task a Telegram message starts, or None if it is not for this team.
+
+    For a customer chat, ``sender`` says who writes and ``history`` is what was said before, so the answer
+    can follow the conversation.
+    """
     keyword = str(schedule.get("keyword") or "")
     message = text.strip()
     if keyword:
@@ -343,6 +413,14 @@ def telegram_task(schedule: dict[str, Any], text: str) -> str | None:
     if not message:
         return None
     context = str(schedule.get("task") or "")
+    if sender or history:
+        parts = [context] if context else []
+        if sender:
+            parts.append(f"[PELANGGAN]\n{sender}")
+        if history:
+            parts.append(f"[PERCAKAPAN SEBELUMNYA]\n{history}")
+        parts.append(f"[PESAN BARU DARI PELANGGAN]\n{message}")
+        return "\n\n".join(parts)
     return f"{context}\n\nPesan: {message}" if context else message
 
 

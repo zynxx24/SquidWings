@@ -13,6 +13,7 @@ from utils.workspace_context import get_active_workspace
 
 from . import (  # noqa: F401 - importing registers the tools in the catalog
     data_tools,
+    datastore_tools,
     dev_tools,
     finance_id_tools,
     geo_maps_tools,

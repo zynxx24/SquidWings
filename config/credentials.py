@@ -1,7 +1,8 @@
 """Keys and IDs for the flow's integrations, set on the web page instead of in ``.env``.
 
 The team page's Kredensial tab writes here: the Telegram bot and chat, web search (Brave and
-SearXNG), the ElevenLabs voice key, and the database URLs a flow can save to. Every reader asks ``get(name)``: a value
+SearXNG), the ElevenLabs voice key, the Google Workspace service-account key, the database URLs a flow can save to,
+and the time, round and token limits of a team run. Every reader asks ``get(name)``: a value
 typed on the page wins, else the one from ``.env`` (``Settings``), else empty. Nothing needs a
 restart: the Telegram poller, the search tool and the database node read it on every use.
 
@@ -34,6 +35,7 @@ class Field:
     hint: str = ""
     pattern: str = ""          # a value that does not match is refused
     example: str = ""
+    multiline: bool = False    # a pasted file, not a one-line value
 
 
 FIELDS: tuple[Field, ...] = (
@@ -52,19 +54,43 @@ FIELDS: tuple[Field, ...] = (
     Field("elevenlabs_voice_id", "Voice ID bawaan", "voice", False, "ELEVENLABS_VOICE_ID",
           "Opsional. Suara yang dipakai bila agent tidak memilih. Lihat daftarnya dengan tool voice_list.",
           r"[A-Za-z0-9]{10,40}", "21m00Tcm4TlvDq8ikWAM"),
+    Field("google_service_account", "Kunci akun layanan (JSON)", "google", True, "",
+          "Tempel seluruh isi file .json dari Google Cloud > IAM > Akun layanan > Kunci. Lalu bagikan tiap spreadsheet "
+          "ke email akun layanan itu sebagai Editor.", "", '{"type": "service_account", "client_email": "...", ...}', True),
+    Field("team_db_sqlite_path", "Lokasi file SQLite", "database", False, "TEAM_DB_SQLITE_PATH",
+          "Tempat node Database menyimpan hasil ke SQLite. Folder dibuat otomatis. Tanpa diisi dipakai lokasi bawaan.",
+          r"[^\r\n\x00]{1,300}", "web/data/teams/flow.sqlite3"),
     Field("team_db_postgres_url", "PostgreSQL URL", "database", True, "TEAM_DB_POSTGRES_URL",
           "", r"postgres(ql)?://\S{3,500}", "postgresql://user:pass@host:5432/db"),
     Field("team_db_mysql_url", "MySQL URL", "database", True, "TEAM_DB_MYSQL_URL",
           "", r"mysql://\S{3,500}", "mysql://user:pass@host:3306/db"),
     Field("team_db_mongodb_url", "MongoDB URL", "database", True, "TEAM_DB_MONGODB_URL",
           "", r"mongodb(\+srv)?://\S{3,500}", "mongodb://user:pass@host:27017/db"),
+    Field("team_run_seconds", "Waktu satu permintaan (detik)", "limits", False, "TEAM_RUN_SECONDS",
+          "Batas waktu seluruh alur untuk satu permintaan.", r"[1-9]\d{0,6}", "600"),
+    Field("team_member_seconds", "Waktu tiap agent (detik)", "limits", False, "TEAM_MEMBER_SECONDS",
+          "Batas waktu satu agent menyelesaikan bagiannya.", r"[1-9]\d{0,6}", "240"),
+    Field("team_member_rounds", "Putaran tiap agent", "limits", False, "TEAM_MEMBER_ROUNDS",
+          "Berapa kali satu agent boleh memanggil tool dan berpikir ulang.", r"[1-9]\d{0,6}", "10"),
+    Field("team_member_tokens", "Token tiap agent", "limits", False, "TEAM_MEMBER_TOKENS",
+          "Batas token satu agent. Naikkan bila tugas besar berhenti terlalu cepat.", r"[1-9]\d{0,6}", "120000"),
+    Field("team_video_run_seconds", "Mode video: waktu satu permintaan (detik)", "limits", False, "TEAM_VIDEO_RUN_SECONDS",
+          "Dipakai tim yang mencentang Mode video.", r"[1-9]\d{0,6}", "3600"),
+    Field("team_video_member_seconds", "Mode video: waktu tiap agent (detik)", "limits", False, "TEAM_VIDEO_MEMBER_SECONDS",
+          "", r"[1-9]\d{0,6}", "1800"),
+    Field("team_video_member_rounds", "Mode video: putaran tiap agent", "limits", False, "TEAM_VIDEO_MEMBER_ROUNDS",
+          "", r"[1-9]\d{0,6}", "40"),
+    Field("team_video_member_tokens", "Mode video: token tiap agent", "limits", False, "TEAM_VIDEO_MEMBER_TOKENS",
+          "", r"[1-9]\d{0,6}", "400000"),
 )
 BY_KEY = {f.key: f for f in FIELDS}
 GROUPS = {
     "telegram": {"label": "Telegram", "description": "Kirim hasil ke Telegram dan jalankan alur dari pesan Telegram."},
     "search": {"label": "Web search", "description": "Sumber pencarian untuk tool web search agent. Tanpa ini memakai pencarian bawaan."},
     "voice": {"label": "ElevenLabs (suara)", "description": "Voice-over dan text to speech. Tanpa ini tool suara menjelaskan cara menyambungkannya."},
-    "database": {"label": "Database", "description": "Tujuan node Database. SQLite lokal selalu tersedia tanpa diisi."},
+    "google": {"label": "Google Workspace (Sheets)", "description": "Database online di Google Sheets: dibaca dan diedit agent dan tab Data."},
+    "database": {"label": "Database", "description": "Tujuan node Database dan sumber data PostgreSQL, MySQL, MongoDB. SQLite lokal selalu tersedia tanpa diisi."},
+    "limits": {"label": "Batas tim", "description": "Batas waktu, putaran, dan token untuk satu permintaan tim. Kosongkan untuk memakai nilai bawaan."},
 }
 
 
@@ -122,6 +148,8 @@ class CredentialStore:
             if spec is None:
                 raise CredentialError(f"Kredensial tidak dikenal: {key}")
             value = str(raw or "").strip()
+            if value and spec.key == "google_service_account":
+                value = _clean_google_key(value)
             if value and spec.pattern and not re.fullmatch(spec.pattern, value):
                 raise CredentialError(f"{spec.label} tidak sesuai format. Contoh: {spec.example}")
             cleaned[key] = value
@@ -148,7 +176,29 @@ def get_store() -> CredentialStore:
         return _store
 
 
+def _clean_google_key(text: str) -> str:
+    """Keep only what a service account needs, so the rest of the downloaded file is never stored."""
+    from utils.datastore.base import DataError
+    from utils.datastore.sheets import parse_service_account
+
+    try:
+        account = parse_service_account(text)
+    except DataError as exc:
+        raise CredentialError(str(exc)) from None
+    return json.dumps({"type": "service_account", **account}, separators=(",", ":"))
+
+
+def google_email() -> str:
+    """The robot's email to share spreadsheets with, or empty."""
+    try:
+        return str(json.loads(get("google_service_account")).get("client_email") or "")
+    except (ValueError, AttributeError):
+        return ""
+
+
 def _env_value(spec: Field) -> str:
+    if not spec.env:
+        return ""      # configured on the page only
     from config.settings import get_settings
 
     with contextlib.suppress(Exception):
@@ -164,12 +214,38 @@ def get(key: str) -> str:
     return get_store().web_value(key) or _env_value(spec)
 
 
+def number(key: str) -> int:
+    """A numeric setting: typed on the page, else ``.env``, else the built-in default.
+
+    Unlike ``get`` this keeps a 0 from ``.env`` (a limit a test or an owner set on purpose)."""
+    from config.settings import get_settings
+
+    web = get_store().web_value(key)
+    if web.isdigit():
+        return int(web)
+    return int(getattr(get_settings(), key))
+
+
+def default_of(key: str) -> str:
+    """The built-in default of a setting that has one, as text, else empty."""
+    from config.settings import get_settings
+
+    with contextlib.suppress(Exception):
+        info = type(get_settings()).model_fields.get(key)
+        if info is not None and info.default not in (None, ""):
+            return str(info.default)
+    return ""
+
+
 def source(key: str) -> str:
-    """Where the value in use comes from: "web", "env", or "" when it is not set."""
+    """Where the value in use comes from: "web", "env", "default" (the built-in value), or "" when it is not set."""
     spec = BY_KEY[key]
     if get_store().web_value(key):
         return "web"
-    return "env" if _env_value(spec) else ""
+    value = _env_value(spec)
+    if not value:
+        return ""
+    return "default" if value == default_of(key) else "env"
 
 
 def public() -> dict[str, Any]:
@@ -177,10 +253,11 @@ def public() -> dict[str, Any]:
     fields = []
     for spec in FIELDS:
         value = get(spec.key)
+        shown = google_email() if spec.key == "google_service_account" and value else mask(value, spec.secret)
         fields.append({"key": spec.key, "label": spec.label, "group": spec.group, "secret": spec.secret, "env": spec.env,
                        "hint": spec.hint, "example": spec.example, "set": bool(value), "source": source(spec.key),
-                       "masked": mask(value, spec.secret)})
+                       "masked": shown, "multiline": spec.multiline, "default": default_of(spec.key)})
     return {"groups": [{"key": k, **v} for k, v in GROUPS.items()], "fields": fields}
 
 
-__all__ = ["FIELDS", "GROUPS", "CredentialStore", "CredentialError", "get", "source", "public", "get_store", "mask"]
+__all__ = ["FIELDS", "GROUPS", "CredentialStore", "CredentialError", "get", "number", "default_of", "source", "public", "get_store", "mask", "google_email"]

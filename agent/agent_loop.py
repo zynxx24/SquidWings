@@ -819,6 +819,13 @@ class AgentLoop:
 
         if harness:
             resolved_name = self._tool_registry.resolve_name(tool_name)
+            only = harness.limits.only_tools if harness.limits else None
+            if only is not None and resolved_name not in only:
+                return {
+                    "success": False,
+                    "error": f"Tool '{tool_name}' tidak tersedia di percakapan ini.",
+                    "tool_name": tool_name,
+                }
             if resolved_name in harness.disabled_tools:
                 return {
                     "success": False,

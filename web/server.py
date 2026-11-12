@@ -55,6 +55,7 @@ from utils.workspace_context import (
     reserve_session_name,
     session_workspace,
 )
+from web.data_api import router as data_router
 from web.team_api import router as team_router
 
 logger = get_logger(__name__)
@@ -137,6 +138,7 @@ app.state.team_orchestrator = None
 _TEAMS_ENABLED = get_settings().teams_enabled
 if _TEAMS_ENABLED:
     app.include_router(team_router)
+    app.include_router(data_router)
 
 # Trading (Enterprise): the MT5 panel, the MT4 EA bridge and the quant API. They are mounted only
 # when the Enterprise module is installed; the community edition has no trading routes at all.

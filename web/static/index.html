@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/app.css">
 <link rel="stylesheet" href="/static/css/team.css">
+<link rel="stylesheet" href="/static/css/data.css">
 <link rel="stylesheet" href="/static/css/soft.css">
 <link rel="stylesheet" href="/static/css/page.css">
 <script src="/static/js/page.js"></script>
@@ -96,6 +97,7 @@
         </div>
         <nav id="wf-tabs" class="wf-tabs" role="tablist" aria-label="Bagian alur">
           <button data-tab="editor" class="on" role="tab" aria-selected="true">Editor</button>
+          <button data-tab="data" role="tab" aria-selected="false">Data</button>
           <button data-tab="runs" role="tab" aria-selected="false">Eksekusi</button>
           <button data-tab="creds" role="tab" aria-selected="false">Kredensial</button>
         </nav>
@@ -116,7 +118,7 @@
 
       <div class="wf-body">
         <div id="wf-editor" class="wf-pane wf-editor">
-          <div id="board" class="board" tabindex="0" aria-label="Kanvas alur. Seret latar untuk menggeser, Ctrl+scroll untuk zoom, Tab untuk menambah node.">
+          <div id="board" class="board" tabindex="0" aria-label="Kanvas alur. Klik kanan untuk menu, seret latar untuk menggeser, Ctrl+scroll untuk zoom, Tab untuk menambah node.">
             <div id="canvas" class="canvas">
               <svg id="edges" class="edges" width="6000" height="4000" aria-hidden="true">
                 <defs>
@@ -160,6 +162,22 @@
           </aside>
         </div>
 
+        <div id="wf-data" class="wf-pane wf-data hidden">
+          <aside class="data-side" aria-label="Sumber data">
+            <div class="data-side-head"><h3>Sumber data</h3><button id="data-add" class="btn btn-ghost btn-small" type="button">+ Sumber</button></div>
+            <div id="data-sources" class="data-sources"></div>
+            <p class="hint data-tip">Klik kanan sebuah sumber, sel, baris, atau judul kolom untuk mengubahnya. Menu juga terbuka dengan tombol Menu atau Shift+F10.</p>
+          </aside>
+          <section class="data-main" aria-label="Isi data">
+            <div id="data-bar" class="data-bar"></div>
+            <p id="data-note" class="data-note" hidden></p>
+            <div id="data-grid-wrap" class="data-grid-wrap" tabindex="0" aria-label="Tabel data. Panah untuk memilih sel, Enter untuk mengedit, Shift+F10 untuk menu.">
+              <div id="data-grid"></div>
+            </div>
+            <div id="data-foot" class="data-foot"></div>
+          </section>
+        </div>
+
         <div id="wf-runs" class="wf-pane wf-runs hidden">
           <div id="runs-list" class="runs-list"></div>
           <div id="run-detail" class="run-detail"></div>
@@ -168,7 +186,7 @@
         <div id="wf-creds" class="wf-pane wf-creds hidden">
           <div class="creds-wrap">
             <h2>Kredensial</h2>
-            <p class="hint">Key dan ID untuk Telegram, web search, dan database. Diatur di sini, tidak perlu membuka .env di server.</p>
+            <p class="hint">Key dan ID untuk Telegram, web search, suara, Google Workspace, dan database. Semuanya diatur di sini, tidak perlu membuka .env di server.</p>
             <div id="creds-body" class="creds-body"></div>
           </div>
         </div>
@@ -230,8 +248,10 @@
 <script src="/static/js/marked.min.js"></script>
 <script src="/static/js/purify.min.js"></script>
 <script src="/static/js/highlight.min.js"></script>
+<script src="/static/js/ctxmenu.js"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/team.js"></script>
+<script src="/static/js/data.js"></script>
 <script src="/static/js/voice.js"></script>
 <script src="/static/js/brief.js"></script>
 </body>

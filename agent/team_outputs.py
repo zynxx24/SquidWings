@@ -25,7 +25,6 @@ import httpx
 
 from agent.team_flow import is_valid_table
 from config import credentials
-from config.settings import get_settings
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -103,6 +102,18 @@ async def send_telegram(text: str, chat_id: str = "") -> int:
     return len(parts)
 
 
+async def send_chat_action(chat_id: str, action: str = "typing") -> None:
+    """Show "typing…" in a chat while the answer is being made. Best effort: a failure changes nothing."""
+    token = credentials.get("telegram_bot_token")
+    if not token or not chat_id:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            await client.post(f"https://api.telegram.org/bot{token}/sendChatAction", json={"chat_id": chat_id, "action": action})
+    except httpx.HTTPError:
+        return
+
+
 async def fetch_telegram_updates(offset: int | None, wait: int = _TELEGRAM_POLL_SECONDS) -> list[dict[str, Any]]:
     """New messages sent to the bot, by long polling. Empty when Telegram is not set up."""
     token = credentials.get("telegram_bot_token")
@@ -176,7 +187,7 @@ def database_options() -> list[dict[str, Any]]:
 
 
 def _save_sqlite(table: str, record: dict[str, Any]) -> None:
-    path = Path(get_settings().team_db_sqlite_path)
+    path = Path(credentials.get("team_db_sqlite_path"))
     path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(path) as connection:
         connection.execute(_create_table(table, "INTEGER PRIMARY KEY AUTOINCREMENT"))

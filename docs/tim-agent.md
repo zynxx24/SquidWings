@@ -1,8 +1,8 @@
 # Tim agent
 
-Menu ini aktif dengan `WEB_TEAMS_ENABLED=true`. Satu permintaan tim dibatasi 10 menit, dan tiap agent 4 menit serta 120 ribu token. Ubah lewat `TEAM_RUN_SECONDS`, `TEAM_MEMBER_SECONDS`, `TEAM_MEMBER_ROUNDS`, dan `TEAM_MEMBER_TOKENS`.
+Menu ini aktif dengan `WEB_TEAMS_ENABLED=true` (satu-satunya pengaturan tim yang tetap di `.env`, karena menentukan apakah menunya dipasang saat server mulai). Satu permintaan tim dibatasi 10 menit, dan tiap agent 4 menit, 10 putaran, serta 120 ribu token. Ubah di tab **Kredensial** > **Batas tim**; langsung berlaku tanpa restart.
 
-Centang **Mode video** pada tim yang membangun dan merender video. Tim itu dapat 60 menit per permintaan, dan tiap agent 30 menit, 40 putaran, serta 400 ribu token. Skill `animate` juga langsung aktif di sesinya. Ubah lewat `TEAM_VIDEO_RUN_SECONDS`, `TEAM_VIDEO_MEMBER_SECONDS`, `TEAM_VIDEO_MEMBER_ROUNDS`, dan `TEAM_VIDEO_MEMBER_TOKENS`. Template **Studio video animasi** sudah memakai mode ini: penulis naskah, animator, lalu editor yang meninjau dan mengirim videonya ke hasil tim.
+Centang **Mode video** pada tim yang membangun dan merender video. Tim itu dapat 60 menit per permintaan, dan tiap agent 30 menit, 40 putaran, serta 400 ribu token. Skill `animate` juga langsung aktif di sesinya. Angkanya juga diubah di **Batas tim** (isian berawalan "Mode video"). Template **Studio video animasi** sudah memakai mode ini: penulis naskah, animator, lalu editor yang meninjau dan mengirim videonya ke hasil tim.
 
 Agar model murah juga sampai ke video:
 
@@ -15,20 +15,23 @@ Agar model murah juga sampai ke video:
 
 ## Editor alur
 
-Tim disusun di kanvas yang dibaca dari kiri ke kanan, seperti editor workflow n8n. Bagian atas punya tiga tab: **Editor**, **Eksekusi**, dan **Kredensial**.
+Tim disusun di kanvas yang dibaca dari kiri ke kanan, seperti editor workflow n8n. Bagian atas punya empat tab: **Editor**, **Eksekusi**, **Data**, dan **Kredensial**.
+
+**Tanpa klik dua kali.** Semua perubahan lewat klik kanan, atau tombol Menu / Shift+F10 pada elemen yang sedang fokus, atau tekan lama di layar sentuh. Node juga punya tombol ⋯ di pojoknya.
 
 **Di kanvas**
 
-- Node pertama selalu **Pemicu**. Klik dua kali untuk memilih kapan alur berjalan.
+- Node pertama selalu **Pemicu**. Klik kanan > **Atur pemicu** untuk memilih kapan alur berjalan.
 - **Menyambung:** seret titik di sisi kanan node ke node lain. Lepas di tempat kosong untuk langsung menambah node di situ.
-- **Memutus:** klik garisnya, lalu tekan Delete atau tombol ×.
+- **Memutus:** klik kanan garisnya > **Putus sambungan**, atau klik garisnya lalu tekan Delete.
+- **Klik kanan di node:** edit, ganti nama, duplikat, tambah node setelahnya, atau hapus. **Klik kanan di latar:** tambah node di titik itu, muat semua node, zoom, rapikan, simpan, jalankan.
 - Garis putus-putus dibuat otomatis: agent tanpa sambungan keluar mengirim hasilnya ke Lead, Lead ke Reviewer, dan jawaban akhir ke node Telegram atau Database yang belum disambung.
 - **Menambah node:** tombol **+** di kanan atas atau tombol Tab membuka daftar node, lengkap dengan kotak pencarian. Tombol + kecil di ujung keluaran node menambah node yang langsung tersambung.
 - **Menggeser kanvas:** seret latarnya, atau scroll. Ctrl+scroll untuk zoom.
 - **Merapikan:** tombol di pojok kiri bawah memuat semua node ke layar (tombol 1), mengatur zoom, dan merapikan tata letak.
 - Ctrl+S menyimpan. Selama ada perubahan yang belum disimpan, label **Belum disimpan** muncul di samping nama alur.
 
-**Detail node.** Klik dua kali sebuah node (atau tekan Enter) untuk membuka tiga kolom:
+**Detail node.** Klik kanan sebuah node > **Edit node** (atau fokus lalu tekan Enter) untuk membuka tiga kolom:
 
 | Kolom | Isi |
 |---|---|
@@ -90,6 +93,37 @@ Template yang tersedia:
 
 Setiap agent pekerja menutup laporannya dengan **Hasil**, **Bukti**, dan **Belum pasti**. Lead memeriksa file yang disebut laporan sebelum memakainya, dan reviewer ikut mencari tanda AI slop pada karya visual.
 
+## Data: file dan database online
+
+Tab **Data** adalah editor tabel untuk semua sumber data yang bisa dibaca agent. Semua jenis dipakai dengan cara yang sama, jadi boleh campur offline dan online:
+
+| Jenis | Contoh |
+|---|---|
+| File | `.csv`, `.tsv`, `.json`, `.jsonl`, `.xlsx` |
+| Database lokal | SQLite |
+| Database online | PostgreSQL, MySQL, MongoDB, Google Sheets |
+
+Tambah sumber lewat tombol **+ Sumber** (di komputer ini: file baru, impor file, contoh toko; online: Google Sheets, atau URL PostgreSQL, MySQL, MongoDB). Sumber yang gagal tersambung langsung dibuang dari daftar. Tidak ada yang berpindah: file tetap di tempatnya, database tetap di server asalnya.
+
+- **Mengedit:** klik kanan sel > **Edit sel**, klik kanan judul kolom (sortir, tambah, ganti nama, hapus kolom), klik kanan nomor baris (tambah atau hapus baris), klik kanan sumber di daftar kiri. Tabel besar dibuka per halaman, dengan kotak cari.
+- **Aman:** angka tetap angka (`80.000` jadi 80000). File ditulis atomik dan versi lamanya disalin ke `.backups/`. Bila baris sudah diubah orang lain sejak dibuka, perubahan ditolak (409) supaya tidak menimpa. Perubahan membutuhkan PIN Router bila PIN dipasang.
+- **Google Sheets:** buat akun layanan di Google Cloud, tempel kunci JSON-nya di **Kredensial > Google Workspace**, lalu bagikan tiap spreadsheet ke email akun layanan itu sebagai Editor. Tempel URL spreadsheet di **+ Sumber > Google Sheets**.
+- **Untuk agent:** di detail node agent, bagian **Akses data** memilih sumber mana yang boleh dipakai dan hak aksesnya: baca, tambah baris saja, baca dan tambah, atau tulis penuh. Kolom bisa disembunyikan per sumber (nama berawalan `_` selalu tersembunyi). Tool-nya: `db_sources`, `db_schema`, `db_read`, `db_search`, `db_append`, `db_update`, `db_delete`, `db_alter`, dan `owner_notify` (memberi tahu Anda lewat Telegram).
+
+## Bot Telegram untuk toko
+
+Dua template siap pakai di daftar template (atau **+ Sumber > Contoh toko** di tab Data; memilih template toko juga otomatis membuat file `katalog` dan `pesanan`):
+
+- **Bot kasir toko** menjawab pelanggan di Telegram: `/start` dan `/bantuan` dijawab langsung, pesan lain ditangani agent kasir yang hanya boleh **membaca katalog** dan **menambah baris pesanan**, lalu semua percakapan dicatat ke tabel `percakapan_toko`.
+- **Admin toko** hanya menjawab Anda (kata pemicu `/atur`) dan boleh menulis penuh ke katalog dan pesanan, jadi harga dan stok bisa diubah lewat chat.
+
+Pemicu Telegram punya pilihan **Siapa yang boleh menulis ke bot**: *Hanya saya* (chat ID di Kredensial) atau *Pelanggan (publik)*. Untuk pelanggan publik:
+
+- Hanya chat pribadi yang dilayani. Tiap chat dibatasi 6 pesan per menit, dan ada batas balasan otomatis per hari (bawaan 300, diubah di pemicu). Bila terlampaui, Anda dapat satu pemberitahuan.
+- Agent publik hanya memakai tool data yang diizinkan plus `time_now` dan `calc`; tidak bisa menulis file, menjalankan perintah, atau browsing. Teks pelanggan dan nama pengirim diperlakukan sebagai data, bukan perintah.
+- Riwayat percakapan per pelanggan (bawaan 6 giliran) disimpan 7 hari di `chats.json` di folder tim (izin 0600).
+- Kegagalan dan jawaban yang tidak masuk dikirim ke Anda, dan pelanggan menerima permintaan maaf singkat.
+
 ## Kredensial
 
 Tab **Kredensial** mengatur key dan ID tanpa membuka `.env` di server:
@@ -99,11 +133,13 @@ Tab **Kredensial** mengatur key dan ID tanpa membuka `.env` di server:
 | Telegram | Bot token (dari @BotFather) dan Chat ID | Mengirim pesan tes ke chat itu |
 | Web search | Brave Search API key dan URL SearXNG, dipakai tool web search agent | Satu pencarian berisi satu hasil |
 | ElevenLabs (suara) | API key dan Voice ID bawaan, dipakai `voice_list` dan `voice_speak` | Mengambil daftar suara dan sisa kuota, tanpa memakai karakter |
-| Database | URL PostgreSQL, MySQL, dan MongoDB | Membuka koneksi lalu menutupnya, tanpa menulis apa pun |
+| Google Workspace | Kunci akun layanan (JSON) untuk Google Sheets | Meminta token ke Google dan menampilkan email yang harus diberi akses |
+| Database | Lokasi file SQLite, URL PostgreSQL, MySQL, dan MongoDB | Membuka koneksi lalu menutupnya, tanpa menulis apa pun |
+| Batas tim | Waktu, putaran, dan token per permintaan (biasa dan mode video) | tidak ada |
 
 Untuk tahu Chat ID-mu, kirim pesan ke bot lalu buka `https://api.telegram.org/bot<TOKEN>/getUpdates`.
 
-Nilai yang diisi di sini menang atas `.env` dan langsung berlaku, tanpa restart. Itu termasuk polling Telegram dan tool web search. Label di tiap isian menunjukkan sumber nilainya: **Dari web**, **Dari .env**, atau **Belum diisi**. **Hapus** membuang nilai dari web, sehingga nilai dari `.env` dipakai lagi. Halaman hanya menerima versi tersamar dari setiap secret, misalnya `…mmnn`. Semuanya disimpan di `web/data/credentials.json` dengan izin 0600, dan tidak ikut git. Pindahkan dengan `CREDENTIALS_FILE`.
+Nilai yang diisi di sini menang atas `.env` dan langsung berlaku, tanpa restart. Itu termasuk polling Telegram dan tool web search. Label di tiap isian menunjukkan sumber nilainya: **Dari web**, **Dari .env**, **Bawaan**, atau **Belum diisi**. **Hapus** membuang nilai dari web, sehingga nilai dari `.env` dipakai lagi. Halaman hanya menerima versi tersamar dari setiap secret, misalnya `…mmnn`. Semuanya disimpan di `web/data/credentials.json` dengan izin 0600, dan tidak ikut git. Pindahkan dengan `CREDENTIALS_FILE`.
 
 Database selain SQLite butuh drivernya:
 
@@ -113,7 +149,7 @@ pip install pymysql             # MySQL / MariaDB
 pip install pymongo             # MongoDB
 ```
 
-API-nya: `GET /api/teams/credentials`, `PUT /api/teams/credentials` dengan `{"values": {"telegram_bot_token": "..."}}` (nilai kosong berarti hapus), dan `POST /api/teams/credentials/test` dengan `{"group": "telegram" | "search" | "database", "database": "postgres"}`.
+API-nya: `GET /api/teams/credentials`, `PUT /api/teams/credentials` dengan `{"values": {"telegram_bot_token": "..."}}` (nilai kosong berarti hapus), dan `POST /api/teams/credentials/test` dengan `{"group": "telegram" | "search" | "voice" | "google" | "database", "database": "postgres"}`.
 
 ## Mengirim file ke chat
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict
@@ -105,7 +106,7 @@ async def save_credentials(payload: CredentialsInput) -> dict[str, Any]:
 
 
 class CredentialTest(BaseModel):
-    group: str = Field(pattern=r"^(telegram|search|database)$")
+    group: str = Field(pattern=r"^(telegram|search|database|voice|google)$")
     database: str = Field(default="", max_length=20)
 
 
@@ -148,6 +149,18 @@ async def _test_voice() -> str:
     return f"ElevenLabs tersambung: {out['count']} suara{left}."
 
 
+def _test_google() -> str:
+    """Ask Google for a token with the saved key: proves the key is real, without touching any spreadsheet."""
+    from utils.datastore import DataError
+    from utils.datastore.sheets import SheetsBackend, parse_service_account
+
+    try:
+        email = SheetsBackend("", parse_service_account(credentials.get("google_service_account"))).verify_account()
+    except DataError as exc:
+        raise OutputError(str(exc)) from None
+    return f"Google menerima kuncinya. Bagikan spreadsheet ke {email} sebagai Editor supaya bisa dipakai."
+
+
 @router.post("/credentials/test", dependencies=[Depends(admin)])
 async def test_credentials(payload: CredentialTest) -> dict[str, Any]:
     """Try the saved keys for real: a Telegram message, a one-result search, the ElevenLabs voices, or a database."""
@@ -160,6 +173,8 @@ async def test_credentials(payload: CredentialTest) -> dict[str, Any]:
             return {"ok": True, "message": f"{' dan '.join(done)} menjawab."}
         if payload.group == "voice":
             return {"ok": True, "message": await _test_voice()}
+        if payload.group == "google":
+            return {"ok": True, "message": await asyncio.to_thread(_test_google)}
         await check_database(payload.database or "sqlite")
         return {"ok": True, "message": "Database tersambung."}
     except OutputError as exc:

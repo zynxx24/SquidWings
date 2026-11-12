@@ -2,12 +2,13 @@
 
    The canvas reads left to right: a trigger node, then every node in the order it runs. Drag
    from a node's output dot to another node to connect them, drop on empty space to add a node
-   there, click a line and press Delete (or ×) to cut it. Double-click a node to open its detail
-   view: what came in, its settings, and what it sent out. The + button opens the node list.
-   Pan by dragging the background or scrolling, zoom with Ctrl+scroll or the buttons.
+   there, click a line and press Delete (or ×) to cut it. Right-click a node (or press Enter, the Menu key, or
+   the ⋯ on the node) for its menu: Edit opens the detail view with what came in, its settings, and what it sent
+   out. Right-click a line, the trigger, a run, or empty canvas for theirs. Nothing needs a double click.
+   The + button opens the node list. Pan by dragging the background or scrolling, zoom with Ctrl+scroll or the buttons.
 
-   Tabs: Editor (the canvas), Eksekusi (past runs), Kredensial (Telegram, web search and
-   database keys, saved on the server instead of in .env).
+   Tabs: Editor (the canvas), Data (files and cloud tables the agents use), Eksekusi (past runs), Kredensial
+   (Telegram, web search, voice, Google and database keys, saved on the server instead of in .env).
 
    The saved flow is the same as before: members with depends_on, branch, kind and config, a lead,
    a reviewer, and a schedule. Positions live in this browser only. */
@@ -72,7 +73,7 @@
     { mode: 'daily', label: 'Jam tertentu', desc: 'Satu atau beberapa jam setiap hari yang dipilih.' },
     { mode: 'cron', label: 'Cron', desc: 'Pola jadwal lengkap, misalnya 0 7 * * 1-5.' },
     { mode: 'once', label: 'Sekali', desc: 'Pada tanggal dan jam tertentu.' },
-    { mode: 'telegram', label: 'Pesan Telegram', desc: 'Saat chat yang diizinkan mengirim pesan ke bot.' },
+    { mode: 'telegram', label: 'Pesan Telegram', desc: 'Saat ada pesan ke bot: dari kamu saja, atau dari pelanggan.' },
   ];
   const NODE_DEFAULTS = {
     agent: { name: 'AI Agent', role: 'Spesialis', config: {} },
@@ -201,7 +202,7 @@
       case 'daily': return `Jam ${(schedule.times || [schedule.time || '--:--']).join(', ')}`;
       case 'cron': return `Cron ${schedule.cron || '?'}`;
       case 'once': return `Sekali, ${(schedule.at || '').replace('T', ' ')}`;
-      case 'telegram': return `Pesan Telegram${schedule.keyword ? ` ${schedule.keyword}` : ''}`;
+      case 'telegram': return `${schedule.audience === 'public' ? 'Pesan pelanggan' : 'Pesan Telegram'}${schedule.keyword ? ` ${schedule.keyword}` : ''}`;
       default: return 'Saat Jalankan alur ditekan';
     }
   }
@@ -296,6 +297,7 @@
         <span class="node-icon">${nodeIcon('trigger')}</span>
         <span class="node-text"><span class="node-kind">Pemicu${triggerMode !== 'off' ? ' · otomatis' : ''}</span><span class="node-name">${esc(TRIGGERS.find(t => t.mode === triggerMode)?.label || 'Manual')}</span><span class="node-sub">${esc(triggerLabel())}</span></span>
         <span class="port out" data-port="" data-from="${TRIGGER}" title="Seret ke node untuk menjadikannya langkah pertama"></span>
+        <button class="node-more" type="button" tabindex="-1" aria-label="Menu pemicu" title="Menu (atau klik kanan)">⋯</button>
       </div>`;
     const nodes = S.members.map(member => {
       const ports = portsOf(member);
@@ -315,6 +317,7 @@
           <span class="node-icon">${nodeIcon(kind)}</span>
           <span class="node-text"><span class="node-kind">${esc(roleLabel(member))}</span><span class="node-name">${esc(member.name || 'Tanpa nama')}</span><span class="node-sub">${esc(nodeDetail(member))}</span></span>
           ${role}<span class="node-status" aria-hidden="true"></span>
+          <button class="node-more" type="button" tabindex="-1" aria-label="Menu ${esc(member.name)}" title="Menu (atau klik kanan)">⋯</button>
           ${outs}
           <span class="node-state"></span>
         </div>`;
@@ -322,8 +325,15 @@
     $('nodes').innerHTML = trigger + nodes;
     $('nodes').querySelectorAll('.node').forEach(el => {
       el.onpointerdown = e => nodePointerDown(e, el);
-      el.ondblclick = e => { if (!e.target.closest('.port, .port-add')) openNdv(el.dataset.id); };
-      el.onkeydown = e => { if (e.key === 'Enter') openNdv(el.dataset.id); };
+      el.onkeydown = e => { if (e.key === 'Enter' && e.target === el) openNdv(el.dataset.id); };
+      const more = el.querySelector('.node-more');
+      more.onpointerdown = e => e.stopPropagation();
+      more.onclick = e => {
+        e.stopPropagation();
+        selectNode(el.dataset.id);
+        const box = more.getBoundingClientRect();
+        window.SQMenu.show(el.dataset.id === TRIGGER ? triggerMenu() : nodeMenu(el.dataset.id), box.left, box.bottom, el);
+      };
     });
     $('nodes').querySelectorAll('.port.out').forEach(port => { port.onpointerdown = e => portPointerDown(e, port); });
     $('nodes').querySelectorAll('.port-add').forEach(button => {
@@ -376,7 +386,7 @@
         statusOf(edge.to) === 'skipped' ? 'skipped' : '', statusOf(edge.to) === 'completed' ? 'done' : ''].filter(Boolean).join(' ');
       html.push(`<path class="${cls}" d="${d}" marker-end="url(#arrow)"/>`);
       if (edge.auto) html.push(`<path class="edge-hit auto" d="${d}"><title>${esc(edge.title || '')}</title></path>`);
-      else html.push(`<path class="edge-hit" d="${d}" data-from="${esc(edge.from)}" data-to="${esc(edge.to)}"><title>Klik untuk memilih, lalu Delete untuk memutus</title></path>`);
+      else html.push(`<path class="edge-hit" d="${d}" data-from="${esc(edge.from)}" data-to="${esc(edge.to)}"><title>Klik untuk memilih, lalu Delete untuk memutus. Klik kanan untuk menu.</title></path>`);
       if (isSelected) S.selectedEdgeMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     });
     $('edge-lines').innerHTML = html.join('');
@@ -578,6 +588,107 @@
     afterChange();
   }
 
+  /* ── Right-click menus ───────────────────────────── */
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); toast('Disalin.'); } catch { toast('Tidak bisa menyalin. Salin dari kotak hasilnya.'); }
+  }
+
+  function renameNode(id) {
+    const member = memberById(id);
+    if (!member) return;
+    const name = prompt('Nama node:', member.name || '');
+    if (name === null || !name.trim()) return;
+    member.name = name.trim().slice(0, 60);
+    if (kindOf(member) !== 'agent') member.role = member.name;
+    markDirty();
+    refreshNodeCard(member);
+    if (S.ndv === id) renderNdv();
+  }
+
+  function duplicateNode(id) {
+    const source = memberById(id);
+    if (!source) return;
+    if (S.members.length >= MAX_NODES) { toast(`Maksimal ${MAX_NODES} node.`); return; }
+    if (kindOf(source) === 'agent' && S.members.filter(m => kindOf(m) === 'agent').length >= MAX_AGENTS) { toast(`Maksimal ${MAX_AGENTS} agent.`); return; }
+    const copy = JSON.parse(JSON.stringify(source));
+    copy.id = newId();
+    copy.name = `${source.name || 'Node'} (salinan)`.slice(0, 60);
+    if (kindOf(copy) !== 'agent') copy.role = copy.name;
+    copy.x = source.x + 36;
+    copy.y = source.y + ROW;
+    while (S.members.some(m => Math.abs(m.x - copy.x) < NODE_W - 20 && Math.abs(m.y - copy.y) < BASE_H)) copy.y += ROW;
+    S.members.push(copy);
+    selectNode(copy.id);
+    afterChange();
+    savePositions();
+  }
+
+  /* Whether an agent is a plain worker, the lead (writes the final answer) or the reviewer. */
+  function setPosition(id, value) {
+    const member = memberById(id);
+    if (!member) return;
+    if (S.lead === id) S.lead = null;
+    if (S.reviewer === id) S.reviewer = null;
+    if (value === 'lead') S.lead = id;
+    if (value === 'reviewer') { S.reviewer = id; member.depends_on = []; }
+    if (!S.lead) S.lead = defaultLead();
+    if (S.lead === S.reviewer) S.lead = S.members.find(m => m.id !== S.reviewer && kindOf(m) === 'agent')?.id || null;
+    afterChange();
+  }
+
+  function nodeMenu(id) {
+    const member = memberById(id);
+    if (!member) return null;
+    const items = [
+      { label: 'Edit node…', hint: 'Enter', run: () => openNdv(id) },
+      { label: 'Ganti nama…', run: () => renameNode(id) },
+      { label: 'Duplikat', run: () => duplicateNode(id) },
+      { separator: true },
+      { label: 'Tambah node setelah ini…', run: () => openCreator({ from: id, branch: isBranching(member) ? 'A' : '' }) },
+    ];
+    if (kindOf(member) === 'agent') {
+      items.push({ separator: true }, { heading: 'Posisi di alur' },
+        { label: 'Agent biasa', disabled: id !== S.lead && id !== S.reviewer ? 'Sudah agent biasa' : false, run: () => setPosition(id, 'worker') },
+        { label: 'Lead (menulis jawaban akhir)', disabled: id === S.lead ? 'Sudah Lead' : false, run: () => setPosition(id, 'lead') },
+        { label: 'Reviewer (memeriksa jawaban Lead)', disabled: id === S.reviewer ? 'Sudah Reviewer' : false, run: () => setPosition(id, 'reviewer') });
+    }
+    const parents = parentsOf(member);
+    if (parents.length) {
+      items.push({ separator: true }, { heading: 'Putus sambungan' });
+      parents.forEach(parent => items.push({ label: `dari ${parent.name || 'node'}`, run: () => removeEdge(parent.id, id) }));
+    }
+    items.push({ separator: true },
+      { label: 'Hapus node', danger: true, hint: 'Del', run: () => { if (confirm(`Hapus node "${member.name}"?`)) removeNode(id); } });
+    return items;
+  }
+
+  const triggerMenu = () => [
+    { label: 'Atur pemicu…', hint: 'Enter', run: () => openNdv(TRIGGER) },
+    { label: 'Tambah node pertama…', run: () => openCreator({ from: TRIGGER }) },
+  ];
+
+  function edgeMenu(fromId, toId) {
+    const from = fromId === TRIGGER ? { name: 'Pemicu' } : memberById(fromId);
+    const to = memberById(toId);
+    return [
+      { heading: `${from ? from.name : '?'} → ${to ? to.name : '?'}` },
+      { label: 'Putus sambungan', danger: true, hint: 'Del', run: () => removeEdge(fromId, toId) },
+    ];
+  }
+
+  function boardMenu(point) {
+    return [
+      { label: 'Tambah node di sini…', hint: 'Tab', run: () => openCreator(point ? { at: point } : {}) },
+      { separator: true },
+      { label: 'Muat semua node', hint: '1', run: fitView },
+      { label: 'Zoom 100%', hint: '0', run: () => { V.k = 1; applyView(); } },
+      { label: 'Rapikan tata letak', run: () => $('tidy-board').click() },
+      { separator: true },
+      { label: 'Simpan alur', hint: 'Ctrl+S', disabled: S.dirty ? false : 'Tidak ada perubahan', run: () => saveTeam().then(() => toast('Tersimpan.')).catch(e => toast(e.message)) },
+      { label: 'Jalankan alur', disabled: $('run').disabled ? 'Alur sedang berjalan' : false, run: () => $('run').click() },
+    ];
+  }
+
   /* ── Node creator (the + panel) ──────────────────── */
   function openCreator(pending = {}) {
     S.pending = pending;
@@ -639,6 +750,7 @@
     $('ndv').classList.remove('hidden');
     S.ndvTab = 'params';
     renderNdv();
+    if (id !== TRIGGER && kindOf(memberById(id)) === 'agent') refreshSources();
   }
   function closeNdv() {
     S.ndv = null;
@@ -816,6 +928,33 @@
     }
   }
 
+  const ACCESS = [
+    ['', 'Tidak ada akses'], ['read', 'Baca saja'], ['append', 'Tambah baris saja'],
+    ['read+append', 'Baca dan tambah baris'], ['write', 'Baca dan ubah semua'],
+  ];
+
+  /* Which data sources an agent may touch, and how. Nothing is allowed until it is chosen here. */
+  function grantsHtml(member) {
+    const grants = (member.config || {}).data || [];
+    const sources = S.dataSources || [];
+    const known = new Set(sources.map(x => x.name));
+    const rows = [
+      ...sources.map(x => ({ name: x.name, label: x.label || x.name, online: x.online })),
+      ...grants.filter(g => !known.has(g.source)).map(g => ({ name: g.source, label: g.source, missing: true })),
+    ];
+    if (!rows.length) return '<p class="hint">Belum ada sumber data. <button class="link-btn" type="button" data-go-data>Tambah di tab Data</button></p>';
+    return `<div class="grants">${rows.map(row => {
+      const grant = grants.find(g => g.source === row.name) || {};
+      return `<div class="grant" data-grant="${esc(row.name)}">
+        <b>${esc(row.label)}${row.missing ? ' <small>(sumber ini sudah tidak ada)</small>' : ''}</b>
+        <select data-grant-access aria-label="Akses ke ${esc(row.label)}">${ACCESS.map(([value, label]) =>
+          `<option value="${value}" ${(grant.access || '') === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
+        ${grant.access ? `<input data-grant-hide value="${esc((grant.hide || []).join(', '))}" placeholder="Kolom yang disembunyikan, pisahkan dengan koma" aria-label="Kolom yang disembunyikan dari ${esc(row.label)}" maxlength="400">` : ''}
+      </div>`;
+    }).join('')}</div>
+      <p class="hint">Agent hanya menyentuh sumber yang diizinkan di sini. Pada bot pelanggan, hak ubah dan hapus tidak pernah berlaku, dan kolom berawalan <code>_</code> selalu tersembunyi.</p>`;
+  }
+
   function renderParams(box, member) {
     const isAgent = kindOf(member) === 'agent';
     const isWorker = member.id !== S.lead && member.id !== S.reviewer;
@@ -827,6 +966,8 @@
         <label class="field"><span>Peran</span><input data-field="role" value="${esc(member.role)}" maxlength="120" placeholder="Misalnya: peneliti, penulis, analis data"></label>
         <label class="field"><span>Model</span><select data-field="model_id"></select></label>
         <label class="field"><span>Instruksi</span><textarea data-field="instructions" rows="5" maxlength="4000" placeholder="Apa yang harus dilakukan agent ini, dan bentuk hasilnya.">${esc(member.instructions)}</textarea></label>
+        <label class="check"><input type="checkbox" data-direct ${(member.config || {}).direct ? 'checked' : ''}>Jawab langsung seperti chat, tanpa laporan Hasil dan Bukti</label>
+        <div class="field"><span>Data yang boleh dipakai</span>${grantsHtml(member)}</div>
         <div class="field"><span>Posisi di alur</span>
           <div class="seg-choice">
             <label><input type="radio" name="position" value="worker" ${isWorker ? 'checked' : ''}><span>Agent</span></label>
@@ -934,17 +1075,7 @@
         testButton.disabled = false;
       };
     }
-    box.querySelectorAll('input[name="position"]').forEach(radio => {
-      radio.onchange = () => {
-        if (S.lead === member.id) S.lead = null;
-        if (S.reviewer === member.id) S.reviewer = null;
-        if (radio.value === 'lead') S.lead = member.id;
-        if (radio.value === 'reviewer') { S.reviewer = member.id; member.depends_on = []; }
-        if (!S.lead) S.lead = defaultLead();
-        if (S.lead === S.reviewer) S.lead = S.members.find(m => m.id !== S.reviewer && kindOf(m) === 'agent')?.id || null;
-        afterChange();
-      };
-    });
+    box.querySelectorAll('input[name="position"]').forEach(radio => { radio.onchange = () => setPosition(member.id, radio.value); });
     box.querySelectorAll('[data-after]').forEach(check => {
       check.onchange = () => {
         if (check.checked) { connect(check.dataset.after, member.id, isBranching(memberById(check.dataset.after)) ? 'A' : ''); return; }
@@ -955,12 +1086,33 @@
       radio.onchange = () => { member.branch = radio.value; afterChange(); };
     });
     box.querySelectorAll('[data-go-creds]').forEach(button => { button.onclick = () => { closeNdv(); showTab('creds'); }; });
+    box.querySelectorAll('[data-go-data]').forEach(button => { button.onclick = () => { closeNdv(); showTab('data'); }; });
+    box.querySelectorAll('[data-direct]').forEach(check => {
+      check.onchange = () => {
+        member.config = { ...(member.config || {}) };
+        if (check.checked) member.config.direct = true; else delete member.config.direct;
+        markDirty();
+      };
+    });
+    const saveGrants = () => {
+      const data = [...box.querySelectorAll('[data-grant]')].map(row => ({
+        source: row.dataset.grant,
+        access: row.querySelector('[data-grant-access]').value,
+        hide: (row.querySelector('[data-grant-hide]')?.value || '').split(',').map(x => x.trim()).filter(Boolean),
+      })).filter(grant => grant.access);
+      member.config = { ...(member.config || {}) };
+      if (data.length) member.config.data = data; else delete member.config.data;
+      markDirty();
+    };
+    box.querySelectorAll('[data-grant-access]').forEach(select => { select.onchange = () => { saveGrants(); renderParams(box, member); }; });
+    box.querySelectorAll('[data-grant-hide]').forEach(input => { input.oninput = saveGrants; });
   }
 
   function renderTrigger(box) {
     const schedule = S.schedule || { mode: 'off' };
     const mode = schedule.mode || 'off';
     const telegram = (S.integrations || {}).telegram || {};
+    const audience = schedule.audience === 'public' ? 'public' : 'owner';
     const times = (schedule.times || [schedule.time || '07:00']).join(', ');
     box.innerHTML = `
       <div class="trigger-grid">${TRIGGERS.map(t => `<label class="trigger-card ${mode === t.mode ? 'on' : ''}">
@@ -972,14 +1124,31 @@
         <p class="hint">Contoh: <code>0 7 * * 1-5</code> jam 07:00 Senin–Jumat, <code>*/30 8-17 * * *</code> tiap 30 menit di jam kerja.</p>` : ''}
       ${mode === 'once' ? `<label class="field"><span>Tanggal dan jam</span><input id="schedule-at" type="datetime-local" value="${esc((schedule.at || '').slice(0, 16))}"></label>` : ''}
       ${mode === 'telegram' ? `${credentialNote(telegram.ready && telegram.default_chat, 'Bot dan chat Telegram')}
-        <label class="field"><span>Kata pemicu (kosongkan untuk semua pesan)</span><input id="schedule-keyword" value="${esc(schedule.keyword || '')}" placeholder="/jadwal" maxlength="33"></label>
-        <p class="hint">Hanya pesan dari chat di Kredensial yang menjalankan alur. Isi pesan menjadi tugasnya, dan node Telegram tanpa Chat ID membalas ke chat itu.</p>` : ''}
+        <div class="field"><span>Siapa yang boleh menulis ke bot</span>
+          <div class="seg-choice">
+            <label><input type="radio" name="tg-audience" value="owner" ${audience === 'owner' ? 'checked' : ''}><span>Hanya saya</span></label>
+            <label><input type="radio" name="tg-audience" value="public" ${audience === 'public' ? 'checked' : ''}><span>Pelanggan (publik)</span></label>
+          </div></div>
+        <label class="field"><span>Kata pemicu (kosongkan untuk semua pesan)</span><input id="schedule-keyword" value="${esc(schedule.keyword || '')}" placeholder="${audience === 'public' ? '' : '/jadwal'}" maxlength="33"></label>
+        ${audience === 'public' ? `
+          <div class="trigger-grid two">
+            <label class="field"><span>Riwayat percakapan (giliran per pelanggan)</span><input id="schedule-history" type="number" min="0" max="20" value="${esc(schedule.history ?? 6)}"></label>
+            <label class="field"><span>Batas balasan otomatis per hari</span><input id="schedule-cap" type="number" min="1" max="5000" value="${esc(schedule.daily_cap ?? 300)}"></label>
+          </div>
+          <ul class="ready-list">
+            <li class="${telegram.ready ? 'ok' : 'no'}">Token bot Telegram ${telegram.ready ? 'terisi' : 'belum diisi'}</li>
+            <li class="${telegram.default_chat ? 'ok' : 'no'}">Chat ID kamu ${telegram.default_chat ? 'terisi, untuk kabar dan peringatan dari bot' : 'belum diisi, bot tidak bisa memberi kabar ke kamu'}</li>
+            <li class="${(S.dataSources || []).length ? 'ok' : 'no'}">${(S.dataSources || []).length ? `${S.dataSources.length} sumber data siap dipakai agent` : 'Belum ada sumber data (katalog, pesanan)'}</li>
+          </ul>
+          <p class="hint">Hanya chat pribadi yang dilayani, dan tiap pelanggan dibatasi 6 pesan per menit. Agent yang menjawab hanya boleh membaca dan menambah baris pada data yang kamu izinkan di node-nya, tidak mengubah atau menghapus, dan hanya memakai alat yang aman. Gangguan dan permintaan yang butuh keputusanmu dikabarkan ke chat Telegram milikmu. Pesan yang menumpuk saat server mati lebih dari 15 menit diabaikan.</p>` : `
+          <p class="hint">Hanya pesan dari chat di Kredensial yang menjalankan alur. Isi pesan menjadi tugasnya, dan node Telegram tanpa Chat ID membalas ke chat itu.</p>`}` : ''}
       ${mode !== 'off' ? `<label class="field"><span>${mode === 'telegram' ? 'Konteks tambahan (boleh kosong)' : 'Tugas yang dijalankan'}</span><textarea id="schedule-task" rows="4" maxlength="4000" placeholder="Misalnya: apa yang penting hari ini di Jakarta?">${esc(schedule.task || '')}</textarea></label>
         <p class="hint">Hanya berjalan selama server menyala, dengan jam mesin ini. Tekan Simpan agar berlaku.</p>` : '<p class="hint">Isi tugas di kotak bawah kanvas, lalu tekan Jalankan alur.</p>'}`;
     const value = id => (box.querySelector(`#${id}`) ? box.querySelector(`#${id}`).value : undefined);
     const update = () => {
       const timeText = value('schedule-time');
       const checked = box.querySelector('input[name="trigger-mode"]:checked');
+      const before = S.schedule || {};
       S.schedule = {
         mode: checked ? checked.value : 'off',
         minutes: value('schedule-minutes') !== undefined ? Number(value('schedule-minutes')) : S.schedule.minutes,
@@ -991,6 +1160,14 @@
         task: value('schedule-task') ?? S.schedule.task,
       };
       if (S.schedule.times) S.schedule.time = S.schedule.times[0];
+      if (S.schedule.mode === 'telegram') {
+        const picked = box.querySelector('input[name="tg-audience"]:checked');
+        if ((picked ? picked.value : before.audience) === 'public') {
+          S.schedule.audience = 'public';
+          S.schedule.history = value('schedule-history') !== undefined ? Number(value('schedule-history')) : (before.history ?? 6);
+          S.schedule.daily_cap = value('schedule-cap') !== undefined ? Number(value('schedule-cap')) : (before.daily_cap ?? 300);
+        }
+      }
       markDirty();
       const card = document.querySelector(`#nodes .node[data-id="${TRIGGER}"]`);
       if (card) {
@@ -1000,6 +1177,7 @@
     };
     box.querySelectorAll('input[name="trigger-mode"]').forEach(radio => { radio.onchange = () => { update(); renderTrigger(box); render(); }; });
     box.querySelectorAll('input:not([name="trigger-mode"]), textarea').forEach(input => { input.oninput = update; input.onchange = update; });
+    box.querySelectorAll('input[name="tg-audience"]').forEach(radio => { radio.onchange = () => { update(); renderTrigger(box); render(); }; });
     box.querySelectorAll('[data-go-creds]').forEach(button => { button.onclick = () => { closeNdv(); showTab('creds'); }; });
   }
 
@@ -1171,10 +1349,33 @@
     loadInto(template, null);
     markDirty();
     toast(template.description);
+    if (template.starter === 'shop') makeShopStarter(template);
+  }
+
+  /* A shop template needs a product list and an orders sheet. Make them if they are missing, and say so. */
+  async function makeShopStarter(template) {
+    try {
+      const made = await credApi('/api/data/starter/shop', 'POST');
+      await refreshSources();
+      if (made.created.length) toast(`${template.description} Katalog dan Pesanan sudah dibuat di tab Data: isi dengan produkmu.`);
+    } catch (e) { toast(`Template terpasang, tetapi data contohnya gagal dibuat: ${e.message}`); }
   }
 
   async function loadIntegrations() {
     try { S.integrations = await api('/api/teams/integrations'); } catch { /* the editor works without it */ }
+    await refreshSources(false);
+  }
+
+  /* The data sources an agent can be given. Reloaded when the Data tab changes them. */
+  async function refreshSources(rerender = true) {
+    try {
+      const data = await api('/api/data/sources');
+      const before = JSON.stringify((S.dataSources || []).map(x => [x.name, x.label]));
+      S.dataSources = data.sources;
+      S.googleEmail = data.google_email || '';
+      S.dataReady = data.ready || {};
+      if (rerender && before !== JSON.stringify(S.dataSources.map(x => [x.name, x.label])) && S.ndv && S.ndv !== TRIGGER && !document.activeElement?.closest('#ndv-params')) renderNdv();
+    } catch { /* the editor works without data sources */ }
   }
 
   async function loadTeams() {
@@ -1261,6 +1462,23 @@
   }, { passive: false });
   $('edge-delete').onpointerdown = e => e.stopPropagation();
   $('edge-delete').onclick = () => { if (S.selectedEdge) removeEdge(S.selectedEdge.from, S.selectedEdge.to); };
+  // One menu handler for the whole canvas: it looks at what was clicked. The run bar and zoom buttons keep the
+  // browser's own menu, so the task box can still paste.
+  window.SQMenu.on($('board'), ({ target, event, keyboard }) => {
+    if (S.tab !== 'editor' || !S.trigger) return null;
+    if (target.closest && target.closest('.wf-run, .wf-zoom, .wf-plus, #edge-delete, .port-add')) return null;
+    const node = target.closest && target.closest('.node');
+    if (node) { selectNode(node.dataset.id); return node.dataset.id === TRIGGER ? triggerMenu() : nodeMenu(node.dataset.id); }
+    const edge = target.closest && target.closest('.edge-hit[data-from]');
+    if (edge) {
+      S.selectedEdge = { from: edge.dataset.from, to: edge.dataset.to };
+      selectNode(null);
+      renderEdges();
+      return edgeMenu(edge.dataset.from, edge.dataset.to);
+    }
+    if (keyboard && S.selected) return S.selected === TRIGGER ? triggerMenu() : nodeMenu(S.selected);
+    return boardMenu(keyboard ? null : canvasPoint(event));
+  });
   // A big change in size (a phone turned, a window snapped) fits the flow again; a small one keeps the view.
   let boardWidth = 0;
   window.addEventListener('resize', () => {
@@ -1306,7 +1524,8 @@
       b.classList.toggle('on', on);
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    ['editor', 'runs', 'creds'].forEach(tab => $(`wf-${tab}`).classList.toggle('hidden', tab !== name));
+    ['editor', 'data', 'runs', 'creds'].forEach(tab => $(`wf-${tab}`).classList.toggle('hidden', tab !== name));
+    if (name === 'data' && window.SQData) window.SQData.open();
     if (name === 'runs') loadRuns();
     if (name === 'creds') loadCreds();
     if (name === 'editor' && S.trigger) requestAnimationFrame(applyView);
@@ -1354,8 +1573,28 @@
       ${run.error ? `<div class="notice" style="white-space: pre-line">${esc(run.error)}</div>` : ''}
       ${run.result ? `<div class="io-block"><div class="io-head">Hasil</div>${preview(run.result)}</div>` : ''}`;
     enhanceCode($('run-detail'));
-    $('run-open').onclick = () => { S.openResult = false; showRun(run); showTab('editor'); if (!finished(run.status)) watchRun(run); };
+    $('run-open').onclick = () => openRunOnCanvas(run);
   }
+
+  function openRunOnCanvas(run) {
+    S.openResult = false;
+    showRun(run);
+    showTab('editor');
+    if (!finished(run.status)) watchRun(run);
+  }
+
+  window.SQMenu.on($('runs-list'), ({ target }) => {
+    const row = target.closest && target.closest('[data-run]');
+    const run = row && (S.runs || []).find(r => r.id === row.dataset.run);
+    if (!run) return null;
+    return [
+      { label: 'Lihat rincian', run: () => showRunDetail(run.id) },
+      { label: 'Lihat di kanvas', run: () => openRunOnCanvas(run) },
+      { separator: true },
+      { label: 'Salin tugas', run: () => copyText(run.task || '') },
+      { label: 'Salin hasil', disabled: run.result ? false : 'Eksekusi ini belum punya hasil', run: () => copyText(run.result || '') },
+    ];
+  });
 
   /* ── Credentials tab ─────────────────────────────── */
   const pinHeader = () => { try { const pin = sessionStorage.getItem(PIN_KEY); return pin ? { 'X-Router-Pin': pin } : {}; } catch { return {}; } };
@@ -1375,22 +1614,27 @@
   }
 
   function renderCreds(data) {
-    const sourceBadge = f => (f.source === 'web' ? '<span class="cred-badge web">Dari web</span>' : f.source === 'env' ? '<span class="cred-badge env">Dari .env</span>' : '<span class="cred-badge none">Belum diisi</span>');
+    const sourceBadge = f => (f.source === 'web' ? '<span class="cred-badge web">Dari web</span>' : f.source === 'env' ? '<span class="cred-badge env">Dari .env</span>' : f.source === 'default' ? '<span class="cred-badge none">Bawaan</span>' : '<span class="cred-badge none">Belum diisi</span>');
     $('creds-body').innerHTML = data.groups.map(group => {
       const fields = data.fields.filter(f => f.group === group.key);
       // Telegram needs its bot token; search and databases need any one of their fields.
-      const ready = group.key === 'telegram' ? fields.some(f => f.key === 'telegram_bot_token' && f.set) : fields.some(f => f.set);
+      const ready = group.key === 'limits' ? false : group.key === 'telegram' ? fields.some(f => f.key === 'telegram_bot_token' && f.set) : fields.some(f => f.set && f.source !== 'default');
+      const testable = group.key !== 'limits';
+      const icon = group.key === 'telegram' ? 'telegram' : group.key === 'search' ? 'http' : group.key === 'limits' ? 'delay' : 'database';
       const dbSelect = group.key === 'database' ? `<select class="cred-db" aria-label="Database yang dites">
           <option value="sqlite">SQLite</option><option value="postgres">PostgreSQL</option><option value="mysql">MySQL</option><option value="mongodb">MongoDB</option></select>` : '';
       return `<section class="cred-card" data-group="${group.key}">
-        <header><span class="node-icon" data-cat="${group.key === 'telegram' ? 'output' : group.key === 'search' ? 'ai' : 'data'}">${nodeIcon(group.key === 'telegram' ? 'telegram' : group.key === 'search' ? 'http' : 'database', 18)}</span>
+        <header><span class="node-icon" data-cat="${group.key === 'telegram' ? 'output' : group.key === 'search' ? 'ai' : group.key === 'limits' ? 'logic' : 'data'}">${nodeIcon(icon, 18)}</span>
           <div><h3>${esc(group.label)} ${ready ? '<span class="cred-ok">tersambung</span>' : ''}</h3><p class="hint">${esc(group.description)}</p></div></header>
         ${fields.map(f => `<label class="field cred-field"><span>${esc(f.label)} ${sourceBadge(f)}</span>
-            <span class="cred-input"><input data-cred="${f.key}" type="${f.secret ? 'password' : 'text'}" autocomplete="off" spellcheck="false"
-              placeholder="${esc(f.set ? `${f.masked}  ·  ketik untuk mengganti` : f.example)}">
-            ${f.source === 'web' ? `<button class="btn btn-ghost btn-small" type="button" data-cred-clear="${f.key}" title="Hapus dari web, pakai .env lagi">Hapus</button>` : ''}</span>
+            <span class="cred-input">${f.multiline
+    ? `<textarea data-cred="${f.key}" rows="5" autocomplete="off" spellcheck="false" placeholder="${esc(f.set ? `${f.masked}  ·  tempel kunci baru untuk mengganti` : f.example)}"></textarea>`
+    : `<input data-cred="${f.key}" type="${f.secret ? 'password' : 'text'}" autocomplete="off" spellcheck="false"${group.key === 'limits' ? ' inputmode="numeric"' : ''}
+              placeholder="${esc(f.set ? `${f.masked}  ·  ketik untuk mengganti` : f.example)}">`}
+            ${f.source === 'web' ? `<button class="btn btn-ghost btn-small" type="button" data-cred-clear="${f.key}" title="Hapus dari web, pakai .env atau nilai bawaan lagi">Hapus</button>` : ''}</span>
             ${f.hint ? `<small class="hint">${esc(f.hint)}</small>` : ''}</label>`).join('')}
-        <div class="cred-actions">${dbSelect}<button class="btn btn-ghost" type="button" data-cred-test="${group.key}">Tes</button>
+        ${group.key === 'google' && fields.some(f => f.set && f.masked) ? `<p class="hint">Bagikan tiap spreadsheet ke <b>${esc(fields.find(f => f.set).masked)}</b> sebagai Editor, lalu tambahkan di tab Data.</p>` : ''}
+        <div class="cred-actions">${dbSelect}${testable ? `<button class="btn btn-ghost" type="button" data-cred-test="${group.key}">Tes</button>` : ''}
           <button class="btn btn-primary" type="button" data-cred-save="${group.key}">Simpan</button></div>
         <p class="cred-msg hint" aria-live="polite"></p>
       </section>`;
@@ -1411,7 +1655,7 @@
     });
     $('creds-body').querySelectorAll('[data-cred-clear]').forEach(button => {
       button.onclick = async () => {
-        if (!confirm('Hapus nilai ini dari web? Bila .env punya nilainya, itu yang dipakai.')) return;
+        if (!confirm('Hapus nilai ini dari web? Bila .env punya nilainya, itu yang dipakai, kalau tidak nilai bawaan.')) return;
         try { renderCreds(await credApi('/api/teams/credentials', 'PUT', { values: { [button.dataset.credClear]: '' } })); await loadIntegrations(); } catch (e) { toast(e.message); }
       };
     });
@@ -1442,6 +1686,10 @@
     modelsChanged() {
       if (S.ndv && S.ndv !== TRIGGER && !document.activeElement?.closest('#ndv')) renderNdv();
     },
+    /* For the Data tab: saving needs the router PIN from outside this computer, same as credentials. */
+    pinApi: credApi,
+    showCreds() { if (S.ndv) closeNdv(); showTab('creds'); },
+    sourcesChanged() { refreshSources(); },
   };
   window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
 })();
