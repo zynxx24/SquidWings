@@ -131,3 +131,5 @@ tunnel-*.log
 /tests/test_trading_server.py
 /tests/test_trading_snapshot.py
 /tests/test_trading_ui.py
+/tests/test_trading_daily.py
+/tests/test_trading_wf_report.py
