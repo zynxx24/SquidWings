@@ -89,6 +89,7 @@ class CloudflareTunnel:
         self.host = host
         self.process: subprocess.Popen[str] | None = None
         self.public_url: str | None = None
+        self.last_error: str | None = None
         self._log_file: Path | None = None
 
     def start(self, timeout: float = 20.0) -> str | None:
@@ -153,9 +154,21 @@ class CloudflareTunnel:
             time.sleep(0.4)
 
         if not self.public_url:
+            self._read_failure()
             logger.warning("[tunnel] Tunnel started but public URL not detected within timeout. Check tunnel.log")
 
         return self.public_url
+
+    def _read_failure(self) -> None:
+        """Remember the last error line of tunnel.log so the CLI can show it."""
+        try:
+            lines = [ln.strip() for ln in self._log_file.read_text(encoding="utf-8", errors="ignore").splitlines()]
+        except Exception:
+            return
+        for ln in reversed(lines):
+            if "failed" in ln.lower() or " ERR " in ln:
+                self.last_error = ln[:200]
+                return
 
     def stop(self) -> None:
         """Stop the tunnel process cleanly."""

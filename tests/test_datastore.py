@@ -684,5 +684,8 @@ def test_a_customer_facing_agent_can_never_change_or_delete() -> None:
         assert access.defuse("@SUM(1)").startswith("'@")
         assert access.defuse("-cmd|calc").startswith("'-")
         assert access.defuse("-5000") == "-5000" and access.defuse("Budi") == "Budi"
+        assert access.defuse("-1+cmd|' /C calc'!A0").startswith("'-")         # starts like a number, runs in Excel
+        assert access.defuse("+1+HYPERLINK(\"http://x\")").startswith("'+")
+        assert access.defuse("+62 812-3456-7890") == "+62 812-3456-7890"       # a phone number stays as typed
     with access.restrict(access.Access({"katalog": "write"})):
         assert access.defuse("=SUM(A1:A2)") == "=SUM(A1:A2)"                # the owner's own agent may write formulas

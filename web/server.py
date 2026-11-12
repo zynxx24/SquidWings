@@ -43,7 +43,7 @@ from security.headers import embeddable_headers, shell_headers
 from security.web_access import WebSecurityMiddleware, is_loopback_host, set_public_mode
 from tool.execute.execute_code_intel import quality_tools
 from utils import daily_brief, local_ocr, shared_files
-from utils.extract import DOCUMENT_SUFFIXES, Extracted, extract, save_images
+from utils.extract import DOCUMENT_SUFFIXES, Extracted, extract, intent_of, save_images
 from utils.extract import Image as ExtractedImage
 from utils.helpers import format_tokens, generate_session_id, is_valid_session_id
 from utils.logger import get_logger
@@ -600,17 +600,19 @@ def _image_text(data: bytes) -> str:
 
 
 def _upload_folder(session: str) -> Path | None:
-    return session_workspace(session) / "uploads" if session else None
+    return session_workspace(session) / "uploads" if session and is_valid_session_id(session) else None
 
 
 def _upload_payload(name: str, ext: str, data: bytes, session: str) -> dict[str, Any]:
     """Everything the file holds: its text, its images, and the full copy in the chat's folder."""
     folder = _upload_folder(session)
     stem = Path(name).stem[:80]
-    found = Extracted(_convert_to_markdown(name, data))
+    # A document is read once, by extract(); converting it here too would be thrown away.
     if ext in DOCUMENT_SUFFIXES:
         found = extract(data, name, f"uploads/{stem}_img/", ocr=True)
-    elif ext in _IMAGE_EXTS:
+    else:
+        found = Extracted(_convert_to_markdown(name, data))
+    if ext in _IMAGE_EXTS:
         found = Extracted(found.markdown, images=[ExtractedImage(f"gambar{ext}", data)])
         found.images[0].text = _image_text(data)
         found.markdown = "\n\n".join(part for part in (found.markdown, found.images[0].text) if part)
@@ -742,6 +744,14 @@ async def security_status() -> dict[str, Any]:
         return get_guard_facade().status()
     except Exception as e:
         return {"enabled": False, "error": str(e)}
+
+
+@app.get("/api/update")
+async def update_status() -> dict[str, Any]:
+    """The newest GitHub update check. ``restart_needed`` means new code was pulled and waits for a restart."""
+    from utils import repo_update
+
+    return repo_update.status()
 
 
 @app.get("/api/tunnel")
@@ -915,6 +925,8 @@ _SESSION_FILE_HEADERS = {
 async def session_image(session_id: str, path: str = Query(..., min_length=1, max_length=400)) -> FileResponse:
     from tool.execute.execute_local_ops.path_guard import PathGuardError, resolve_inside
 
+    if not is_valid_session_id(session_id):
+        raise HTTPException(status_code=404, detail="file not found in this session")
     workspace = session_workspace(session_id, create=False).resolve()
     try:
         target = resolve_inside(workspace, path, must_exist=True)
@@ -1149,8 +1161,9 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 if resume_model and orch.registry.get(resume_model):
                     override = resume_model
 
-            # Send classification info first
-            classification, difficulty = orch.classifier.classify_with_difficulty(message)
+            # Send classification info first. Routed by what the user typed, not by an attached document
+            # (the orchestrator skips its own classification when it is handed this one).
+            classification, difficulty = orch.classifier.classify_with_difficulty(intent_of(message))
             await websocket.send_json({
                 "type": "meta",
                 "event": "classified",

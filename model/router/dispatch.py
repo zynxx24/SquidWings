@@ -38,8 +38,12 @@ MAX_ATTEMPTS = 6
 _NO_RETRY = {400, 404, 413, 422}
 # One client per account and per event loop: an httpx client belongs to the loop that opened its
 # connections, and the trading LLM calls from a thread with a loop of its own.
-_clients: dict[tuple[str, str, str, int, int], httpx.AsyncClient] = {}
-_client_loops: dict[tuple[str, str, str, int, int], asyncio.AbstractEventLoop] = {}
+_clients: dict[tuple[str, str, int], httpx.AsyncClient] = {}
+_client_loops: dict[tuple[str, str, int], asyncio.AbstractEventLoop] = {}
+# What a client was built with. Editing a provider's URL, timeout, kind, auth mode or Claude version on the
+# Router page changes it, and the old client (with the old headers) is replaced instead of reused.
+_client_settings: dict[tuple[str, str, int], tuple[Any, ...]] = {}
+_retired: list[tuple[httpx.AsyncClient, asyncio.AbstractEventLoop]] = []
 
 
 def _headers(provider: ProviderConfig, key: str) -> dict[str, str]:
@@ -58,17 +62,25 @@ def _client(provider: ProviderConfig, account: Account) -> httpx.AsyncClient:
     for stale in [k for k, owner in _client_loops.items() if owner.is_closed()]:
         _clients.pop(stale, None)      # its loop is gone; the client cannot be used or closed from here
         _client_loops.pop(stale, None)
-    key = (provider.id, account.id, provider.base_url, provider.timeout_s, id(loop))
+        _client_settings.pop(stale, None)
+    key = (provider.id, account.id, id(loop))
+    headers = _headers(provider, account.api_key)
+    settings = (provider.base_url, provider.timeout_s, tuple(sorted(headers.items())))
     client = _clients.get(key)
+    if client is not None and not client.is_closed and _client_settings.get(key) != settings:
+        # Closing it now would cut a reply that is still streaming on it; it is closed at shutdown instead.
+        _retired.append((client, loop))
+        client = None
     if client is None or client.is_closed:
         client = httpx.AsyncClient(
-            base_url=provider.base_url, headers=_headers(provider, account.api_key),
+            base_url=provider.base_url, headers=headers,
             timeout=httpx.Timeout(provider.timeout_s, connect=10.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10, keepalive_expiry=30.0),
             follow_redirects=True,
         )
         _clients[key] = client
         _client_loops[key] = loop
+        _client_settings[key] = settings
     return client
 
 
@@ -322,8 +334,13 @@ async def close() -> None:
     for key, client in list(_clients.items()):
         if not client.is_closed and _client_loops.get(key) in (loop, None):
             await client.aclose()
+    for client, owner in _retired:
+        if not client.is_closed and owner is loop:
+            await client.aclose()
+    _retired.clear()
     _clients.clear()
     _client_loops.clear()
+    _client_settings.clear()
 
 
 __all__ = ["chat", "chat_stream", "list_models", "route", "close"]

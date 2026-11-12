@@ -544,3 +544,20 @@ def test_router_page_is_served():
     assert "frame-ancestors 'self'" in r.headers["content-security-policy"]
     shell = TestClient(app).get("/router")
     assert shell.status_code == 200 and "/static/js/app.js" in shell.text
+
+
+async def test_client_follows_provider_edits_on_the_router_page():
+    """Changing auth mode or kind on the page must change the headers sent, without a restart."""
+    p = _provider()
+    account = p.accounts[0]
+    first = D._client(get_store().get(p.id), account)
+    assert first.headers["authorization"] == "Bearer key-aaaa-1111"
+    assert D._client(get_store().get(p.id), account) is first        # unchanged: reused
+
+    get_store().update_provider(p.id, {"auth": "x-api-key"})
+    second = D._client(get_store().get(p.id), account)
+    assert second is not first
+    assert "authorization" not in second.headers and second.headers["x-api-key"] == "key-aaaa-1111"
+    assert not first.is_closed        # a reply may still be streaming on it; closed at shutdown
+    await D.close()
+    assert first.is_closed and second.is_closed

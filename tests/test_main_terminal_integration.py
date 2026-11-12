@@ -204,3 +204,25 @@ def test_unused_project_is_removed_but_used_ones_stay(tmp_path: Path) -> None:
     ProjectMemory(chatted).build_input("halo", False)
     _remove_if_unused(chatted)
     assert chatted.exists()
+
+
+def test_a_quoted_snippet_never_replaces_a_file(tmp_path: Path) -> None:
+    """"### File: x.py" over a code block is also how an answer quotes part of a file."""
+    from main import _apply_workspace_changes
+
+    (tmp_path / "app.py").write_text("def a():\n    return 1\n\n\ndef b():\n    return 2\n")
+    answer = "### File: app.py\n```python\ndef b():\n    return 3\n```\n\n### File: baru.py\n```python\nx = 1\n```\n"
+    actions = _apply_workspace_changes(tmp_path, answer)
+    assert "def a()" in (tmp_path / "app.py").read_text()
+    assert (tmp_path / "baru.py").read_text() == "x = 1\n" and len(actions) == 1
+
+
+def test_a_file_block_cannot_write_through_a_symlink_out_of_the_project(tmp_path: Path) -> None:
+    from main import _apply_workspace_changes
+
+    project, outside = tmp_path / "p", tmp_path / "outside"
+    project.mkdir()
+    outside.mkdir()
+    (project / "link").symlink_to(outside)
+    assert _apply_workspace_changes(project, "```file:link/evil.sh\necho hi\n```") == []
+    assert not (outside / "evil.sh").exists()

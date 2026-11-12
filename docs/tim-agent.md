@@ -119,10 +119,12 @@ Dua template siap pakai di daftar template (atau **+ Sumber > Contoh toko** di t
 
 Pemicu Telegram punya pilihan **Siapa yang boleh menulis ke bot**: *Hanya saya* (chat ID di Kredensial) atau *Pelanggan (publik)*. Untuk pelanggan publik:
 
-- Hanya chat pribadi yang dilayani. Tiap chat dibatasi 6 pesan per menit, dan ada batas balasan otomatis per hari (bawaan 300, diubah di pemicu). Bila terlampaui, Anda dapat satu pemberitahuan.
+- Hanya chat pribadi yang dilayani. Tiap chat dibatasi 6 pesan per menit, dan ada batas balasan otomatis per hari (bawaan 300, diubah di pemicu). Bila terlampaui, pelanggan diminta menunggu; kejadiannya dicatat di log server.
 - Agent publik hanya memakai tool data yang diizinkan plus `time_now` dan `calc`; tidak bisa menulis file, menjalankan perintah, atau browsing. Teks pelanggan dan nama pengirim diperlakukan sebagai data, bukan perintah.
 - Riwayat percakapan per pelanggan (bawaan 6 giliran) disimpan 7 hari di `chats.json` di folder tim (izin 0600).
-- Kegagalan dan jawaban yang tidak masuk dikirim ke Anda, dan pelanggan menerima permintaan maaf singkat.
+- Error tidak pernah dikirim ke Telegram. Bila alur gagal, pelanggan menerima permintaan maaf singkat, dan kegagalannya terlihat di tab **Eksekusi** serta log server.
+- Agent hanya bisa mengabari Anda lewat Telegram (`owner_notify`) bila node-nya dicentang **Boleh mengabari saya lewat Telegram**. Template toko mencentangnya, tim lain tidak.
+- Bila beberapa tim berstatus publik, pesan pelanggan dilayani tim pertama yang kata pemicunya cocok. Jadi satu bot sebaiknya satu tim publik.
 
 ## Kredensial
 

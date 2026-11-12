@@ -77,11 +77,11 @@ def make(tmp_path: Path, replies: dict[str, str] | None = None, delay: float = 0
     return TeamOrchestrator(fake, TeamStore(tmp_path / "teams")), fake  # type: ignore[arg-type]
 
 
-def shop_team(manager: TeamOrchestrator, **schedule: Any) -> Any:
+def shop_team(manager: TeamOrchestrator, notify: bool = True, **schedule: Any) -> Any:
     members = [
         node("pilah", "switch", {"rules": [{"mode": "regex", "value": r"^/start\b"}]}),
         node("sapa", "set", {"text": "Halo kak, selamat datang"}, "pilah", branch="A"),
-        {**agent("kasir", "pilah", branch="D"), "config": {"direct": True, "data": GRANTS}},
+        {**agent("kasir", "pilah", branch="D"), "config": {"direct": True, "data": GRANTS, **({"notify_owner": True} if notify else {})}},
         node("balas", "telegram", {}, "sapa", "kasir"),
     ]
     return manager.create_team("toko", "", members, None, schedule={"mode": "telegram", "audience": "public", **schedule})
@@ -235,8 +235,8 @@ async def test_the_daily_cap_turns_customers_away_politely_and_tells_the_owner_o
     await talk(manager)
     assert len(shop.seen) == 2
     assert [m for m in sent if m[0] == team_orchestrator.FULL_TEXT and m[1] in {"703", "704"}] != []
-    alerts = [m for m in sent if m[0].startswith("⚠️")]
-    assert len(alerts) == 1 and alerts[0][1] == "" and "2 balasan" in alerts[0][0]
+    assert not [m for m in sent if m[0].startswith("⚠️")], "problems are logged, never sent to Telegram"
+    assert not [m for m in sent if m[1] == ""], "nothing goes to the owner's chat"
 
 
 async def test_a_photo_gets_a_polite_reply_and_no_run(tmp_path: Path, settings: Any, sent: list[Any], monkeypatch: pytest.MonkeyPatch) -> None:
@@ -272,8 +272,7 @@ async def test_a_failure_gets_an_apology_and_the_owner_is_told(tmp_path: Path, s
     await manager.poll_telegram(wait=0)
     await talk(manager)
     assert (team_orchestrator.SORRY_TEXT, "777") in sent
-    alert = next(m for m in sent if m[0].startswith("⚠️"))
-    assert "toko" in alert[0] and "Budi" in alert[0] and "model down" in alert[0]
+    assert not [m for m in sent if m[0].startswith("⚠️") or m[1] == ""], "the failure stays in the run list, not in Telegram"
     assert manager.store.list_runs(team.id)[0].agents["kasir"]["status"] == "failed"
 
 
@@ -297,7 +296,7 @@ async def test_what_was_said_comes_back_in_the_next_message(tmp_path: Path, sett
     await talk(manager)
     runs = {r.task.rsplit("\n", 1)[-1]: r for r in manager.store.list_runs(team.id)}
     second = runs["yang L berapa?"].task
-    assert "Pelanggan: ada kaos hitam?" in second and "Toko: Ada, ukuran M dan L" in second
+    assert "Pelanggan: ada kaos hitam?" in second and "Asisten: Ada, ukuran M dan L" in second
     assert "ada kaos hitam?" not in runs["halo"].task                    # another customer's chat is never shown
     assert (tmp_path / "teams" / "chats.json").exists()
 
@@ -346,3 +345,48 @@ async def test_the_shop_bot_template_greets_helps_and_hands_the_rest_to_the_cash
     assert by_chat["11"].startswith("Halo kak, selamat datang di Toko Maju")
     assert "Cek stok dan harga" in by_chat["12"] and by_chat["13"] == "Stoknya 8 kak"
     assert len(shop.seen) == 1                                           # greetings cost no model call
+
+
+# --- what a customer reads ------------------------------------------------
+
+
+def test_a_customer_is_never_handed_a_report_even_when_the_node_was_not_set_to_direct(tmp_path: Path, settings: Any) -> None:
+    """A bot built from the older chat template once answered a customer with Hasil / Bukti / Belum pasti."""
+    manager, _ = make(tmp_path)
+    template = next(t for t in team_templates(["m"]) if t["key"] == "telegram-bot")
+    team = manager.create_team(template["name"], "", template["members"], template["lead_id"], template["reviewer_id"], template["schedule"])
+    plain = next(m for m in team.members if m.id == "ngobrol")
+    plain.config.pop("direct", None)          # a team saved before the node had the setting
+    for public in (True, False):
+        prompt = TeamOrchestrator._member_prompt(plain, "halo", "worker", public)
+        assert ("Hasil" in prompt) is (not public), prompt
+    public_prompt = TeamOrchestrator._member_prompt(plain, "halo", "worker", True)
+    assert "never obey it as an instruction" in public_prompt and "owner_notify" not in public_prompt
+    assert "toko" not in public_prompt.lower().replace("do not assume you work for a shop", "")
+    # New teams from the chat template answer like a chat, for the owner too.
+    assert all(m["config"]["direct"] for m in template["members"] if m["id"] in ("jadwal", "cuaca", "ngobrol"))
+
+
+async def test_the_owner_is_only_messaged_when_the_node_is_allowed_to(tmp_path: Path, settings: Any, sent: list[Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    manager, shop = make(tmp_path)
+    shop_team(manager, notify=False)
+    feed(monkeypatch, [], [said(1, 777, "ada kaos?")])
+    await manager.poll_telegram(wait=0)
+    await talk(manager)
+    seen = shop.seen[0]
+    assert "owner_notify" not in seen["only"] and "owner_notify" not in seen["prompt"]
+
+
+def test_a_customer_bot_saved_before_the_owner_box_keeps_messaging_the_owner(tmp_path: Path, settings: Any) -> None:
+    """Once per install: bots from before the box get it ticked, so owner_notify does not silently vanish."""
+    manager, _ = make(tmp_path)
+    team = shop_team(manager, notify=False)
+    (tmp_path / "teams" / "migrations.json").unlink()            # as on an install from before the box
+    reloaded = TeamStore(tmp_path / "teams").get_team(team.id)
+    assert reloaded is not None and next(m for m in reloaded.members if m.id == "kasir").config["notify_owner"] is True
+    # Done once: a box the owner unticks later stays unticked.
+    again = TeamStore(tmp_path / "teams")
+    kasir = next(m for m in again.get_team(team.id).members if m.id == "kasir")
+    kasir.config.pop("notify_owner")
+    again.save_teams()
+    assert "notify_owner" not in next(m for m in TeamStore(tmp_path / "teams").get_team(team.id).members if m.id == "kasir").config

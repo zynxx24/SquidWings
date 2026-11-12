@@ -13,6 +13,13 @@ from tool.registry.tool_registry import ToolRegistry
 from tool.registry.tool_schema import ToolSchema
 
 
+@pytest.fixture(autouse=True)
+def _forget_mock_tool():
+    """ToolRegistry is a singleton: a mock left in it breaks tests that check every real tool."""
+    yield
+    ToolRegistry()._tools.pop("mock_tool", None)
+
+
 def test_team_store_skips_only_the_damaged_run(tmp_path: Path) -> None:
     (tmp_path / "runs" / "broken.json").parent.mkdir(parents=True)
     (tmp_path / "runs" / "broken.json").write_text("{not json", encoding="utf-8")

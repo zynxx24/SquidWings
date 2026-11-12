@@ -323,7 +323,7 @@
       $('chat-title').textContent = data.title || 'Chat';
       clearThread();
       for (const message of data.messages || []) {
-        if (message.role === 'user') addUser(message.content);
+        if (message.role === 'user') addUser(userLabel(message.content));
         else if (message.role === 'assistant') addHistoryAnswer(message);
       }
       scrollDown(true);
@@ -344,6 +344,14 @@
   }
   scroller.addEventListener('scroll', updateScrollUi, { passive: true });
   $('to-bottom').onclick = () => scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+
+  // A sent message carries its attachments as <file name="..."> blocks; the bubble shows only their names.
+  const FILE_BLOCK = /<file name="([^"]*)"[^>]*>[\s\S]*?<\/file>\s*/g;
+  function userLabel(content) {
+    const names = [];
+    const typed = String(content || '').replace(FILE_BLOCK, (_, name) => { names.push(`[${name}] `); return ''; });
+    return names.join('') + typed.trim();
+  }
 
   function addUser(text) {
     setEmpty(false);
@@ -725,8 +733,10 @@
     if ((!text && !S.attachments.length) || S.busy) return;
 
     const files = S.attachments.map(a => {
-      const saved = a.saved ? ` saved="${a.saved}"` : '';
-      return `<file name="${a.name}"${saved}>\n${a.markdown}\n</file>`;
+      // A quote in a name would end the attribute early, and the server could no longer find the block.
+      const attr = value => String(value).replace(/"/g, "'");
+      const saved = a.saved ? ` saved="${attr(a.saved)}"` : '';
+      return `<file name="${attr(a.name)}"${saved}>\n${a.markdown}\n</file>`;
     }).join('\n\n');
     const full = files ? `${files}\n\n${text}` : text;
     const label = S.attachments.map(a => `[${a.name}] `).join('') + text;
@@ -1125,6 +1135,18 @@
   // The flow editor lives in team.js and borrows these helpers.
   window.SQ = { $, esc, icon, api, post, toast, md, store, S, fillModelOptions, shortModel, formatTokens, formatSeconds, describeTool, enhanceCode };
 
+  /* ── Updates from GitHub ──────────────────────────── */
+  // The server pulls new versions by itself; the new code runs after a restart. Said once per version.
+  async function checkUpdate() {
+    const info = await api('/api/update').catch(() => null);
+    if (!info || !info.restart_needed) return;
+    const version = String(info.new || 'baru');
+    if (store.get('update-shown') === version) return;
+    store.set('update-shown', version);
+    toast(`Versi baru (${version}) sudah diunduh dari GitHub. Jalankan ulang server untuk memakainya.`);
+  }
+  setInterval(checkUpdate, 10 * 60 * 1000);
+
   /* ── Start ────────────────────────────────────────── */
   // /trading and /router open straight on that page; the chat loads behind it.
   S.booting = true;
@@ -1146,6 +1168,7 @@
     } finally {
       showView(viewFromPath() || (store.get('view') === 'team' ? 'team' : 'chat'), { replace: true });
       S.booting = false;
+      checkUpdate();
     }
   })();
 })();

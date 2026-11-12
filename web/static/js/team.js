@@ -967,6 +967,7 @@
         <label class="field"><span>Model</span><select data-field="model_id"></select></label>
         <label class="field"><span>Instruksi</span><textarea data-field="instructions" rows="5" maxlength="4000" placeholder="Apa yang harus dilakukan agent ini, dan bentuk hasilnya.">${esc(member.instructions)}</textarea></label>
         <label class="check"><input type="checkbox" data-direct ${(member.config || {}).direct ? 'checked' : ''}>Jawab langsung seperti chat, tanpa laporan Hasil dan Bukti</label>
+        <label class="check"><input type="checkbox" data-notify ${(member.config || {}).notify_owner ? 'checked' : ''}>Boleh mengabari saya lewat Telegram bila pelanggan butuh keputusan pemilik</label>
         <div class="field"><span>Data yang boleh dipakai</span>${grantsHtml(member)}</div>
         <div class="field"><span>Posisi di alur</span>
           <div class="seg-choice">
@@ -1087,6 +1088,13 @@
     });
     box.querySelectorAll('[data-go-creds]').forEach(button => { button.onclick = () => { closeNdv(); showTab('creds'); }; });
     box.querySelectorAll('[data-go-data]').forEach(button => { button.onclick = () => { closeNdv(); showTab('data'); }; });
+    box.querySelectorAll('[data-notify]').forEach(check => {
+      check.onchange = () => {
+        member.config = { ...(member.config || {}) };
+        if (check.checked) member.config.notify_owner = true; else delete member.config.notify_owner;
+        markDirty();
+      };
+    });
     box.querySelectorAll('[data-direct]').forEach(check => {
       check.onchange = () => {
         member.config = { ...(member.config || {}) };

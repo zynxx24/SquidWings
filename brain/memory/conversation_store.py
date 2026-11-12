@@ -31,6 +31,7 @@ class Message:
         tool_calls: Tool calls in this message (if any).
         tool_call_id: Tool call ID (for tool result messages).
         tool_trace: What tools did during this turn, for the model's next turn.
+        failed: Part of a turn that failed or was stopped. Shown in the chat, never sent to a model.
     """
     role: str
     content: str
@@ -40,6 +41,7 @@ class Message:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_call_id: str = ""
     tool_trace: str = ""
+    failed: bool = False
 
     def to_api_format(self) -> dict[str, Any]:
         """Convert to API message format."""
@@ -66,6 +68,7 @@ class Message:
             "tool_calls": self.tool_calls,
             "tool_call_id": self.tool_call_id,
             "tool_trace": self.tool_trace,
+            **({"failed": True} if self.failed else {}),
         }
 
     @classmethod
@@ -80,6 +83,7 @@ class Message:
             tool_calls=data.get("tool_calls", []),
             tool_call_id=data.get("tool_call_id", ""),
             tool_trace=data.get("tool_trace", ""),
+            failed=bool(data.get("failed")),
         )
 
 
@@ -97,6 +101,9 @@ class ConversationStore:
     ) -> None:
         self._sessions: dict[str, list[Message]] = {}
         self._session_metadata: dict[str, dict[str, Any]] = {}
+        # When each session's file was last read or written here. The web server and the CLI share
+        # this folder, so a newer file means the other one changed the chat and it is read again.
+        self._mtimes: dict[str, tuple[int, int]] = {}
         self.max_messages = max_messages_per_session
 
         if storage_dir is not None:
@@ -116,22 +123,57 @@ class ConversationStore:
             return
 
         for file_path in self.storage_dir.glob("*.json"):
+            self._load_file(file_path)
+
+    def _load_file(self, file_path: Path) -> None:
+        """Read one session file into memory, with all of its metadata."""
+        try:
+            stamp = self._stamp(file_path)
+            data = json.loads(file_path.read_text(encoding="utf-8"))
+            session_id = data.get("session_id") or file_path.stem
+            messages = [Message.from_dict(m) for m in data.get("messages", [])]
+            self._sessions[session_id] = messages
+            self._session_metadata[session_id] = {
+                "title": data.get("title") or self._generate_title(messages),
+                "created_at": data.get("created_at") or (messages[0].timestamp if messages else time.time()),
+                "updated_at": data.get("updated_at") or (messages[-1].timestamp if messages else time.time()),
+                "model_used": data.get("model_used") or (messages[-1].model_used if messages else ""),
+                "source": data.get("source") or "",
+                "titled": bool(data.get("titled")),
+            }
+            self._mtimes[session_id] = stamp
+        except Exception as e:
+            logger.warning(f"[memory] Failed to load session from {file_path}: {e}")
+
+    @staticmethod
+    def _stamp(file_path: Path) -> tuple[int, int]:
+        """Time and size: the clock can give two quick saves the same time, a new message changes the size."""
+        info = file_path.stat()
+        return info.st_mtime_ns, info.st_size
+
+    def _sync(self, session_id: str) -> None:
+        """Read a session again when another process (web server or CLI) saved it since."""
+        file_path = self._session_file(session_id) if is_valid_session_id(session_id) else None
+        if file_path is None:
+            return
+        try:
+            stamp = self._stamp(file_path)
+        except OSError:
+            return
+        if stamp != self._mtimes.get(session_id):
+            self._load_file(file_path)
+
+    def _sync_all(self) -> None:
+        """Pick up chats the other process made or changed, for the list of chats."""
+        if not self.storage_dir or not self.storage_dir.exists():
+            return
+        for file_path in self.storage_dir.glob("*.json"):
             try:
-                data = json.loads(file_path.read_text(encoding="utf-8"))
-                session_id = data.get("session_id") or file_path.stem
-                raw_messages = data.get("messages", [])
-                messages = [Message.from_dict(m) for m in raw_messages]
-                self._sessions[session_id] = messages
-                self._session_metadata[session_id] = {
-                    "title": data.get("title") or self._generate_title(messages),
-                    "created_at": data.get("created_at") or (messages[0].timestamp if messages else time.time()),
-                    "updated_at": data.get("updated_at") or (messages[-1].timestamp if messages else time.time()),
-                    "model_used": data.get("model_used") or (messages[-1].model_used if messages else ""),
-                    "source": data.get("source") or "",
-                    "titled": bool(data.get("titled")),
-                }
-            except Exception as e:
-                logger.warning(f"[memory] Failed to load session from {file_path}: {e}")
+                stamp = self._stamp(file_path)
+            except OSError:
+                continue
+            if stamp != self._mtimes.get(file_path.stem):
+                self._load_file(file_path)
 
     def _session_file(self, session_id: str) -> Path | None:
         """Disk path for a session, or None when the id is unsafe as a file name."""
@@ -172,6 +214,7 @@ class ConversationStore:
             temporary = file_path.with_suffix(".json.tmp")
             temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
             temporary.replace(file_path)
+            self._mtimes[session_id] = self._stamp(file_path)
         except Exception as e:
             logger.warning(f"[memory] Failed to save session {session_id}: {e}")
 
@@ -192,6 +235,7 @@ class ConversationStore:
         tool_calls: list[dict[str, Any]] | None = None,
         tool_call_id: str = "",
         tool_trace: str = "",
+        failed: bool = False,
     ) -> Message:
         """Add a message to a session and persist it.
 
@@ -204,10 +248,12 @@ class ConversationStore:
             tool_calls: Optional tool calls.
             tool_call_id: Optional tool call ID.
             tool_trace: Optional summary of the tools run this turn.
+            failed: The turn failed or was stopped; kept for the chat, not for the model.
 
         Returns:
             The created Message.
         """
+        self._sync(session_id)
         now = time.time()
         if session_id not in self._sessions:
             self._sessions[session_id] = []
@@ -226,6 +272,7 @@ class ConversationStore:
             tool_call_id=tool_call_id,
             tool_trace=tool_trace,
             timestamp=now,
+            failed=failed,
         )
 
         session = self._sessions[session_id]
@@ -268,21 +315,7 @@ class ConversationStore:
         Returns:
             List of Message objects.
         """
-        if session_id not in self._sessions:
-            file_path = self._session_file(session_id)
-            if file_path is not None and file_path.exists():
-                try:
-                    data = json.loads(file_path.read_text(encoding="utf-8"))
-                    self._sessions[session_id] = [Message.from_dict(m) for m in data.get("messages", [])]
-                    self._session_metadata[session_id] = {
-                        "title": data.get("title") or self._generate_title(self._sessions[session_id]),
-                        "created_at": data.get("created_at") or time.time(),
-                        "updated_at": data.get("updated_at") or time.time(),
-                        "model_used": data.get("model_used") or "",
-                    }
-                except Exception as e:
-                    logger.warning(f"[memory] Failed to load session {session_id}: {e}")
-
+        self._sync(session_id)
         messages = self._sessions.get(session_id, [])
         if limit:
             return messages[-limit:]
@@ -293,9 +326,9 @@ class ConversationStore:
         session_id: str,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Get history formatted for the API."""
+        """Get history formatted for the API. A failed or stopped turn is left out: the model never sees it."""
         messages = self.get_history(session_id, limit)
-        return [m.to_api_format() for m in messages]
+        return [m.to_api_format() for m in messages if not m.failed]
 
     def get_total_tokens(self, session_id: str) -> int:
         """Get total token count for a session."""
@@ -303,6 +336,7 @@ class ConversationStore:
 
     def clear_session(self, session_id: str) -> None:
         """Clear all messages for a session."""
+        self._sync(session_id)
         if session_id in self._sessions:
             self._sessions[session_id] = []
             if session_id in self._session_metadata:
@@ -314,6 +348,7 @@ class ConversationStore:
         """Delete a session completely from memory and disk."""
         self._sessions.pop(session_id, None)
         self._session_metadata.pop(session_id, None)
+        self._mtimes.pop(session_id, None)
         file_path = self._session_file(session_id)
         if file_path is not None and file_path.exists():
             try:
@@ -331,6 +366,7 @@ class ConversationStore:
         ``ai`` marks the title the AI picked, so the chat is not named again. A title the user types
         counts as final too.
         """
+        self._sync(session_id)
         tag, clean = split_label(title)
         meta = self._session_metadata.setdefault(session_id, {
             "title": clean,
@@ -349,6 +385,7 @@ class ConversationStore:
 
     def set_source(self, session_id: str, source: str) -> None:
         """Where the chat happens: ``web``, ``terminal`` or ``team``. Kept from the first time it is set."""
+        self._sync(session_id)
         meta = self._session_metadata.setdefault(session_id, {
             "title": "New Chat", "created_at": time.time(), "updated_at": time.time(), "model_used": "",
         })
@@ -359,6 +396,7 @@ class ConversationStore:
 
     def needs_ai_title(self, session_id: str) -> bool:
         """True until the AI (or the user) has named this chat."""
+        self._sync(session_id)
         return not self._session_metadata.get(session_id, {}).get("titled")
 
     def label(self, session_id: str) -> str:
@@ -368,6 +406,7 @@ class ConversationStore:
 
     def get_session_meta(self, session_id: str) -> dict[str, Any]:
         """Get metadata for a session."""
+        self._sync(session_id)
         if session_id not in self._session_metadata and session_id in self._sessions:
             messages = self._sessions[session_id]
             self._session_metadata[session_id] = {
@@ -385,6 +424,7 @@ class ConversationStore:
 
     def list_sessions(self) -> list[dict[str, Any]]:
         """List all chat sessions with metadata, ordered by updated_at descending."""
+        self._sync_all()
         results: list[dict[str, Any]] = []
         for sid, messages in self._sessions.items():
             meta = self._session_metadata.get(sid, {})
@@ -434,10 +474,8 @@ class ConversationStore:
 
     def get_last_used_model(self, session_id: str) -> str | None:
         """Get the model ID that was last successfully used in this session."""
+        self._sync(session_id)
         messages = self._sessions.get(session_id)
-        if not messages and self.storage_dir:
-            self.get_history(session_id)  # lazily loads the session from disk
-            messages = self._sessions.get(session_id)
         if not messages:
             return None
         for m in reversed(messages):

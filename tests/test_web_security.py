@@ -129,6 +129,35 @@ def test_chat_stream_carries_progress_and_reset(monkeypatch: pytest.MonkeyPatch)
     assert seen[-1]["harness"] == {"tier": "lite"}
 
 
+def test_chat_routes_by_what_was_typed_not_by_the_attached_document(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The orchestrator skips its own classification when the server hands it one, so the server must
+    classify the typed request, not the document pasted in front of it."""
+    from unittest.mock import MagicMock
+
+    from agent.orchestrator import AgentResponse
+    from web import server
+
+    async def process(**kwargs):
+        return AgentResponse(content="ok")
+
+    orchestrator = MagicMock()
+    orchestrator.process = process
+    orchestrator.classifier.classify_with_difficulty.return_value = (
+        MagicMock(task_type=MagicMock(value="activity"), confidence=0.9), "easy",
+    )
+    monkeypatch.setattr(server, "get_orchestrator", lambda: orchestrator)
+    monkeypatch.setattr(server, "default_model_id", lambda: "m")
+
+    message = '<file name="kode.py">\ndef hitung():\n    return 1\n</file>\n\nringkas isinya'
+    with TestClient(server.app).websocket_connect("/ws/chat") as ws:
+        ws.send_json({"message": message, "session_id": "sess-test"})
+        while ws.receive_json()["type"] != "done":
+            pass
+
+    classified = orchestrator.classifier.classify_with_difficulty.call_args.args[0]
+    assert "ringkas isinya" in classified and "def hitung" not in classified
+
+
 @pytest.mark.parametrize("bad", ["not json", "[1]", '{"message": 5}', '{"message": "x", "session_id": "../../x"}'])
 def test_chat_rejects_malformed_requests_without_dropping_the_connection(
     monkeypatch: pytest.MonkeyPatch, bad: str

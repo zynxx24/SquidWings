@@ -30,6 +30,9 @@ RIGHT_LABELS = {
 }
 MAX_NOTIFICATIONS = 3
 _FORMULA = re.compile(r"^[=@]|^[+-](?!\d|\s*$)")
+# "-1+cmd|' /C calc'!A0" starts like a number but runs as a formula in Excel. A phone number (+62 812-3456)
+# or a negative amount has no letter, bracket, pipe or bang, and stays as typed.
+_SIGNED_FORMULA = re.compile(r"^[+-].*[A-Za-z(|!]")
 
 
 @dataclass
@@ -97,7 +100,9 @@ def require_any(source: str, needs: tuple[str, ...]) -> None:
 def defuse(value: object) -> object:
     """Text from a customer that a spreadsheet would run as a formula is stored as plain text instead."""
     access = current()
-    if access is not None and access.public and isinstance(value, str) and _FORMULA.search(value.strip()):
+    if access is not None and access.public and isinstance(value, str) and (
+        _FORMULA.search(value.strip()) or _SIGNED_FORMULA.search(value.strip())
+    ):
         return "'" + value
     return value
 

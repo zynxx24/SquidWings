@@ -1,5 +1,10 @@
 """Keeps this checkout on the newest commit of its GitHub branch.
 
+A folder downloaded as a ZIP (GitHub's "Download ZIP") has no git history. On its first start it is
+turned into a checkout of ``UPDATE_REPO`` (``UPDATE_BRANCH``): the commit the ZIP was made from is
+found by comparing the files, so anything the user changed since counts as their own edit and is
+kept, exactly as in a clone. From then on it updates like a clone, and nobody downloads again.
+
 At start, ``main.py`` fetches the branch's upstream and, when GitHub has newer commits, moves
 to them with a fast-forward only, then restarts itself so the new code runs. While the web
 server or the chat runs, a background thread checks again every ``AUTO_UPDATE_EVERY_MIN``
@@ -19,6 +24,7 @@ When ``requirements.txt`` changed, the new packages are installed into the runni
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -38,19 +44,29 @@ RESTARTED_ENV = "SQUIDWINGS_JUST_UPDATED"
 _FETCH_TIMEOUT = 25
 _PIP_TIMEOUT = 900
 _DEP_FILES = ("requirements.txt", "requirements.lock")
+DEFAULT_REPO = "https://github.com/zynxx24/SquidWings.git"
+DEFAULT_BRANCH = "main"
+# How far back to look for the commit a ZIP was made from, and how much of it must match.
+_ADOPT_SEARCH = 300
+_ADOPT_MIN_MATCH = 0.5
+_ADOPT_FETCH_TIMEOUT = 300
 
 _started = threading.Lock()
 _started_once = False
+# The newest result, for the web page: it shows that an update was pulled and needs a restart.
+_last: dict[str, object] = {}
+_last_lock = threading.Lock()
 
 
-def _env(name: str, default: str) -> str:
+def _env(name: str, default: str, *, lower: bool = True) -> str:
     try:
         from dotenv import load_dotenv
 
         load_dotenv(ROOT / ".env")
     except ImportError:  # pragma: no cover - python-dotenv is a requirement
         pass
-    return os.getenv(name, default).strip().lower()
+    value = os.getenv(name, default).strip() or default
+    return value.lower() if lower else value
 
 
 def enabled() -> bool:
@@ -111,14 +127,121 @@ def _install_deps(root: Path) -> str:
 def update(root: Path = ROOT) -> Result:
     """Fetch and fast-forward to the upstream branch. Never raises."""
     try:
-        return _update(root)
+        result = _update(root)
     except (OSError, subprocess.SubprocessError) as exc:
-        return Result("skipped", f"update check failed: {exc}")
+        result = Result("skipped", f"update check failed: {exc}")
+    _remember(result)
+    return result
+
+
+def _remember(result: Result) -> None:
+    with _last_lock:
+        restart = bool(_last.get("restart_needed")) or result.updated
+        _last.update(status=result.status, message=result.message, at=time.time(), restart_needed=restart)
+        if result.updated:
+            _last["new"] = result.new
+
+
+def status() -> dict[str, object]:
+    """The newest check, for the web page. ``restart_needed`` stays on until the process restarts."""
+    with _last_lock:
+        return {"enabled": enabled(), **_last}
+
+
+def _blob_sha(path: Path) -> str | None:
+    """The id git gives a file's content, so a file can be matched to a commit without git reading it."""
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def _tree(root: Path, commit: str) -> dict[str, str]:
+    """path -> blob id of the files in a commit."""
+    listed = _git(root, "ls-tree", "-r", commit)
+    files: dict[str, str] = {}
+    for line in listed.stdout.splitlines():
+        meta, _, path = line.partition("\t")
+        parts = meta.split()
+        if len(parts) == 3 and parts[1] == "blob":
+            files[path] = parts[2]
+    return files
+
+
+def _base_commit(root: Path, ref: str) -> tuple[str, float]:
+    """The commit whose files this folder matches best, and the share of them that match."""
+    commits = _git(root, "rev-list", f"--max-count={_ADOPT_SEARCH}", ref).stdout.split()
+    hashes: dict[str, str | None] = {}
+    best, best_score, best_share = "", -1, 0.0
+    for commit in commits:     # newest first: on a tie the newer commit wins
+        tree = _tree(root, commit)
+        if not tree:
+            continue
+        score = 0
+        for path, blob in tree.items():
+            if path not in hashes:
+                hashes[path] = _blob_sha(root / path)
+            score += hashes[path] == blob
+        if score > best_score:
+            best, best_score, best_share = commit, score, score / len(tree)
+    return best, best_share
+
+
+def _adopt(root: Path) -> Result | None:
+    """Make a downloaded ZIP folder a git checkout of the GitHub branch. None when that worked.
+
+    The folder's files are left exactly as they are; only a ``.git`` folder is added. On any failure it
+    is removed again, so the folder is as it was.
+    """
+    if shutil.which("git") is None:
+        return Result("skipped", "git is not installed; install git to get updates without downloading again")
+    repo = _env("UPDATE_REPO", DEFAULT_REPO, lower=False)
+    branch = _env("UPDATE_BRANCH", DEFAULT_BRANCH, lower=False)
+    remote_ref = f"origin/{branch}"
+    try:
+        steps = (
+            ("init", "-q"),
+            ("config", "core.fileMode", "false"),     # a ZIP does not keep the executable bit
+            ("remote", "add", "origin", repo),
+        )
+        for step in steps:
+            done = _git(root, *step)
+            if done.returncode != 0:
+                raise _AdoptError(_first_line(done.stderr))
+        fetched = _git(root, "fetch", "--quiet", "origin", branch, timeout=_ADOPT_FETCH_TIMEOUT)
+        if fetched.returncode != 0:
+            raise _AdoptError(f"could not reach GitHub ({_first_line(fetched.stderr)})")
+        _git(root, "update-ref", f"refs/remotes/{remote_ref}", "FETCH_HEAD")
+        base, share = _base_commit(root, remote_ref)
+        if not base or share < _ADOPT_MIN_MATCH:
+            raise _AdoptError(f"this folder does not look like a download of {repo}")
+        for step in (
+            ("symbolic-ref", "HEAD", f"refs/heads/{branch}"),
+            ("reset", "-q", "--mixed", base),          # history and index move; the files do not
+            ("branch", "-q", f"--set-upstream-to={remote_ref}"),
+        ):
+            done = _git(root, *step)
+            if done.returncode != 0:
+                raise _AdoptError(_first_line(done.stderr))
+    except (_AdoptError, OSError, subprocess.SubprocessError) as exc:
+        shutil.rmtree(root / ".git", ignore_errors=True)
+        return Result("skipped", f"downloaded folder not linked to GitHub: {exc}")
+    logger.info(f"[update] downloaded folder linked to {repo} ({branch}) at {base[:7]}")
+    return None
+
+
+class _AdoptError(Exception):
+    pass
 
 
 def _update(root: Path) -> Result:
-    if shutil.which("git") is None or not (root / ".git").exists():
-        return Result("skipped", "not a git checkout")
+    if not (root / ".git").exists():
+        adopted = _adopt(root)
+        if adopted is not None:
+            return adopted
+    if shutil.which("git") is None:
+        return Result("skipped", "git is not installed")
     upstream = _git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     if upstream.returncode != 0:
         return Result("skipped", "this branch has no upstream on GitHub")

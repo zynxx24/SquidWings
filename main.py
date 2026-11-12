@@ -26,6 +26,7 @@ import os
 import re
 import select
 import shutil
+import signal
 import sys
 import termios
 import time
@@ -676,6 +677,9 @@ def _apply_workspace_changes(workspace_path: Path, response_text: str) -> list[s
         target = match.group(2)
         replacement = match.group(3)
         file_path = workspace_path / rel_path
+        if not file_path.resolve().is_relative_to(workspace_path.resolve()):
+            logger.warning(f"[workspace] Skipped — {rel_path!r} leads outside the project (symlink)")
+            continue
 
         try:
             res = editor.replace_content(file_path, target, replacement)
@@ -696,6 +700,9 @@ def _apply_workspace_changes(workspace_path: Path, response_text: str) -> list[s
             continue
         content = match.group(2)
         file_path = workspace_path / rel_path
+        if not file_path.resolve().is_relative_to(workspace_path.resolve()):
+            logger.warning(f"[workspace] Skipped — {rel_path!r} leads outside the project (symlink)")
+            continue
         try:
             res = editor.create_file(file_path, content, overwrite=True)
             actions.append(f"💾 Saved: {rel_path} ({res.lines_changed} lines)")
@@ -715,6 +722,14 @@ def _apply_workspace_changes(workspace_path: Path, response_text: str) -> list[s
             continue
         content = match.group(2)
         file_path = workspace_path / rel_path
+        if not file_path.resolve().is_relative_to(workspace_path.resolve()):
+            logger.warning(f"[workspace] Skipped — {rel_path!r} leads outside the project (symlink)")
+            continue
+        # A heading over a code block is how answers quote a piece of a file, too: it may start a new
+        # file, never replace one that exists (that takes a ```file: or ```replace: block, or a tool).
+        if file_path.exists():
+            console.print(f"  [dim]↷ {escape(rel_path)} sudah ada; potongan di jawaban tidak menimpanya.[/dim]")
+            continue
         try:
             res = editor.create_file(file_path, content, overwrite=True)
             actions.append(f"💾 Saved: {rel_path} ({res.lines_changed} lines)")
@@ -1394,6 +1409,26 @@ async def _finish_terminal_naming(
     return target
 
 
+@contextlib.contextmanager
+def _ctrl_c_stops(turn: asyncio.Future[Any]) -> Any:
+    """While a turn runs, Ctrl+C stops that turn and nothing else.
+
+    ``asyncio.run`` only turns the first Ctrl+C into a cancel; every later one raises
+    KeyboardInterrupt from the signal handler and quits the whole CLI. At the prompt
+    the usual handler is back, so Ctrl+C there still exits.
+    """
+    loop = asyncio.get_running_loop()
+    installed = False
+    with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):   # Windows, or not the main thread
+        loop.add_signal_handler(signal.SIGINT, turn.cancel)
+        installed = True
+    try:
+        yield
+    finally:
+        if installed:
+            loop.remove_signal_handler(signal.SIGINT)
+
+
 # Notices from the background update check, shown before the next prompt (not mid-typing).
 _update_notices: list[str] = []
 
@@ -1548,7 +1583,7 @@ async def chat_mode(project: str | None = None) -> None:
             console.print()
             reply = ""
             try:
-                reply = await process_input(
+                turn = asyncio.ensure_future(process_input(
                     user_input=user_input,
                     session_id=session_id,
                     orchestrator=orchestrator,
@@ -1556,7 +1591,9 @@ async def chat_mode(project: str | None = None) -> None:
                     override_model=override_model,
                     active_workspace=active_workspace,
                     terminal_config=terminal_config,
-                )
+                ))
+                with _ctrl_c_stops(turn):
+                    reply = await turn
             except (KeyboardInterrupt, asyncio.CancelledError):
                 # Ctrl+C must not print a traceback or kill the session. Note
                 # that CancelledError and KeyboardInterrupt are BaseException
@@ -1760,6 +1797,21 @@ async def ask_cmd(question: str, model: str | None = None) -> None:
         await orchestrator.close()
 
 
+def _update_cmd() -> int:
+    """``python main.py update``: pull the newest version now, even with AUTO_UPDATE off."""
+    console.print("[dim]Memeriksa versi terbaru di GitHub…[/dim]")
+    result = repo_update.update()
+    if result.updated:
+        console.print(f"[bold green]✓ Diperbarui:[/bold green] {escape(result.message)}")
+        console.print("[dim]Jalankan ulang aplikasi untuk memakai versi baru.[/dim]")
+        return 0
+    if result.status == "current":
+        console.print(f"[green]✓ Sudah versi terbaru[/green] [dim]({escape(result.message)})[/dim]")
+        return 0
+    console.print(f"[yellow]Tidak diperbarui:[/yellow] {escape(result.message)}")
+    return 1
+
+
 def _run_async(coro_fn: Callable[..., Any], *fn_args: Any, **fn_kwargs: Any) -> None:
     """Run a coroutine function and exit quietly when the user hits Ctrl+C.
 
@@ -1908,6 +1960,7 @@ Examples:
   python main.py web --replace            Stop the SquidWings already on the port, then start
   python main.py trading --tunnel         Trading panel + MT4 bridge (Enterprise edition)
   python main.py --no-update web          Start without pulling the newest code from GitHub
+  python main.py update                   Get the newest version now (a ZIP download too)
         """,
     )
     parser.add_argument(
@@ -1940,6 +1993,9 @@ Examples:
 
     # Doctor
     subparsers.add_parser("doctor", help="Test that agent commands are really isolated")
+
+    # update command
+    subparsers.add_parser("update", help="Get the newest version from GitHub now (also works for a ZIP download)")
 
     # web command
     web_parser = subparsers.add_parser("web", help="Start the Web GUI server")
@@ -1975,7 +2031,7 @@ Examples:
 
     args = parser.parse_args()
 
-    if not args.no_update:
+    if not args.no_update and args.command != "update":
         # Fast-forward to GitHub's newest commit, then restart on it (only when something changed).
         repo_update.update_at_start(console.print)
         if args.command in ("chat", "web", None):
@@ -1994,6 +2050,8 @@ Examples:
         _run_async(health_cmd)
     elif args.command == "doctor":
         sys.exit(0 if _display_doctor() else 1)
+    elif args.command == "update":
+        sys.exit(_update_cmd())
     elif args.command == "trading":
         from config.edition import ENTERPRISE_NOTE, trading_enabled
 
@@ -2037,7 +2095,14 @@ Examples:
             )
             panel_lines.append("[dim]🔗 Bisa diakses dari luar jaringan / HP tanpa port forwarding.[/dim]")
         elif enable_tunnel:
-            panel_lines.append("[yellow]⚠ Cloudflare Tunnel aktif, periksa tunnel.log untuk URL publik.[/yellow]")
+            reason = getattr(tunnel, "last_error", None)
+            panel_lines.append("[bold red]✘ Cloudflare Tunnel gagal, tidak ada URL publik.[/bold red]")
+            if reason:
+                panel_lines.append(f"[dim]{reason}[/dim]")
+            panel_lines.append(
+                "[dim]Jaringan ini tidak bisa menjangkau api.trycloudflare.com. Coba lagi nanti, "
+                "pakai hotspot HP, atau akses lewat Tailscale (web UI tetap jalan lokal).[/dim]"
+            )
 
         if is_public:
             panel_lines.append(

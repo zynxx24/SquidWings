@@ -707,6 +707,11 @@ class Orchestrator:
                 harness=harness.stats.to_dict() if harness else {},
             )
 
+        except asyncio.CancelledError:
+            # Stopped by the user: the question stays in the chat, so reopening it does not lose it.
+            if _fallback_depth == 0:
+                self._keep_failed_turn(session_id, user_input, "⏹ Dihentikan sebelum selesai.", persist, task_hint)
+            raise
         except Exception as e:
             latency_ms = (time.time() - start_time) * 1000
             msg = str(e)
@@ -761,7 +766,7 @@ class Orchestrator:
                     "[orchestrator] Billing/quota failure detected; "
                     "skipping fallback chain"
                 )
-                return billing_response
+                return self._failed_turn(billing_response, session_id, user_input, persist, task_hint)
 
             # Nested attempts must not recurse: the outer fallback loop owns
             # the chain and advances to the next model itself.
@@ -777,7 +782,7 @@ class Orchestrator:
             if streamed and on_reset:
                 on_reset()
 
-            fallback_response = await self._try_fallback(
+            fallback = self._try_fallback(
                 user_input=user_input,
                 session_id=session_id,
                 task_type=(
@@ -797,24 +802,49 @@ class Orchestrator:
                 persist=persist,
                 limits=limits,
             )
+            try:
+                fallback_response = await fallback
+            except asyncio.CancelledError:
+                self._keep_failed_turn(session_id, user_input, "⏹ Dihentikan sebelum selesai.", persist, task_hint)
+                raise
             if fallback_response:
                 fallback_response.latency_ms = latency_ms
-                return fallback_response
+                return self._failed_turn(fallback_response, session_id, user_input, persist, task_hint)
             if is_billing_error:
-                return billing_response
+                return self._failed_turn(billing_response, session_id, user_input, persist, task_hint)
 
-            return AgentResponse(
+            return self._failed_turn(AgentResponse(
                 content=f"Error: {e}",
                 status=ResponseStatus.ERROR,
                 error_message=str(e),
                 latency_ms=latency_ms,
-            )
+            ), session_id, user_input, persist, task_hint)
         finally:
             if _fallback_depth == 0:
                 self._fallback.reset_session(session_id)
                 if not persist:
                     # One session per agent per run: these would accumulate forever.
                     self._session_manager.delete_session(session_id)
+
+    def _failed_turn(
+        self, response: AgentResponse, session_id: str, user_input: str, persist: bool, task_hint: str | None,
+    ) -> AgentResponse:
+        """Keep a turn that ended in an error in the chat (a successful fallback is saved already)."""
+        if response.status == ResponseStatus.ERROR:
+            self._keep_failed_turn(session_id, user_input, f"⚠️ {response.content}", persist, task_hint)
+        return response
+
+    def _keep_failed_turn(
+        self, session_id: str, user_input: str, note: str, persist: bool, task_hint: str | None,
+    ) -> None:
+        """The question and what happened, marked failed: shown when the chat is reopened, never sent to a model."""
+        if not persist or task_hint is not None:
+            return
+        try:
+            self._conversation_store.add_message(session_id, "user", user_input, failed=True)
+            self._conversation_store.add_message(session_id, "assistant", note[:2000], failed=True)
+        except Exception as exc:  # noqa: BLE001 - losing the note must not hide the real error
+            logger.warning(f"[orchestrator] Could not keep the failed turn: {exc}")
 
     def _select_model(
         self,

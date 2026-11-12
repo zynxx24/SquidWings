@@ -115,8 +115,11 @@ async def _test_search() -> list[str]:
     async with httpx.AsyncClient(timeout=12) as client:
         key = credentials.get("brave_search_api_key")
         if key:
-            response = await client.get("https://api.search.brave.com/res/v1/web/search", params={"q": "test", "count": "1"},
-                                        headers={"Accept": "application/json", "X-Subscription-Token": key})
+            try:
+                response = await client.get("https://api.search.brave.com/res/v1/web/search", params={"q": "test", "count": "1"},
+                                            headers={"Accept": "application/json", "X-Subscription-Token": key})
+            except httpx.HTTPError as exc:
+                raise OutputError(f"Tidak bisa menghubungi Brave ({type(exc).__name__}).") from None
             if response.status_code != 200:
                 raise OutputError(f"Brave menolak key ini ({response.status_code}).")
             done.append("Brave")
@@ -143,7 +146,7 @@ async def _test_voice() -> str:
         raise OutputError(out.get("error") or voice_tools.SETUP)
     quota = out.get("quota") or {}
     left = ""
-    if quota:
+    if isinstance(quota.get("characters_left"), int):
         number = f"{quota['characters_left']:,}".replace(",", ".")  # Indonesian thousands: 8.800
         left = f", sisa {number} karakter"
     return f"ElevenLabs tersambung: {out['count']} suara{left}."

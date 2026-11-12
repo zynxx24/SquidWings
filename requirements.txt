@@ -51,3 +51,7 @@ pypdfium2>=4
 rapidocr-onnxruntime>=1.4      # OCR tier "fast": PP-OCRv4 models inside, offline
 rapidocr>=3.10                # OCR tiers "best" and "max": PP-OCRv6 (models fetched once)
 cryptography>=42                # Google Sheets: signs the service-account login (RS256)
+# Optional, for /voice in the terminal (not installed by default). Local, offline speech-to-text:
+#   pip install faster-whisper
+# or the online Google recogniser (sends the audio to Google):
+#   pip install SpeechRecognition

@@ -32,6 +32,15 @@ python main.py doctor       # memastikan sandbox benar-benar mengisolasi
 python main.py web          # buka http://127.0.0.1:8080
 ```
 
+### 🔄 Pembaruan otomatis
+
+Tidak perlu mengunduh ulang. Setiap kali dijalankan, SquidWings mengambil versi terbaru dari GitHub lalu memulai ulang dengan kode baru. Selama `chat` atau `web` berjalan, pengecekan diulang tiap 30 menit, dan web UI memberi tahu bila server perlu dijalankan ulang.
+
+- **Hasil `git clone`:** langsung berjalan.
+- **Hasil *Download ZIP*:** pada start pertama folder itu otomatis disambungkan ke repo ini (perlu `git` terpasang). Setelah itu pembaruannya sama seperti clone.
+- **Perubahan Anda aman.** Hanya fast-forward. File yang Anda ubah tetap, dan bila pembaruan menyentuh file yang sama, pembaruan ditunda. `.env`, `workspace/`, dan data lain yang di-ignore tidak pernah disentuh.
+- Perbarui sekarang: `python main.py update`. Matikan: `AUTO_UPDATE=false` di `.env`, atau `python main.py --no-update web`.
+
 > [!IMPORTANT]
 > **Tidak ada login.** Web UI hanya menerima akses dari mesin ini secara bawaan. Dengan `--tunnel`, siapa pun yang punya URL-nya bisa memakai agent dan membaca semua chat.
 

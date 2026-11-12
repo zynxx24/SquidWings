@@ -90,6 +90,79 @@ def test_unpushed_local_commits_stop_the_pull(repos):
 
 def test_not_a_checkout_is_skipped(tmp_path):
     assert repo_update.update(tmp_path).status == "skipped"
+    assert not (tmp_path / ".git").exists()      # the failed link leaves the folder as it was
+
+
+# ── a folder downloaded as a ZIP, with no .git ────────────────────────────────
+
+
+def zip_of(repo: Path, ref: str, into: Path) -> Path:
+    """What GitHub's "Download ZIP" gives: the files of one commit, no history."""
+    into.mkdir()
+    archive = subprocess.run(["git", "archive", ref], cwd=repo, capture_output=True, check=True).stdout
+    subprocess.run(["tar", "-x"], cwd=into, input=archive, check=True)
+    return into
+
+
+@pytest.fixture()
+def downloaded(repos, tmp_path, monkeypatch):
+    """(a ZIP of the first release, the clone that keeps publishing). Two more releases follow it."""
+    local, other = repos
+    git(other, "pull", "-q")
+    commit(other, "notes.txt", "n1\n")
+    git(other, "push", "-q")
+    folder = zip_of(other, "HEAD", tmp_path / "SquidWings-main")
+    commit(other, "app.py", "v2\n")
+    commit(other, "new_tool.py", "t\n")
+    git(other, "push", "-q")
+    monkeypatch.setenv("UPDATE_REPO", str(tmp_path / "origin.git"))
+    monkeypatch.setenv("UPDATE_BRANCH", "main")
+    return folder, other
+
+
+def test_a_downloaded_zip_updates_without_downloading_again(downloaded):
+    folder, other = downloaded
+    (folder / "notes.txt").write_text("my own note\n")       # the user's edit to a file nobody else changed
+    (folder / "data.csv").write_text("mine\n")               # and a file of their own
+    result = repo_update.update(folder)
+    assert result.updated and set(result.changed) == {"app.py", "new_tool.py"}
+    assert (folder / "app.py").read_text() == "v2\n" and (folder / "new_tool.py").exists()
+    assert (folder / "notes.txt").read_text() == "my own note\n"
+    assert (folder / "data.csv").read_text() == "mine\n"
+    assert git(folder, "rev-parse", "HEAD") == git(other, "rev-parse", "HEAD")
+    commit(other, "app.py", "v3\n")                           # from now on it updates like a clone
+    git(other, "push", "-q")
+    assert repo_update.update(folder).updated and (folder / "app.py").read_text() == "v3\n"
+
+
+def test_a_downloaded_zip_keeps_an_edit_that_clashes(downloaded):
+    folder, _ = downloaded
+    (folder / "app.py").write_text("my edit\n")
+    result = repo_update.update(folder)
+    assert result.status == "skipped"
+    assert (folder / "app.py").read_text() == "my edit\n"
+
+
+def test_an_unrelated_folder_is_not_linked(tmp_path, repos, monkeypatch):
+    monkeypatch.setenv("UPDATE_REPO", str(tmp_path / "origin.git"))
+    folder = tmp_path / "something-else"
+    folder.mkdir()
+    (folder / "app.py").write_text("not this project\n")
+    result = repo_update.update(folder)
+    assert result.status == "skipped" and "does not look like" in result.message
+    assert not (folder / ".git").exists()
+
+
+def test_status_remembers_a_pulled_update_until_restart(repos):
+    local, other = repos
+    repo_update._last.clear()
+    repo_update.update(local)
+    assert repo_update.status()["restart_needed"] is False
+    commit(other, "app.py", "v2\n")
+    git(other, "push", "-q")
+    repo_update.update(local)
+    repo_update.update(local)                                 # a later "nothing new" does not hide it
+    assert repo_update.status()["restart_needed"] is True
 
 
 def test_off_in_tests_so_start_never_restarts(monkeypatch):

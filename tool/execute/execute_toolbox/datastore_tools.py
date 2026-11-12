@@ -314,7 +314,7 @@ async def owner_notify(message: str) -> dict[str, Any]:
         if granted.notified >= access.MAX_NOTIFICATIONS:
             raise DataError("Sudah tiga kali mengabari pemilik di percakapan ini. Beri tahu pelanggan bahwa pemilik akan menghubungi.")
         granted.notified += 1
-    prefix = f"🔔 Bot toko{(' — ' + granted.context) if granted and granted.context else ''}\n"
+    prefix = f"🔔 Bot Telegram{(' — ' + granted.context) if granted and granted.context else ''}\n"
     try:
         await send_telegram(prefix + text)
     except OutputError as exc:

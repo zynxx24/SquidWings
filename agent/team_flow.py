@@ -311,6 +311,8 @@ def normalize_node_config(kind: str, config: dict[str, Any] | None, database_ids
         kept: dict[str, Any] = {}
         if config.get("direct"):
             kept["direct"] = True
+        if config.get("notify_owner"):
+            kept["notify_owner"] = True
         grants = _data_grants(config.get("data"))
         if grants:
             kept["data"] = grants
