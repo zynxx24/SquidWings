@@ -2,22 +2,33 @@
 
 # 🦑 SquidWings
 
-**Agent AI multi-model untuk terminal dan web, dengan harness yang membuat model murah bekerja mendekati model mahal.**
+### Agent AI open-source untuk terminal dan web: coding, riset, dokumen, video, dan trading
 
-Ngobrol, mengerjakan tugas, membaca dokumen, meriset web, dan mengerjakan kode sungguhan:
-mengubah file, menjalankan perintah di sandbox, dan memeriksa hasilnya sendiri.
+**Open-source AI agent for the terminal and web browser. Works with any OpenAI-compatible model: Claude, GPT, Gemini, DeepSeek, Qwen, Llama, or a local model in Ollama.**
 
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.14-3776AB?logo=python&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-555)
 ![API](https://img.shields.io/badge/API-OpenAI--compatible-10a37f)
 ![Sandbox](https://img.shields.io/badge/sandbox-bubblewrap%20%7C%20Docker-orange)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
+![Stars](https://img.shields.io/github/stars/zynxx24/SquidWings?style=flat&logo=github)
 
-[Mulai cepat](#-mulai-cepat) · [Modul](#-modul-trading-dan-studio) · [Fitur](#-fitur) · [Struktur file](#-struktur-file) · [Pengaturan](#%EF%B8%8F-pengaturan) · [Pengembangan](#-pengembangan) · [Lisensi](#-lisensi)
+[Mulai cepat](#-mulai-cepat) · [Fitur](#-fitur) · [Trading dan Studio](#-modul-trading-dan-studio) · [Struktur file](#-struktur-file) · [Pengaturan](#%EF%B8%8F-pengaturan) · [Pengembangan](#-pengembangan) · [Lisensi](#-lisensi) · [English](#-in-english)
 
 </div>
 
 ---
+
+SquidWings adalah **AI agent open-source berbahasa Indonesia** yang berjalan di laptopmu sendiri, lewat terminal (CLI) atau Web UI. Agent ini bisa ngobrol, mengerjakan tugas, membaca PDF dan dokumen Office, meriset web dengan sumber, membuat video, dan mengerjakan kode sungguhan: mengubah file, menjalankan perintah di sandbox, lalu memeriksa hasilnya sendiri.
+
+Semua fitur gratis di bawah lisensi AGPL-3.0, termasuk panel trading MT4/MT5 dan editor video. Cocok untuk siapa saja yang ingin asisten AI pribadi seperti Claude Code, Cursor, atau Open Interpreter, tapi dengan model pilihan sendiri. Bisa juga pakai model yang murah atau jalan lokal.
+
+**Kenapa SquidWings?**
+
+- **Model murah terasa pintar.** Execution harness memeriksa hasil, memutus loop, memperbaiki argumen tool, dan naik ke model yang lebih kuat hanya saat perlu.
+- **Provider bebas.** Cukup URL dan API key dari OpenRouter, OpenAI, Groq, 9Router, Ollama, LM Studio, atau endpoint lain yang kompatibel dengan OpenAI.
+- **Aman dipakai.** Perintah agent berjalan di sandbox bubblewrap atau Docker, dengan policy engine, audit log, dan prompt shield.
+- **Lengkap dalam satu aplikasi.** Chat, tim agent seperti n8n, 144 tool, router model, terminal web, suara, trading, dan editor video.
 
 ## 🚀 Mulai cepat
 
@@ -34,9 +45,9 @@ python main.py tools        # ffmpeg, Node.js, dan program media lain: apa yang 
 python main.py web          # buka http://127.0.0.1:8080
 ```
 
-Diuji di Python 3.14 (direkomendasikan) dan 3.12, yang juga bisa dipakai dengan `python3 -m venv .venv && pip install -r requirements.txt`.
+Diuji di Python 3.14 (direkomendasikan) dan 3.12. Dengan 3.12 bisa juga memakai `python3 -m venv .venv && pip install -r requirements.txt`.
 
-**Sudah terpasang dengan Python lama?** Hentikan SquidWings, lalu jalankan `bash scripts/upgrade_python.sh`. Skrip ini memasang Python 3.14 lewat uv (python3 bawaan sistem tidak diubah), menyimpan venv lama sebagai `.venv-py3.12`, membuat venv baru, dan memeriksanya. Kalau ada langkah yang gagal, venv lama dikembalikan otomatis.
+**Sudah terpasang dengan Python lama?** Hentikan SquidWings, lalu jalankan `bash scripts/upgrade_python.sh`. Skrip ini memasang Python 3.14 lewat uv tanpa mengubah python3 bawaan sistem, menyimpan venv lama sebagai `.venv-py3.12`, membuat venv baru, lalu memeriksanya. Kalau ada langkah yang gagal, venv lama dikembalikan otomatis.
 
 ### 🔄 Pembaruan otomatis
 
@@ -50,42 +61,47 @@ Tidak perlu mengunduh ulang. Setiap kali dijalankan, SquidWings mengambil versi 
 > [!IMPORTANT]
 > **Tidak ada login.** Web UI hanya menerima akses dari mesin ini secara bawaan. Dengan `--tunnel`, siapa pun yang punya URL-nya bisa memakai agent dan membaca semua chat.
 
-## 🧩 Modul trading dan Studio
-
-Semua fitur ada di repositori ini dan gratis, tanpa edisi berbayar:
-
-- **Trading:** panel `/trading` dengan chart dan tiket order, jembatan EA MT4 dan adapter MT5, model kuant, otak neural, LLM analyst, simulasi live, auto trade dengan stop loss dan trailing stop, tool `trading_snapshot`, dan skill `analis-trading`. Pengaturannya ada di `trading/env.enterprise.example`.
-- **Studio video:** editor motion dengan keyframe, catatan, dan chat revisi.
-
-Kedua modul opsional. `config/edition.py` menyalakannya bila filenya ada; bila dihapus, sisanya tetap berjalan dan menu itu tersembunyi. `ENTERPRISE_TRADING=0` atau `ENTERPRISE_STUDIO=0` mematikannya walau terpasang. Data trading (`trading/data/`: jurnal, histori candle, bobot model) tidak ikut di repo.
-
-> [!WARNING]
-> Fitur trading tidak menjamin keuntungan. Uji di akun demo dulu; seluruh keputusan dan risiko trading ada pada pemakainya.
-
 ## ✨ Fitur
 
 | Fitur | Keterangan |
 |---|---|
-| 💬 Terminal dan Web UI | Satu orchestrator yang sama untuk keduanya |
-| 🫶 Teman ngobrol dan tugas | Mendengarkan saat curhat, menjawab tugas dengan bahasa wajar, dan ingat isi chat |
-| 📄 Baca dokumen | Teks dan gambar dari PDF, Office, EPUB, ZIP, dan scan, lalu agent menentukan langkahnya |
-| 🔌 Provider bebas | Cukup URL dan API key dari endpoint yang kompatibel dengan OpenAI. Daftar model diambil otomatis |
+| 💬 Terminal dan Web UI | Satu orchestrator yang sama untuk CLI dan browser |
+| 🧑‍💻 AI coding agent | Membaca dan mengubah file, menjalankan perintah dan tes di sandbox, lalu memeriksa hasilnya |
+| 🫶 Teman ngobrol dan tugas | Mendengarkan saat curhat, menjawab tugas dengan bahasa wajar, dan ingat isi chat sebelumnya |
+| 📄 Baca dokumen | Teks dan gambar dari PDF, Word, PowerPoint, Excel, EPUB, ZIP, dan scan (OCR lokal) |
+| 🔌 Provider bebas | Endpoint apa pun yang kompatibel dengan OpenAI. Daftar model diambil otomatis |
 | 🧠 Execution harness | Verifikasi hasil, deteksi loop, perbaikan argumen tool, dan eskalasi ke model lebih kuat |
-| 🧰 Toolbox | 144 tool tepat (hitung, tanggal, satuan, tabel, uang, peta, cuaca, kurs, kalkulator risiko, Office, PDF, voice-over ElevenLabs, video dan audio) yang tersembunyi sampai dibutuhkan |
-| 🎬 Video dan audio | Unduh video, audio, atau subtitle dari YouTube dan ±1800 situs (yt-dlp), transkripsi lokal (faster-whisper), dan video dari kode lalu render ke MP4 (HyperFrames atau Remotion) |
+| 🧰 Toolbox | 144 tool (hitung, tanggal, satuan, tabel, uang, peta, cuaca, kurs, kalkulator risiko, Office, PDF, voice-over, video dan audio) yang tersembunyi sampai dibutuhkan |
+| 🎬 Video dan audio | Unduh video, audio, atau subtitle dari YouTube dan ±1800 situs (yt-dlp), transkripsi lokal (faster-whisper), dan video dari kode yang dirender ke MP4 (HyperFrames atau Remotion) |
+| 🎞️ Studio video | Editor motion di browser: klip, keyframe, catatan, dan chat AI untuk revisi |
+| 📈 Trading | Panel MT4/MT5, model kuant dan neural, LLM analyst, simulasi, dan auto trade dengan stop loss |
 | 📑 Buat dokumen | Word, PowerPoint, Excel, CSV, dan PDF yang rapi, langsung muncul di chat untuk diunduh |
 | 🗺️ Google Maps | Impor hasil scrape, saring dan rangking tempat, jarak, dan ekspor ke Excel atau GeoJSON |
-| 👥 Tim agent | Kanvas alur seperti n8n: delay, gate OR, jadwal, Telegram, dan database |
-| 🔎 Riset web | Mencari, membuka beberapa halaman, membaca isinya, dan mencantumkan sumber |
+| 👥 Tim agent | Kanvas alur seperti n8n: delay, gate OR, jadwal, bot Telegram, dan database |
+| 🔎 Riset web | Mencari (SearXNG, Brave), membuka beberapa halaman, membaca isinya, dan mencantumkan sumber |
+| 🖥️ Terminal web | Terminal per chat di browser; agent bisa memakai sudo bila kamu izinkan |
+| 🎙️ Suara dan brief | Bicara ke agent, jawaban dibacakan, dan ringkasan harian otomatis |
 | 🗂️ Satu chat, satu set | Folder, memori, vault Obsidian, graph kode, skor aislop, dan mode Ponytail sendiri |
 | 🛡️ Sandbox dan keamanan | Perintah agent terisolasi, policy engine, path jail, audit log, prompt shield, penyamaran rahasia |
 | 🔀 Router model | Provider, URL, dan API key dari web; rotasi pintar, model default, dan pemakaian token |
+
+## 🧩 Modul trading dan Studio
+
+Keduanya ada di repo ini dan gratis:
+
+- **Trading:** panel `/trading` dengan chart dan tiket order, jembatan EA MT4 dan adapter MT5, model kuant, otak neural, LLM analyst, simulasi live, auto trade dengan stop loss dan trailing stop, tool `trading_snapshot`, dan skill `analis-trading`. Pengaturannya ada di `trading/env.enterprise.example`, dan panduannya di [docs/trading.md](docs/trading.md).
+- **Studio video:** editor motion dengan keyframe, catatan, dan chat revisi.
+
+Kedua modul ini opsional. `config/edition.py` menyalakannya bila filenya ada. Bila filenya dihapus, bagian lain tetap berjalan dan menunya disembunyikan. `ENTERPRISE_TRADING=0` atau `ENTERPRISE_STUDIO=0` mematikannya walaupun terpasang. Data trading (`trading/data/`: jurnal, histori candle, bobot model) tidak ikut di repo.
+
+> [!WARNING]
+> Fitur trading tidak menjamin keuntungan. Uji di akun demo dulu; seluruh keputusan dan risiko trading ada pada pemakainya.
 
 ## 📁 Struktur file
 
 ```text
 SquidWings/
-├── main.py                  entry point: chat, ask, web, models, health, doctor
+├── main.py                  entry point: chat, ask, web, models, health, doctor, trading
 ├── cli.py                   antarmuka terminal
 ├── .env.example             contoh semua pengaturan (salin ke .env)
 ├── pyproject.toml           konfigurasi ruff, mypy, dan pytest
@@ -99,9 +115,9 @@ SquidWings/
 │
 ├── brain/                   pemahaman dan memori
 │   ├── classifier/          jenis tugas dan lanjutan percakapan
-│   ├── memory/              riwayat chat, memori proyek, ringkasan
+│   ├── memory/              riwayat chat, memori proyek, ringkasan, recall antar chat
 │   ├── system_prompt/       prompt sistem per jenis tugas
-│   └── skills/              panduan kerja (fix-bug, build-web, google-maps, …)
+│   └── skills/              panduan kerja (fix-bug, build-web, google-maps, studio, …)
 │
 ├── model/                   koneksi ke model
 │   ├── connection/          API client dan retry
@@ -112,13 +128,14 @@ SquidWings/
 ├── tool/                    semua tool agent
 │   ├── register_tools.py    tool inti yang selalu tersedia
 │   ├── registry/            skema dan registry tool
-│   └── execute/             implementasi: file, perintah, web, memori, kode, toolbox
+│   └── execute/             implementasi: file, perintah, web, memori, kode, toolbox, trading
 │
+├── trading/                 model kuant, EA MT4, adapter MT5, berita, risiko
 ├── security/                sandbox, policy.yaml, path jail, audit chain, prompt shield
-├── config/                  settings, edition, kredensial, model dan provider
-├── web/                     server FastAPI, API tim dan router, file statis Web UI
+├── config/                  settings, modul opsional, kredensial, model dan provider
+├── web/                     server FastAPI, API tim, router, trading, Studio, file statis Web UI
 ├── knowledge/               impor hasil Google Maps ke vault
-├── utils/                   logger, tampilan CLI, workspace, port, tunnel, OCR
+├── utils/                   logger, tampilan CLI, workspace, port, tunnel, OCR, terminal web
 ├── docs/                    panduan lengkap
 ├── scripts/check_all.sh     ruff, mypy, compile, pytest, dan import sekaligus
 └── tests/                   test suite offline
@@ -133,6 +150,7 @@ Folder yang dibuat saat jalan dan **tidak** ikut Git:
 | `vault/` | Profil pengguna dan playbook, berlaku di semua chat |
 | `web/data/` | Provider router, kredensial dari web, dan log token |
 | `.agent_memory/` | Statistik model untuk router |
+| `trading/data/` | Jurnal trade, histori candle, dan bobot model trading |
 
 ## ⚙️ Pengaturan
 
@@ -297,6 +315,7 @@ uv tool install graphifyy    # graph kode
 | [Cara kerja agent](docs/cara-kerja-agent.md) | Harness, tier model, dan skill |
 | [Router model](docs/router.md) | Provider, URL, dan API key dari web; rotasi, model default, dan pemakaian token |
 | [Tim agent](docs/tim-agent.md) | Kanvas alur, jadwal, Telegram, dan database |
+| [Trading](docs/trading.md) | Panel, EA MT4, adapter MT5, model kuant, dan batas risiko |
 
 ## 🧪 Pengembangan
 
@@ -325,7 +344,7 @@ Tes bertanda `enterprise` dilewati sendiri bila modul trading tidak terpasang. J
 
 ## 📜 Lisensi
 
-SquidWings gratis dan untuk dibagikan, dirilis di bawah **GNU Affero General Public License v3.0** (AGPL-3.0-only), termasuk modul trading dan Studio. Teks lengkapnya ada di [LICENSE](LICENSE), dan atribusi serta komponen pihak ketiga di [NOTICE](NOTICE).
+SquidWings gratis dan untuk dibagikan, dirilis di bawah **GNU Affero General Public License v3.0** (AGPL-3.0-only), termasuk modul trading dan Studio. Teks lengkapnya ada di [LICENSE](LICENSE), sedangkan atribusi dan komponen pihak ketiga ada di [NOTICE](NOTICE).
 
 Ringkasan singkat (bukan pengganti teks lisensi):
 
@@ -334,4 +353,26 @@ Ringkasan singkat (bukan pengganti teks lisensi):
 - **Atribusi dipertahankan.** Pemberitahuan hak cipta, LICENSE, NOTICE, dan tautan ke repositori asli tidak boleh dihapus.
 - Disediakan **tanpa jaminan apa pun**. Fitur trading tidak menjamin keuntungan. Komponen pihak ketiga (antara lain `animate` dan `humanizer-indonesia`, MIT) memakai lisensinya sendiri.
 
-Dengan mengirim pull request, kamu setuju kontribusimu dilisensikan di bawah AGPL-3.0-only yang sama. Kalau membuat fork, kabari lewat issue di repositori ini; itu hanya permintaan, bukan syarat lisensi.
+Dengan mengirim pull request, kamu setuju kontribusimu dilisensikan di bawah AGPL-3.0-only yang sama. Kalau membuat fork, kabari lewat issue di repositori ini. Itu hanya permintaan, bukan syarat lisensi.
+
+## ⭐ Dukung proyek ini
+
+Kalau SquidWings berguna, beri **bintang** di GitHub supaya lebih mudah ditemukan orang lain. Laporan bug, ide fitur, dan pull request sangat diterima lewat [Issues](https://github.com/zynxx24/SquidWings/issues).
+
+## 🌏 In English
+
+**SquidWings is a free, open-source AI agent (AGPL-3.0) that runs on your own machine, in the terminal or the browser.** It is an alternative to Claude Code, Cursor, Aider, and Open Interpreter that works with any OpenAI-compatible API, including OpenRouter, OpenAI, Groq, Ollama, and LM Studio. That covers Claude, GPT, Gemini, DeepSeek, Qwen, Llama, and local LLMs.
+
+- **AI coding agent:** edits files, runs commands and tests in a bubblewrap or Docker sandbox, and checks its own work.
+- **Execution harness:** result verification, loop detection, tool-argument repair, and escalation to a stronger model, so cheap models do more.
+- **Multi-agent teams:** an n8n-style visual workflow canvas with schedules, Telegram bots, and databases.
+- **Research and documents:** web search with sources, PDF and Office reading with local OCR, Word, Excel, PowerPoint, and PDF output.
+- **Media:** YouTube and yt-dlp downloads, local Whisper transcription, video from code (HyperFrames, Remotion), and a browser motion editor.
+- **Trading:** MT4/MT5 bridge, quant and neural models, LLM analyst, paper trading, and auto trade with stop loss.
+- **Security:** sandboxed commands, policy engine, path jail, audit log, prompt-injection shield, and secret masking.
+
+The interface and docs are in Indonesian. Quick start: see the commands [above](#-mulai-cepat).
+
+---
+
+<sub>**Kata kunci:** AI agent open source, asisten AI Indonesia, AI agent bahasa Indonesia, alternatif Claude Code, alternatif Cursor, AI coding agent, terminal AI, CLI AI agent, chatbot AI lokal, LLM lokal, Ollama, OpenRouter, multi-agent, workflow otomatis seperti n8n, bot Telegram AI, riset web AI, baca PDF dengan AI, OCR, transkripsi Whisper, unduh YouTube, video AI, Remotion, trading bot MT4, MT5, XAUUSD, Python, FastAPI.</sub>
