@@ -172,14 +172,15 @@ def test_tool_calls_are_reported_while_still_being_written() -> None:
     assert seen[-1] == (0, "file_write", '{"path": "app.py", "content": "x')
 
 
-def test_web_results_are_not_cut_to_the_small_tier_limit() -> None:
+def test_tool_results_are_not_cut_for_a_cheap_model() -> None:
     from agent.agent_loop import AgentLoop
     from agent.harness import Harness, scaffold_for
 
     loop = AgentLoop(None, None, harness=Harness(scaffold=scaffold_for("x-flash")))  # type: ignore[arg-type]
     big = {"success": True, "result": "x" * 15_000}
     assert len(loop._serialize_tool_result({**big, "tool_name": "web_research"})) >= 15_000
-    assert len(loop._serialize_tool_result({**big, "tool_name": "read_file"})) < 8_000
+    # Only the provider's context window limits a model: a cheap one reads the whole file too.
+    assert len(loop._serialize_tool_result({**big, "tool_name": "read_file"})) >= 15_000
 
 
 @pytest.mark.parametrize(
@@ -200,9 +201,9 @@ async def test_a_configured_search_api_is_tried_first(monkeypatch: pytest.Monkey
 
     asked: list[str] = []
 
-    async def fetch(provider: str, _query: str, _config: Any) -> list[dict[str, str]]:
+    async def fetch(provider: str, _query: str, _config: Any, _variant: int = 0) -> list[dict[str, str]]:
         asked.append(provider)
-        return [{"title": "A", "url": "https://a.test", "snippet": ""}]
+        return [{"title": "Kopi enak", "url": "https://a.test", "snippet": ""}]
 
     monkeypatch.setattr(tool, "_fetch_from_provider", fetch)
     monkeypatch.setattr(tool, "_get_config", lambda: tool._Config(
@@ -210,3 +211,74 @@ async def test_a_configured_search_api_is_tried_first(monkeypatch: pytest.Monkey
     ))
     provider, _ = await tool._fetch_results("kopi", tool._get_config())
     assert provider == "searxng" and asked == ["searxng"]
+
+
+async def test_unrelated_bing_hits_are_retried_then_passed_over(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tool.execute.execute_web_search import web_search_tool as tool
+
+    asked: list[tuple[str, int]] = []
+    junk = [{"title": "Contact us", "url": "https://company.test/contact", "snippet": "Jakarta office"}]
+    good = [{"title": "Harga emas Antam hari ini", "url": "https://emas.test", "snippet": "harga emas"}]
+
+    async def fetch(provider: str, _query: str, _config: Any, variant: int = 0) -> list[dict[str, str]]:
+        asked.append((provider, variant))
+        if provider == tool._PROVIDER:
+            raise tool._UnreachableError("blocked")
+        return junk if provider == tool._BING_PROVIDER else good
+
+    monkeypatch.setattr(tool, "_fetch_from_provider", fetch)
+    monkeypatch.setattr(tool, "_down_until", {})
+    config = tool._Config(True, 1.0, 5, 1, 0.0, 0, 10, False, "", "", False, "", 1.0)
+    provider, results = await tool._fetch_results("harga emas antam", config)
+    assert provider == "wikipedia" and results == good
+    assert asked == [("duckduckgo-html", 0), ("bing-html", 0), ("bing-html", 1), ("wikipedia", 0)]
+    # The blocked provider is skipped on the next search instead of costing another timeout.
+    asked.clear()
+    await tool._fetch_results("harga emas antam", config)
+    assert ("duckduckgo-html", 0) not in asked
+
+
+def test_relevance_counts_hits_that_mention_the_query() -> None:
+    from tool.execute.execute_web_search.web_search_tool import relevance
+
+    hits = [{"title": "Seafood Jimbaran", "url": "https://a.test", "snippet": ""},
+            {"title": "Lowyat forum", "url": "https://b.test", "snippet": "condo"}]
+    assert relevance("seafood jimbaran terbaik", hits) == 0.5
+    assert relevance("di dan", hits) == 1.0
+
+
+async def test_duckduckgo_is_reached_through_doh_with_its_real_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from tool.execute.execute_web_search import web_search_tool as tool
+
+    seen: dict[str, Any] = {}
+
+    async def resolve(host: str) -> str:
+        return "20.43.161.105"
+
+    async def post(self: httpx.AsyncClient, url: str, **kwargs: Any) -> httpx.Response:
+        seen.update(url=url, host=kwargs["headers"]["Host"], sni=kwargs["extensions"]["sni_hostname"])
+        return httpx.Response(200, text='<a class="result__a" href="https://a.test">A</a>', request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(tool, "_doh_resolve", resolve)
+    monkeypatch.setattr(httpx.AsyncClient, "post", post)
+    config = tool._Config(True, 1.0, 5, 1, 0.0, 0, 10, False, "", "", False, "", 1.0)
+    await tool._request_provider(tool._PROVIDER, "kopi", config)
+    assert seen == {"url": "https://20.43.161.105/html/", "host": "html.duckduckgo.com", "sni": "html.duckduckgo.com"}
+
+
+def test_duckduckgo_bot_check_is_a_refusal_not_an_empty_answer() -> None:
+    from tool.execute.execute_web_search import web_search_tool as tool
+
+    with pytest.raises(tool.ProviderRefusalError):
+        tool._parse_provider(tool._PROVIDER, "<html><form id='challenge-form' action='/anomaly.js'></form></html>")
+
+
+def test_engines_repeating_each_other_count_once() -> None:
+    from tool.execute.execute_web_search.web_search_tool import _dedupe
+
+    hits = [{"title": "Berita Teknologi - Kompas", "url": "https://www.kompas.com/tekno", "snippet": ""},
+            {"title": "Berita Teknologi - Kompas", "url": "https://kompas.com/tekno?utm=x", "snippet": ""},
+            {"title": "Berita Terkini - CNN", "url": "https://cnnindonesia.com/teknologi", "snippet": ""}]
+    assert [h["url"] for h in _dedupe(hits)] == ["https://www.kompas.com/tekno", "https://cnnindonesia.com/teknologi"]

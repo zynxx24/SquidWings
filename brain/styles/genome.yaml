@@ -1,0 +1,274 @@
+# Design genome: the parts style_pick combines into a new direction every time.
+#
+# A direction is one personality (the brief), then one choice from each axis below: a font pair,
+# a layout for the medium, a shape language, a motif, an image treatment, a motion style and a
+# density. The palette is generated (see design_genome.py), not listed. An option whose `tags`
+# share a word with the personality's `tags` is much more likely; any other can still come up
+# now and then, which is where the surprises come from.
+#
+# Everything here is plain data: add a font pair, a layout or a motif and it joins the mix.
+# Fonts are Google Fonts. `weights` are the ones the family really has (a request for a weight
+# it lacks makes Google refuse the whole CSS link).
+
+personalities:
+  - id: editorial
+    name: Editorial
+    tags: [editorial, serif, classic, calm, structured]
+    fits: [berita, news, blog, majalah, magazine, artikel, opini, esai, riset, research, jurnal, laporan, report, buku, book, penerbit, literasi]
+    hues: [[0, 360]]
+    chroma: [0.06, 0.13]
+    modes: [paper, light, dark]
+  - id: warm-craft
+    name: Warm craft
+    tags: [warm, craft, handmade, humanist, earthy, serif]
+    fits: [kopi, coffee, kafe, cafe, roti, bakery, kue, warung, makanan, food, resep, recipe, kerajinan, craft, umkm, toko, batik, tenun, kriya]
+    hues: [[15, 75], [120, 160]]
+    chroma: [0.07, 0.14]
+    modes: [paper, light, tinted]
+  - id: modern-minimal
+    name: Modern minimal
+    tags: [minimal, grotesk, structured, precise, calm]
+    fits: [startup, saas, software, aplikasi, app, produk, product, portfolio, arsitektur, architecture, studio, interior, desain, design]
+    hues: [[0, 360]]
+    chroma: [0.04, 0.12]
+    modes: [light, dark, light]
+  - id: bold-poster
+    name: Bold poster
+    tags: [bold, poster, condensed, loud, brutal, display]
+    fits: [event, konser, concert, festival, musik, music, gig, olahraga, sport, kampanye, campaign, promo, diskon, sale, launching, lomba]
+    hues: [[0, 40], [40, 70], [180, 220], [320, 360]]
+    chroma: [0.15, 0.22]
+    modes: [bold, light, dark]
+  - id: playful
+    name: Playful
+    tags: [playful, rounded, friendly, pop, youthful]
+    fits: [anak, kids, sekolah, school, mainan, toy, game, permainan, komunitas, community, hobi, hobby, hewan, pet, snack, jajanan, es krim]
+    hues: [[0, 360]]
+    chroma: [0.13, 0.2]
+    modes: [tinted, light, bold]
+  - id: luxury
+    name: Luxury
+    tags: [luxury, elegant, serif, high-contrast, calm, display]
+    fits: [hotel, resort, villa, perhiasan, jewelry, fashion, butik, boutique, parfum, perfume, wedding, pernikahan, undangan, spa, properti, property, salon]
+    hues: [[20, 90], [150, 200], [330, 360]]
+    chroma: [0.03, 0.09]
+    modes: [dark, paper, light]
+  - id: tech-precise
+    name: Tech precise
+    tags: [tech, mono, precise, grotesk, structured, dark]
+    fits: [developer, api, coding, kode, cloud, ai, data, dashboard, analitik, analytics, keamanan, security, crypto, trading, fintech, saham, robot]
+    hues: [[140, 260]]
+    chroma: [0.08, 0.17]
+    modes: [dark, light, dark]
+  - id: earthy-natural
+    name: Earthy natural
+    tags: [earthy, natural, humanist, calm, organic, serif]
+    fits: [pertanian, farm, kebun, garden, tanaman, plant, organik, organic, lingkungan, environment, alam, nature, wisata, tour, travel, desa, village, eco]
+    hues: [[60, 160]]
+    chroma: [0.05, 0.12]
+    modes: [paper, tinted, light]
+  - id: retro
+    name: Retro
+    tags: [retro, vintage, display, warm, playful, slab]
+    fits: [vintage, retro, barbershop, pangkas, diner, radio, vinyl, piringan, klasik, nostalgia, thrift, motor, bengkel, garage]
+    hues: [[10, 70], [170, 200]]
+    chroma: [0.1, 0.17]
+    modes: [paper, tinted, bold]
+  - id: civic-trust
+    name: Civic trust
+    tags: [trust, humanist, structured, calm, readable]
+    fits: [bank, asuransi, insurance, pemerintah, government, kesehatan, health, klinik, clinic, rumah sakit, hospital, hukum, law, notaris, koperasi, pendidikan, education, kampus, universitas]
+    hues: [[150, 260]]
+    chroma: [0.06, 0.13]
+    modes: [light, light, tinted]
+  - id: youthful-pop
+    name: Youthful pop
+    tags: [pop, bold, youthful, grotesk, playful, loud]
+    fits: [mahasiswa, student, gen z, kreator, creator, konten, content, tiktok, reels, streetwear, merch, brand, skena, kolektif, zine]
+    hues: [[0, 360]]
+    chroma: [0.17, 0.24]
+    modes: [bold, tinted, dark]
+  - id: calm-wellness
+    name: Calm wellness
+    tags: [calm, soft, humanist, elegant, organic]
+    fits: [yoga, meditasi, meditation, wellness, kesehatan mental, mental health, skincare, kecantikan, beauty, terapi, therapy, herbal, jamu, bayi, baby, ibu]
+    hues: [[80, 200], [300, 360], [20, 50]]
+    chroma: [0.03, 0.08]
+    modes: [tinted, paper, light]
+
+fonts:
+  # heading, body, optional mono/accent; weights per family.
+  - {heading: Fraunces, body: Commissioner, hw: "400;600;700", bw: "400;600", tags: [editorial, warm, serif, craft]}
+  - {heading: DM Serif Display, body: DM Sans, hw: "400", bw: "400;500;700", tags: [editorial, elegant, serif, high-contrast]}
+  - {heading: Instrument Serif, body: Instrument Sans, hw: "400", bw: "400;600", tags: [editorial, minimal, elegant, serif]}
+  - {heading: Newsreader, body: Public Sans, hw: "400;600;700", bw: "400;600", tags: [editorial, trust, readable, serif]}
+  - {heading: Libre Caslon Text, body: Libre Franklin, hw: "400;700", bw: "400;600", tags: [editorial, classic, serif]}
+  - {heading: Cormorant Garamond, body: Karla, hw: "400;600;700", bw: "400;600", tags: [luxury, elegant, high-contrast, serif]}
+  - {heading: EB Garamond, body: Work Sans, hw: "400;600;700", bw: "400;600", tags: [classic, editorial, calm, serif]}
+  - {heading: Young Serif, body: Figtree, hw: "400", bw: "400;600", tags: [warm, friendly, craft, serif]}
+  - {heading: Bodoni Moda, body: Jost, hw: "400;600;700", bw: "400;500", tags: [luxury, high-contrast, elegant, display]}
+  - {heading: Gloock, body: Hanken Grotesk, hw: "400", bw: "400;600", tags: [editorial, bold, high-contrast, display]}
+  - {heading: Archivo Black, body: Archivo, hw: "400", bw: "400;600", tags: [bold, poster, brutal, loud, grotesk]}
+  - {heading: Bricolage Grotesque, body: Atkinson Hyperlegible, hw: "400;600;800", bw: "400;700", tags: [pop, youthful, grotesk, friendly]}
+  - {heading: Syne, body: Hanken Grotesk, hw: "600;700;800", bw: "400;600", tags: [pop, display, loud, grotesk]}
+  - {heading: Unbounded, body: Onest, hw: "400;600;800", bw: "400;600", tags: [pop, tech, display, youthful]}
+  - {heading: Sora, body: Nunito Sans, hw: "400;600;700", bw: "400;600", tags: [tech, minimal, friendly, grotesk]}
+  - {heading: Schibsted Grotesk, body: Schibsted Grotesk, hw: "400;600;800", bw: "400;600", tags: [minimal, structured, grotesk, editorial]}
+  - {heading: Epilogue, body: Epilogue, hw: "400;600;800", bw: "400;500", tags: [minimal, grotesk, bold, structured]}
+  - {heading: Red Hat Display, body: Red Hat Text, hw: "400;700;900", bw: "400;500", tags: [minimal, trust, tech, grotesk]}
+  - {heading: Big Shoulders Display, body: Barlow, hw: "600;800;900", bw: "400;600", tags: [poster, condensed, bold, loud]}
+  - {heading: Anton, body: Barlow Condensed, hw: "400", bw: "400;600", tags: [poster, condensed, loud, brutal]}
+  - {heading: Baloo 2, body: Nunito, hw: "500;700;800", bw: "400;600", tags: [playful, rounded, friendly, youthful]}
+  - {heading: Fredoka, body: Rubik, hw: "500;600;700", bw: "400;500", tags: [playful, rounded, pop, friendly]}
+  - {heading: Lexend, body: Literata, hw: "400;600;700", bw: "400;600", tags: [readable, trust, calm, humanist]}
+  - {heading: Atkinson Hyperlegible, body: Literata, hw: "400;700", bw: "400;600", tags: [readable, trust, humanist]}
+  - {heading: JetBrains Mono, body: IBM Plex Sans, hw: "500;700;800", bw: "400;600", tags: [tech, mono, precise, dark]}
+  - {heading: Space Mono, body: Work Sans, hw: "400;700", bw: "400;600", tags: [tech, retro, mono, precise]}
+  - {heading: IBM Plex Mono, body: IBM Plex Serif, hw: "500;700", bw: "400;600", tags: [tech, editorial, mono, precise]}
+  - {heading: Abril Fatface, body: Lato, hw: "400", bw: "400;700", tags: [retro, display, high-contrast, bold]}
+  - {heading: Shrikhand, body: Mulish, hw: "400", bw: "400;600", tags: [retro, playful, display, warm]}
+  - {heading: Zilla Slab, body: Source Sans 3, hw: "500;700", bw: "400;600", tags: [slab, retro, structured, warm]}
+  - {heading: Arvo, body: Cabin, hw: "400;700", bw: "400;600", tags: [slab, retro, friendly, craft]}
+  - {heading: Marcellus, body: Mulish, hw: "400", bw: "400;600", tags: [calm, elegant, classic, soft]}
+  - {heading: Cinzel, body: Raleway, hw: "500;700", bw: "400;600", tags: [luxury, classic, elegant, display]}
+  - {heading: Alegreya, body: Alegreya Sans, hw: "500;700;800", bw: "400;500", tags: [humanist, craft, editorial, warm]}
+  - {heading: Plus Jakarta Sans, body: Plus Jakarta Sans, hw: "600;700;800", bw: "400;500", tags: [minimal, trust, friendly, grotesk]}
+  - {heading: Fraunces, body: Plus Jakarta Sans, hw: "400;600;700", bw: "400;500", tags: [warm, editorial, friendly, serif]}
+  - {heading: Darker Grotesque, body: Lora, hw: "600;800;900", bw: "400;600", tags: [editorial, bold, grotesk, serif]}
+  - {heading: Rozha One, body: Hind, hw: "400", bw: "400;600", tags: [high-contrast, display, warm, editorial]}
+  - {heading: Caveat, body: Karla, hw: "500;700", bw: "400;600", tags: [handmade, craft, playful, warm]}
+  - {heading: Gochi Hand, body: Nunito Sans, hw: "400", bw: "400;600", tags: [handmade, playful, friendly]}
+  - {heading: Literata, body: Manrope, hw: "400;600;700", bw: "400;600", tags: [calm, readable, organic, serif]}
+  - {heading: Spectral, body: Karla, hw: "400;600", bw: "400;600", tags: [calm, elegant, organic, serif]}
+  - {heading: Familjen Grotesk, body: Source Serif 4, hw: "500;700", bw: "400;600", tags: [editorial, structured, grotesk]}
+  - {heading: Outfit, body: Source Serif 4, hw: "500;700;800", bw: "400;600", tags: [minimal, soft, friendly]}
+
+layouts:
+  web:
+    - {id: split-hero, name: Split hero, tags: [structured, minimal, trust], recipe: "The first screen splits 5/7: the claim and one action on one side, the product or a real photo on the other. Below, sections alternate sides so the eye zigzags."}
+    - {id: editorial-column, name: Editorial column, tags: [editorial, calm, serif], recipe: "One reading column of 65 characters with a wide margin for notes, figures and pull quotes that break out into it. Headlines left-aligned, no hero box."}
+    - {id: index-list, name: Index list, tags: [minimal, structured, precise], recipe: "The page is a numbered list: each row a title, a one-line summary and a meta column (date, price, place). Hover opens a detail; no cards at all."}
+    - {id: poster-type, name: Poster type, tags: [bold, poster, loud, display], recipe: "One oversized word or number fills the first screen edge to edge; everything else is small and tucked into the corners like a poster's fine print."}
+    - {id: asymmetric-grid, name: Asymmetric grid, tags: [structured, editorial, bold], recipe: "A 12-column grid used unevenly: big blocks of 7, 4 or 9 columns, some content hanging into the gutter, one element breaking the grid on purpose per section."}
+    - {id: bento-hierarchy, name: Bento with a hierarchy, tags: [tech, pop, structured], recipe: "A tile grid where tiles differ in size by importance: one large lead tile, two medium, several small. No two neighbours the same size; real content in each, not icons."}
+    - {id: magazine-spread, name: Magazine spread, tags: [editorial, luxury, elegant], recipe: "Sections read like spreads: a full-bleed image page next to a text page, captions set small beside images, a running header with the section name."}
+    - {id: chapter-scroll, name: Numbered chapters, tags: [editorial, structured, calm], recipe: "A long scroll in numbered chapters (01, 02, 03) with a sticky chapter index on the side; each chapter opens with a big numeral and a one-line thesis."}
+    - {id: catalog-grid, name: Catalog grid, tags: [craft, warm, pop], recipe: "A shop-window grid of real items with photo, name and price in a strict rhythm; filters as plain text links above; one featured item breaks the grid at double size."}
+    - {id: timeline-rail, name: Timeline rail, tags: [structured, trust, editorial], recipe: "A vertical rail runs down the page; events, steps or milestones hang off it alternately left and right, dates set large in the accent colour."}
+    - {id: dashboard-rail, name: Dashboard rail, tags: [tech, precise, dark], recipe: "A narrow left rail for navigation, a top strip of three key numbers with sparklines, then one main chart and a dense table; no decorative cards."}
+    - {id: letter, name: A letter, tags: [warm, handmade, calm, craft], recipe: "The page reads like a personal letter or menu: centred narrow column on a paper texture, a handwritten-style signature, small ornaments between parts."}
+    - {id: horizontal-strip, name: Horizontal strip, tags: [pop, youthful, playful], recipe: "One section scrolls sideways through a strip of large panels (works, products, steps) while the rest of the page scrolls normally; arrows and a counter show position."}
+    - {id: sticker-collage, name: Sticker collage, tags: [playful, youthful, handmade, pop], recipe: "Content blocks sit like stickers and cut paper: slightly rotated, overlapping, with tape or outlines; the text inside stays straight and readable."}
+    - {id: product-sheet, name: Product sheet, tags: [minimal, precise, tech], recipe: "A spec-sheet page: a large product view, then a two-column table of facts with hairline rules, callout lines pointing at parts of the product."}
+    - {id: big-numbers, name: Big numbers, tags: [bold, structured, trust], recipe: "Every section leads with one large number (a price, a year, a count) set huge in the heading font, with the explanation set small beside it."}
+    - {id: card-stack, name: Stacked panels, tags: [modern, pop, minimal], recipe: "Full-width panels stack as you scroll, each a different background tint from the palette, each with one message and one image; the stack edge peeks at the bottom."}
+    - {id: map-led, name: Map led, tags: [earthy, natural, trust], recipe: "A map or floor plan is the main image; locations are numbered on it and listed beside with address and hours; directions as the main action."}
+    - {id: quote-wall, name: Quote wall, tags: [calm, elegant, editorial], recipe: "Large quotations in the heading font form the rhythm of the page, each attributed to a real named source, with the body content between them."}
+    - {id: terminal-doc, name: Docs layout, tags: [tech, mono, precise], recipe: "A documentation shape: left table of contents, centred content with code blocks and callouts, right column 'on this page' links."}
+    - {id: menu-board, name: Menu board, tags: [warm, retro, craft], recipe: "Items listed like a menu board: name, dotted leader, price; grouped under hand-lettered category headings; specials boxed."}
+    - {id: hero-video-free, name: Type over photo, tags: [luxury, earthy, calm], recipe: "One full-bleed real photograph with the headline set over its quiet area; everything below is text-led with generous spacing and thin dividers."}
+  slides:
+    - {id: big-statement, name: Big statement, tags: [bold, poster, loud], recipe: "Most slides carry one sentence set huge; facts go on small follow-up slides; section breaks on full accent colour."}
+    - {id: editorial-deck, name: Editorial deck, tags: [editorial, serif, calm], recipe: "Two-column slides like a magazine page: text column and image column, captions small, slide numbers as folios."}
+    - {id: number-led, name: Number led, tags: [structured, trust, bold], recipe: "Each content slide leads with one large figure and a short line explaining it; comparisons as two big numbers side by side."}
+    - {id: grid-deck, name: Swiss grid deck, tags: [minimal, structured, precise], recipe: "A strict 6-column grid on every slide, flush-left text, one image block, numbered sections in the corner."}
+    - {id: photo-deck, name: Photo deck, tags: [luxury, earthy, calm], recipe: "Full-bleed photographs with a text band; data slides on the plain background; no clip-art."}
+    - {id: chapter-deck, name: Chapter deck, tags: [editorial, structured], recipe: "Numbered chapters with divider slides; a running chapter label at the top of every slide."}
+    - {id: diagram-deck, name: Diagram deck, tags: [tech, precise], recipe: "Explains with drawn diagrams and flows built from shapes in the palette; one idea per diagram; minimal text."}
+    - {id: sticker-deck, name: Sticker deck, tags: [playful, youthful, pop], recipe: "Tilted labels, cut-paper shapes and hand-drawn arrows around straight readable text; a different background tint per section."}
+    - {id: quote-deck, name: Quote and evidence, tags: [calm, elegant, trust], recipe: "Alternates a large quotation or claim with an evidence slide (chart, table, source)."}
+    - {id: timeline-deck, name: Timeline deck, tags: [structured, trust], recipe: "A horizontal timeline runs across the deck; each slide zooms into one point on it."}
+  image:
+    - {id: monumental-type, name: Monumental type, tags: [bold, poster, loud], recipe: "One word or number fills most of the frame; the subject sits small against it; fine print in a corner."}
+    - {id: off-centre-subject, name: Off-centre subject, tags: [calm, editorial, earthy], recipe: "The subject on a third line with open space for the text; horizon or edge lines lead to it."}
+    - {id: grid-of-things, name: Grid of things, tags: [structured, craft, pop], recipe: "Objects laid out in a neat grid seen from above (flat lay); one odd item breaks the pattern."}
+    - {id: diagonal-cut, name: Diagonal cut, tags: [bold, youthful, pop], recipe: "The frame splits along a diagonal into two colour fields; text runs along the cut."}
+    - {id: collage, name: Paper collage, tags: [handmade, playful, retro], recipe: "Cut-out photo pieces, torn paper edges, tape and stamps layered with depth; one clear focal piece."}
+    - {id: frame-in-frame, name: Frame in frame, tags: [elegant, luxury, classic], recipe: "A thin border inset from the edges, the subject framed inside, title set across the frame line."}
+    - {id: halftone-portrait, name: Halftone duotone, tags: [retro, bold, poster], recipe: "The subject as a two-colour halftone image in the palette, big type overlapping the image."}
+    - {id: badge-seal, name: Badge and seal, tags: [retro, craft, warm], recipe: "A circular badge or stamp with curved text as the centre, ornaments and a date line."}
+    - {id: isometric-scene, name: Isometric scene, tags: [tech, playful, precise], recipe: "A small isometric scene with flat colours and one accent, labelled with thin callout lines."}
+    - {id: botanical, name: Botanical line art, tags: [organic, calm, earthy], recipe: "Fine line drawing of plants or forms around the text, generous margin, one accent fill."}
+    - {id: split-photo-type, name: Photo and type split, tags: [minimal, structured, editorial], recipe: "Half real photograph, half solid colour field with the type; aligned to a strict baseline."}
+    - {id: pattern-field, name: Pattern field, tags: [craft, playful, warm], recipe: "A repeat pattern from a local motif (batik-like, tiles, waves) as the background, the message in a clean panel."}
+  video:
+    - {id: kinetic-type, name: Kinetic type, tags: [bold, poster, loud], recipe: "Words are the visuals: they slide, stack and swap on a baseline in time with the beat, about 3 words per second."}
+    - {id: product-orbit, name: Product orbit, tags: [minimal, tech, luxury], recipe: "The product turns slowly while callouts draw in to its parts; clean background in the palette."}
+    - {id: collage-cutout, name: Cut-out collage, tags: [playful, handmade, youthful], recipe: "Paper cut-outs pop in with a little bounce, hand-drawn arrows and scribbles, stop-motion feel at 12 fps."}
+    - {id: data-story, name: Data story, tags: [structured, trust, tech], recipe: "Numbers count up, bars grow and a map highlights places; one fact per shot, source in the corner."}
+    - {id: editorial-reel, name: Editorial reel, tags: [editorial, calm, elegant], recipe: "Slow pans over photographs with serif captions fading in; long holds; soft cuts on the music phrase."}
+    - {id: split-screen, name: Split screen, tags: [structured, pop], recipe: "The frame splits into two or three panels showing before/after or step by step, panels slide to rearrange."}
+    - {id: retro-broadcast, name: Retro broadcast, tags: [retro, warm, bold], recipe: "Lower thirds, scan lines and a channel bug like old TV; wipes as transitions; slab type."}
+    - {id: line-draw, name: Line drawing, tags: [organic, calm, handmade], recipe: "A single line draws the scene, then fills with flat colour; slow and quiet."}
+  document:
+    - {id: report-classic, name: Classic report, tags: [editorial, trust, structured], recipe: "Title page with a band, numbered headings, tables with banded rows, figures with captions."}
+    - {id: memo-plain, name: Plain memo, tags: [minimal, trust], recipe: "Memo header block, short sections, bold lead sentences, no decoration beyond a rule."}
+    - {id: magazine-report, name: Magazine report, tags: [editorial, elegant], recipe: "Pull quotes and a two-column body for long sections, a large lead paragraph."}
+    - {id: brief-cards, name: Brief with callouts, tags: [structured, friendly], recipe: "Key points in shaded callout boxes at the start of each section, the detail after."}
+
+shapes:
+  - {id: sharp, name: Sharp, radius: "0", border: "1px hairlines", shadow: none, tags: [editorial, minimal, structured, precise, brutal]}
+  - {id: soft, name: Softly rounded, radius: "8px", border: "1px in the line colour", shadow: none, tags: [trust, calm, friendly, minimal]}
+  - {id: round, name: Round, radius: "20px, buttons fully round", border: none, shadow: "soft, low", tags: [playful, friendly, rounded, soft]}
+  - {id: brutal, name: Brutalist, radius: "0", border: "2-3px in the text colour", shadow: "hard offset 4px in the text colour, no blur", tags: [brutal, loud, poster, pop, youthful]}
+  - {id: hairline, name: Hairline frames, radius: "2px", border: "1px, double rules for emphasis", shadow: none, tags: [luxury, elegant, classic, editorial]}
+  - {id: pill-mix, name: Mixed radius, radius: "4px blocks, round tags and buttons", border: "1px", shadow: none, tags: [tech, modern, minimal]}
+  - {id: organic, name: Organic, radius: "blob or leaf shapes for images, 12px for blocks", border: none, shadow: none, tags: [organic, earthy, calm, handmade]}
+  - {id: stamp, name: Stamped, radius: "0 with a dashed or perforated edge", border: "dashed 1.5px", shadow: none, tags: [retro, craft, warm]}
+
+motifs:
+  - {id: rules, text: "Horizontal rules and column lines that organise the page", tags: [editorial, structured, classic]}
+  - {id: numerals, text: "Large section numerals (01, 02) in the heading font", tags: [structured, editorial, bold]}
+  - {id: grain, text: "A fine paper grain over flat colour fields", tags: [warm, craft, retro, earthy]}
+  - {id: halftone, text: "Halftone dots in the accent for images and shapes", tags: [retro, pop, poster]}
+  - {id: underline-hand, text: "Hand-drawn underlines and circles around key words", tags: [handmade, playful, warm]}
+  - {id: marginalia, text: "Small notes and arrows in the margin beside the text", tags: [editorial, handmade, craft]}
+  - {id: duotone, text: "Photos in two colours from the palette", tags: [bold, pop, retro, poster]}
+  - {id: dotted-leaders, text: "Dotted leaders between labels and values, like a menu or ledger", tags: [retro, craft, structured]}
+  - {id: stamps, text: "Round stamps and seals with curved text as badges", tags: [retro, craft, warm]}
+  - {id: grid-lines, text: "A faint visible layout grid behind content", tags: [tech, precise, structured]}
+  - {id: cut-paper, text: "Cut-paper shapes with slight shadows and torn edges", tags: [playful, handmade, youthful]}
+  - {id: kicker-caps, text: "Small-caps kickers above headings, wide letterspacing only there", tags: [editorial, luxury, classic]}
+  - {id: monogram, text: "A monogram or initial used as a repeated mark", tags: [luxury, elegant, classic]}
+  - {id: local-pattern, text: "A pattern from local craft (batik, tenun, tiles) used sparingly at edges", tags: [craft, warm, earthy]}
+  - {id: callout-lines, text: "Thin callout lines labelling parts of images", tags: [precise, tech, minimal]}
+  - {id: tape-labels, text: "Tape and label pieces holding images", tags: [handmade, playful, retro]}
+  - {id: big-quote, text: "Oversized quotation marks in the accent", tags: [editorial, calm, elegant]}
+  - {id: arrows, text: "Bold arrows that point the reading path", tags: [bold, pop, structured]}
+  - {id: botanical-line, text: "Fine botanical line drawings in corners", tags: [organic, calm, elegant]}
+  - {id: colour-blocks, text: "Solid colour blocks that frame sections, no gradients", tags: [bold, minimal, pop]}
+  - {id: code-marks, text: "Code-like marks: brackets, prompts, line numbers as decoration", tags: [tech, mono, precise]}
+  - {id: wavy-dividers, text: "Wavy or zigzag section dividers", tags: [playful, youthful, organic]}
+
+imagery:
+  - {id: real-photo, text: "Real photography, natural light, one subject, honest colour", tags: [trust, calm, earthy, minimal]}
+  - {id: bw-accent, text: "Black-and-white photos with one element in the accent colour", tags: [editorial, bold, luxury]}
+  - {id: flat-illustration, text: "Flat illustration with the palette only, no gradients, visible shapes", tags: [playful, friendly, pop]}
+  - {id: line-illustration, text: "Single-weight line illustration, accent fills only", tags: [calm, minimal, precise, organic]}
+  - {id: type-only, text: "No images: typography, numbers and colour carry the page", tags: [minimal, bold, poster, structured]}
+  - {id: product-cutouts, text: "Product photos cut out on solid colour fields", tags: [pop, modern, tech, minimal]}
+  - {id: textured-collage, text: "Collage of photos, paper and texture", tags: [handmade, retro, youthful]}
+  - {id: diagrams, text: "Diagrams and charts drawn in the palette instead of stock pictures", tags: [tech, precise, structured, trust]}
+  - {id: duotone-photo, text: "Duotone photography in two palette colours", tags: [bold, retro, pop]}
+  - {id: hand-drawn, text: "Hand-drawn sketches and scribbles over real photos", tags: [handmade, warm, craft]}
+
+motion:
+  - {id: still, text: "Almost none: content is there; only focus and hover states change", energy: 1, tags: [calm, luxury, trust, editorial]}
+  - {id: fade-rise, text: "Sections fade in and rise 8px once, 200ms, staggered 60ms", energy: 1, tags: [minimal, calm, elegant]}
+  - {id: draw-in, text: "Rules, underlines and diagrams draw in as they enter", energy: 2, tags: [editorial, precise, handmade]}
+  - {id: snap, text: "Hard, quick moves along the grid, 150ms, no bounce", energy: 2, tags: [structured, brutal, tech]}
+  - {id: bounce-pop, text: "Small playful pops and wiggles on hover and entry, spring easing", energy: 3, tags: [playful, youthful, pop]}
+  - {id: kinetic, text: "Headline words swap or slide in sequence; numbers count up", energy: 3, tags: [bold, poster, loud]}
+  - {id: parallax-soft, text: "Images move slightly slower than text on scroll, 10% at most", energy: 2, tags: [luxury, earthy, calm]}
+
+density:
+  - {id: airy, text: "Airy: section padding 96-128px, body 18px, max 60 characters a line", tags: [luxury, calm, elegant, minimal]}
+  - {id: balanced, text: "Balanced: section padding 64-80px, body 16-17px, 65 characters a line", tags: [trust, editorial, friendly, structured]}
+  - {id: dense, text: "Dense: section padding 40-56px, body 15-16px, more per screen, tables welcome", tags: [tech, precise, retro, pop]}
+
+scales:
+  - {ratio: 1.2, name: "Minor third (1.2): quiet headings"}
+  - {ratio: 1.25, name: "Major third (1.25): balanced"}
+  - {ratio: 1.333, name: "Perfect fourth (1.333): clear hierarchy"}
+  - {ratio: 1.5, name: "Perfect fifth (1.5): dramatic"}
+  - {ratio: 1.618, name: "Golden (1.618): poster-like contrast"}

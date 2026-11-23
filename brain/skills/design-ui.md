@@ -3,13 +3,13 @@ name: design-ui
 description: Make interfaces look deliberate - hierarchy, spacing, type, color, and states.
 tasks: code, activity, generate_img
 triggers: desain, design, ui, ux, tampilan, warna, layout, cantik, bagus, modern, dashboard, landing page, styling, css, poster, logo, banner, ilustrasi, gambar
-tools: style_pick
+tools: style_pick, contrast_check
 ---
 # Designing an interface
 
 Generic AI output is recognisable: purple gradients, everything centred, identical rounded cards, emoji as icons. Avoid it by making real decisions.
 
-**Commit to one direction.** Call `style_pick` with the medium and subject before you style anything, and use its palette, fonts, layout and motifs throughout. It skips looks used in recent chats, so two requests never come out the same. Follow an existing product's look instead when there is one.
+**Commit to one direction.** Call `style_pick` with the medium and subject before you style anything, and use its palette (`css_tokens`), fonts (`fonts_css`), layout, shape language and motifs throughout. It generates a fresh, contrast-checked direction and skips looks used in recent chats, so two requests never come out the same. For a set (logo, poster, slides, site of one brand) reuse its `style` id. To show the user several options first, `design_explore` makes a page of them. Follow an existing product's look instead when there is one.
 
 **Start from the content.** Write the real headings and data first. Decide the one thing each screen is for, and make that the most prominent element. Never use lorem ipsum, or fake stats and testimonials.
 
@@ -22,6 +22,10 @@ Generic AI output is recognisable: purple gradients, everything centred, identic
 **Colour.** Use one neutral scale, one accent, and semantic colours for success, warning, and error. Define them as variables and support dark mode by swapping values, not by inverting. Text contrast must be at least 4.5:1, and never rely on colour alone to convey meaning.
 
 **Layout.** Left-align text by default. Use a consistent grid and align edges to it. Avoid cards inside cards. Design for 360px wide first, with no horizontal scrolling and touch targets of at least 44px.
+
+**Design Read before building.** Write one line: ENERGY, RHYTHM and MOTION from 1 to 3, the one focal point, the one accent, and the motif that repeats. Build to it; uniform sections with RHYTHM 3 is a contradiction. For a full website or app load the antislop guides from the aislop skill (`antislop/core.md`, `antislop/ui.md`, and `antislop/layout-mobile.md` for responsive work).
+
+**Check contrast with the tool.** Run `contrast_check` on every text and background pair of the palette before you use it; fix any FAIL.
 
 **Every state is part of the design.** Hover, focus (visible, never removed), active, disabled, loading (a skeleton matching the final layout), empty (say what to do next), and error (say what went wrong and how to fix it, in plain language, next to the problem).
 

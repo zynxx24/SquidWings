@@ -35,7 +35,7 @@ logger = get_logger(__name__)
 
 SESSION_VAULT_DIR = ".vault"
 
-_MAX_BODY_CHARS = 40_000
+_MAX_BODY_CHARS = 1_000_000
 
 
 # --------------------------------------------------------------------------- #

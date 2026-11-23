@@ -84,13 +84,15 @@ def download_cloudflared() -> Path | None:
 class CloudflareTunnel:
     """Manages a quick Cloudflare Tunnel process."""
 
-    def __init__(self, port: int, host: str = "127.0.0.1") -> None:
+    def __init__(self, port: int, host: str = "127.0.0.1", *, log_file: Path | None = None, primary: bool = True) -> None:
+        """``primary`` is the tunnel for the agent's own page; a preview of a dev server is not."""
         self.port = port
         self.host = host
+        self.primary = primary
         self.process: subprocess.Popen[str] | None = None
         self.public_url: str | None = None
         self.last_error: str | None = None
-        self._log_file: Path | None = None
+        self._log_file: Path | None = log_file
 
     def start(self, timeout: float = 20.0) -> str | None:
         """Start the tunnel and wait up to timeout seconds for public URL."""
@@ -129,7 +131,8 @@ class CloudflareTunnel:
             logger.error(f"[tunnel] Failed to start cloudflared process: {e}")
             return None
 
-        _GLOBAL_TUNNEL = self
+        if self.primary:
+            _GLOBAL_TUNNEL = self
         atexit.register(self.stop)
 
         # Poll for URL in log file

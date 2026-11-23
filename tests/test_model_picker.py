@@ -164,3 +164,21 @@ def test_outcomes_reach_the_picker_through_the_router(registry, tmp_path):
     router = RoutingType(config_path=get_settings().models_config_path, registry=registry, picker=picker)
     router.record_outcome("prov/glm-5-3-flash", True, 650.0)
     assert picker.stats("prov/glm-5-3-flash")["ok"] == 1
+
+
+@pytest.mark.parametrize("difficulty", list(Difficulty))
+def test_quality_max_sends_every_task_to_the_strongest_tier(registry, tmp_path, monkeypatch, difficulty):
+    monkeypatch.setenv("ROUTING_QUALITY", "max")
+    for mid in ("vk/openai/gpt-6.1-sol", "ag/claude-opus-5-5", "ag/gemini-3.8-flash-high", "vk/anthropic/claude-sonnet-5.5"):
+        registry.register(ModelInfo(id=mid))
+    router = _router(registry, tmp_path, {"activity": {"default_difficulty": "easy"}})
+    picked = {router.route(TaskType.ACTIVITY, difficulty, auto=True).id for _ in range(30)}
+    assert picked <= {"vk/openai/gpt-6.1-sol", "ag/claude-opus-5-5"}
+
+
+def test_quality_max_keeps_a_pinned_model(registry, tmp_path, monkeypatch):
+    monkeypatch.setenv("ROUTING_QUALITY", "max")
+    registry.register(ModelInfo(id="pinned-model"))
+    registry.register(ModelInfo(id="vendor/opus-big"))
+    router = _router(registry, tmp_path, {"activity": {"easy": "pinned-model"}})
+    assert router.route(TaskType.ACTIVITY, Difficulty.EASY, auto=True).id == "pinned-model"

@@ -2,15 +2,20 @@
 
 A model left alone reaches for the same look every time (and the same look as every other
 model: purple gradients, centred cards, Inter). This tool hands it one committed direction
-from ``brain/styles/styles.yaml`` (palette, type, layout, motifs, motion, image recipe, what
-to avoid), chosen at random among the ones that fit the subject, skipping the looks used
+(palette, type, layout, motifs, motion, image recipe, what to avoid), skipping looks used
 lately in any chat (``utils.style_history``). Asking again gives a different one.
+
+Most directions are generated (``design_genome``: billions of combinations, every palette
+checked for contrast, ids like ``g03-5a1f9c``); some come from the hand-written classics in
+``brain/styles/styles.yaml``. ``design_explore`` lays many generated options side by side on
+one page for the user to choose from.
 """
 
 from __future__ import annotations
 
 import random
 import re
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -20,6 +25,7 @@ import yaml
 
 from utils import style_history
 
+from . import _files, design_genome
 from .catalog import group, param, spec
 
 group("design", "Design directions (style, palette, type) for web, slides, images and video",
@@ -40,6 +46,10 @@ _ALIASES = {
 # Mostly a direction that fits the subject; sometimes any fresh one, so the same subject does not
 # always land on the same two looks.
 _FITTING_SHARE = 0.8
+# Share of picks that are generated rather than hand-written. Office files keep more classics,
+# since their themes are fixed palettes.
+_GENOME_SHARE = {"web": 0.85, "image": 0.85, "video": 0.85, "slides": 0.5, "document": 0.5}
+_EXPLORE_MAX = 30
 
 
 @lru_cache(maxsize=1)
@@ -130,12 +140,31 @@ def style_pick(medium: str, subject: str = "", style: str = "", avoid: list[str]
     kind = medium_of(medium)
     by_id = {s["id"]: s for s in styles()}
     wanted = (style or "").strip().lower()
+    avoided = {str(a).strip().lower() for a in avoid or []}
+    generated = design_genome.is_genome_id(wanted) or (
+        not wanted and random.SystemRandom().random() < _GENOME_SHARE.get(kind, 0.85))
+    if generated:
+        gid = wanted
+        while not gid or gid in avoided:
+            gid = design_genome.new_id(subject)
+        direction = design_genome.build(gid, kind)
+        design_genome.remember(direction)
+        style_history.remember(kind, gid)
+        return {
+            **design_genome.public(direction),
+            "ok": True,
+            "alternatives": [design_genome.new_id(subject) for _ in range(3)],
+            "rule": ("Build exactly this direction; say it in one line to the user (its name and why it fits). Use only "
+                     "these colours (css_tokens) and fonts (fonts_css), the layout, shape and motifs, and state the "
+                     "design_read dials. Reuse the same style id for other files of the same set. Change it only if the "
+                     "user asks for another look."),
+        }
     if wanted:
         if wanted not in by_id:
             raise ValueError(f"unknown style {wanted}; known: {', '.join(sorted(by_id))}")
         entry = by_id[wanted]
     else:
-        entry = choose(kind, subject, avoid=[str(a).strip().lower() for a in avoid or []])
+        entry = choose(kind, subject, avoid=sorted(avoided))
     style_history.remember(kind, entry["id"])
     out = describe(entry, kind)
     others = [s["id"] for s in styles() if kind in s.get("media", []) and s["id"] != entry["id"]]
@@ -146,3 +175,89 @@ def style_pick(medium: str, subject: str = "", style: str = "", avoid: list[str]
               "colours and fonts. Change it only if the user asks for another look."),
     )
     return out
+
+
+def _rgb(value: str) -> tuple[int, int, int]:
+    text = value.strip().lower()
+    named = {"white": "ffffff", "black": "000000"}
+    text = named.get(text, text).lstrip("#")
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if not re.fullmatch(r"[0-9a-f]{6}", text):
+        raise ValueError(f"expected a hex colour like #1a2b3c, got {value!r}")
+    return int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)
+
+
+def _luminance(rgb: tuple[int, int, int]) -> float:
+    def channel(c: int) -> float:
+        s = c / 255
+        return s / 12.92 if s <= 0.04045 else ((s + 0.055) / 1.055) ** 2.4
+    r, g, b = (channel(c) for c in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+@spec("design_explore", "Generate many different design directions at once (palette, fonts, layout, shapes, motifs, "
+      "motion) and lay them out as live specimens on one HTML page the user can open and choose from. Use when the "
+      "user wants options, references, inspiration, or 'beberapa pilihan desain'. Share the page with share_file; "
+      "when the user picks a code, call style_pick(style=<code>).",
+      "design", [param("medium", description="web, slides, image, video or document.", required=False, default="web"),
+                 param("subject", description="What it is for, e.g. 'warung kopi di Bandung'.", required=False),
+                 param("count", "int", f"How many options (1-{_EXPLORE_MAX}).", required=False, default=12)],
+      keywords="pilihan desain, referensi desain, inspirasi desain, moodboard, banyak desain, variasi desain, contoh desain, "
+               "design options, design references, explore designs, palet warna, kombinasi font",
+      lead=True, workspace=True, read_only=False)
+def design_explore(medium: str = "web", subject: str = "", count: int = 12,
+                   workspace_path: str | None = None) -> dict[str, Any]:
+    kind = medium_of(medium)
+    wanted = max(1, min(int(count or 12), _EXPLORE_MAX))
+    directions: list[dict[str, Any]] = []
+    fonts_used: set[str] = set()
+    layouts_used: set[str] = set()
+    hues: dict[str, int] = {}
+    people: dict[str, int] = {}
+    # One personality fills at most a third of the sheet, one hue family two cards.
+    per_person, per_hue = max(1, -(-wanted // 3)), 2
+    for attempt in range(wanted * 12):
+        if len(directions) >= wanted:
+            break
+        strict = attempt < wanted * 8
+        direction = design_genome.build(design_genome.new_id(subject), kind)
+        axes = direction["_axes"]
+        # Within one sheet every option should look different at a glance.
+        if axes["font"] in fonts_used or (strict and (
+                (axes["layout"] in layouts_used and len(layouts_used) < 8)
+                or hues.get(axes["hue"], 0) >= per_hue
+                or people.get(direction["personality"], 0) >= per_person)):
+            continue
+        fonts_used.add(axes["font"])
+        layouts_used.add(axes["layout"])
+        hues[axes["hue"]] = hues.get(axes["hue"], 0) + 1
+        people[direction["personality"]] = people.get(direction["personality"], 0) + 1
+        directions.append(direction)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = _files.destination(f"desain/referensi-{stamp}.html", workspace_path)
+    target.write_text(design_genome.gallery_html(directions, subject), encoding="utf-8")
+    return {
+        "ok": True,
+        "file": _files.relative(target, workspace_path),
+        "count": len(directions),
+        "options": [{"style": d["style"], "name": d["name"], "palette": d["palette_notes"], "dials": d["design_read"]}
+                    for d in directions],
+        "how": "Share the file with share_file. When the user names a code, call style_pick(style=<code>, medium=...).",
+    }
+
+
+@spec("contrast_check", "WCAG 2.x contrast ratio of text colour on a background colour, with PASS/FAIL for normal text "
+      "(4.5:1) and large text (3:1, 18px+ or 14px bold). Check every text/background pair of a page or slide before "
+      "delivering it.",
+      "design", [param("foreground", description="Text colour, hex like #333 or #1a2b3c."),
+                 param("background", description="Background colour, hex.")],
+      keywords="kontras, contrast, wcag, aksesibilitas, accessibility, keterbacaan, readable, warna teks", lead=True)
+def contrast_check(foreground: str, background: str) -> dict[str, Any]:
+    lighter, darker = sorted((_luminance(_rgb(foreground)), _luminance(_rgb(background))), reverse=True)
+    ratio = (lighter + 0.05) / (darker + 0.05)
+    # WCAG compares the unrounded ratio: 4.48 fails even though it prints as 4.5.
+    return {"ratio": round(ratio, 2), "normal_text": "PASS" if ratio >= 4.5 else "FAIL",
+            "large_text": "PASS" if ratio >= 3.0 else "FAIL",
+            **({"fix": "darken the text or lighten the background (or the reverse) until normal text passes"}
+               if ratio < 4.5 else {})}

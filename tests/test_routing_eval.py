@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pytest
 
+from dataclasses import replace
+
 from agent.harness.tiers import scaffold_for
+
+
+def _capped(model: str):
+    """The priority-ordered list a run with a tool cap gets (tiers themselves no longer cap)."""
+    return replace(scaffold_for(model), max_tools=16)
 from agent.harness.tool_select import select_tools
 from brain.classifier.intent_classifier import IntentClassifier
 from config.constants import TaskType
@@ -58,13 +65,14 @@ def test_cases_are_not_duplicated() -> None:
 def test_hidden_toolbox_never_rides_along(text: str) -> None:
     """A request that does not ask for a toolbox tool must not get one."""
     task = IntentClassifier().classify(text).task_type
-    offered = {s["function"]["name"] for s in select_tools(register_all_tools().get_all_schemas(), task, text, scaffold_for("x-flash"))}
-    assert not offered & (execute_toolbox.deferred_names() - {"style_pick"}), offered & execute_toolbox.deferred_names()
+    offered = {s["function"]["name"] for s in select_tools(register_all_tools().get_all_schemas(), task, text, _capped("x-flash"))}
+    # The design tools come with the built-in aislop gate on purpose.
+    assert not offered & (execute_toolbox.deferred_names() - {"style_pick", "contrast_check"}), offered & execute_toolbox.deferred_names()
 
 
 @pytest.mark.parametrize("text", ["halo", "perbaiki bug login di auth.py", "buat presentasi pptx tentang AI"])
 def test_offered_tools_respect_the_tier_cap(text: str) -> None:
-    scaffold = scaffold_for("x-flash")
+    scaffold = _capped("x-flash")
     task = IntentClassifier().classify(text).task_type
     names = [s["function"]["name"] for s in select_tools(register_all_tools().get_all_schemas(), task, text, scaffold)]
     assert scaffold.max_tools is not None

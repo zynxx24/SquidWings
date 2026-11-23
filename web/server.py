@@ -40,9 +40,14 @@ from model.router.groups import group_of, provider_labels
 from model.settings.model_picker import is_chat_model
 from security import sandbox
 from security.headers import embeddable_headers, shell_headers
-from security.web_access import WebSecurityMiddleware, is_loopback_host, set_public_mode
+from security.web_access import (
+    WebSecurityMiddleware,
+    is_local_request,
+    is_loopback_host,
+    set_public_mode,
+)
 from tool.execute.execute_code_intel import quality_tools
-from utils import daily_brief, local_ocr, shared_files
+from utils import daily_brief, local_ocr, preview, shared_files, web_terminal
 from utils.extract import DOCUMENT_SUFFIXES, Extracted, extract, intent_of, save_images
 from utils.extract import Image as ExtractedImage
 from utils.helpers import format_tokens, generate_session_id, is_valid_session_id
@@ -117,7 +122,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     brief_task = asyncio.create_task(_brief_loop())
     if app.state.team_orchestrator:
         app.state.team_orchestrator.start_scheduler()
+    web_terminal.enable(True)
     yield
+    web_terminal.close_all()
+    preview.close_all()
     sync_task.cancel()
     refresh_task.cancel()
     brief_task.cancel()
@@ -140,10 +148,17 @@ if _TEAMS_ENABLED:
     app.include_router(team_router)
     app.include_router(data_router)
 
-# Trading (Enterprise): the MT5 panel, the MT4 EA bridge and the quant API. They are mounted only
-# when the Enterprise module is installed; the community edition has no trading routes at all.
+# Trading: the MT5 panel, the MT4 EA bridge and the quant API. They are mounted only when the
+# trading module's files are all present; without them there are no trading routes at all.
 # The MT5 order endpoints stay closed unless MT5_TRADE_TOKEN is set.
-from config.edition import ENTERPRISE_NOTE, edition, trading_enabled  # noqa: E402
+from config.edition import (  # noqa: E402
+    ENTERPRISE_NOTE,
+    STUDIO_NOTE,
+    edition,
+    studio_enabled,
+    studio_module,
+    trading_enabled,
+)
 
 if trading_enabled():
     from web.mt4_bridge import router as mt4_router
@@ -174,6 +189,11 @@ from model.router import sync as _router_sync  # noqa: E402
 _router_sync.set_registry_sink(_router_models_sink)
 
 app.include_router(model_router_api)
+if studio_enabled():   # optional module: the video Studio
+    from web.studio_api import router as studio_router
+
+    app.include_router(studio_router)
+studio_context = studio_module("utils.studio_context")
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -249,13 +269,14 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 # The pages the chat page opens inside itself, and their files.
-_APP_PAGES = {"trading": STATIC_DIR / "trading" / "index.html", "router": STATIC_DIR / "router" / "index.html"}
+_APP_PAGES = {"trading": STATIC_DIR / "trading" / "index.html", "router": STATIC_DIR / "router" / "index.html",
+              "studio": STATIC_DIR / "studio" / "index.html"}
 _ENTERPRISE_PAGE = """<!doctype html><html lang="id"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Trading · Enterprise</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Trading · tidak terpasang</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.6 system-ui,sans-serif;
 background:#0f1115;color:#e6e8ee}main{max-width:30rem;padding:2rem;text-align:center}
 h1{font-size:1.2rem;margin:0 0 .5rem}p{color:#a6adbb;margin:0}</style></head>
-<body><main><h1>Trading tersedia di SquidWings Enterprise</h1><p>%s</p></main></body></html>"""
+<body><main><h1>Modul trading tidak terpasang</h1><p>%s</p></main></body></html>"""
 
 
 def _page(path: Path, headers: dict[str, str]) -> HTMLResponse:
@@ -288,6 +309,26 @@ async def serve_trading(embed: bool = False) -> HTMLResponse:
 async def serve_router(embed: bool = False) -> HTMLResponse:
     """The main page opened on the model router. ``?embed=1`` is the router page itself, for its frame."""
     return _page(_APP_PAGES["router"], embeddable_headers()) if embed else _shell()
+
+
+@app.get("/studio", response_class=HTMLResponse)
+async def serve_studio(embed: bool = False) -> HTMLResponse:
+    """The main page opened on the video Studio. ``?embed=1`` is the Studio itself, for its frame."""
+    if not embed:
+        return _shell()
+    if not studio_enabled():
+        return HTMLResponse(content=(_ENTERPRISE_PAGE % STUDIO_NOTE).replace("Trading · tidak terpasang", "Studio · tidak terpasang")
+                            .replace("Modul trading tidak terpasang", "Studio video tidak terpasang"),
+                            headers={**_NO_CACHE, **embeddable_headers()})
+    return _page(_APP_PAGES["studio"], embeddable_headers())
+
+
+@app.get("/studio/frame", response_class=HTMLResponse)
+async def serve_studio_frame() -> HTMLResponse:
+    """Frames of a Studio video side by side, drawn by the Studio's own renderer (for studio_still)."""
+    if not studio_enabled():
+        raise HTTPException(status_code=404, detail=STUDIO_NOTE)
+    return _page(STATIC_DIR / "studio" / "frame.html", {})
 
 
 # Mount static files (CSS, JS, assets)
@@ -866,6 +907,7 @@ async def delete_session(session_id: str) -> dict[str, Any]:
     if hasattr(orch.session_manager, "delete_session"):
         orch.session_manager.delete_session(session_id)
     _override_models.pop(session_id, None)
+    web_terminal.close(session_id)
     # The chat's folder holds its vault, graph, memory, and files. Only ever a
     # direct child of the sessions folder, under an id already checked to be plain.
     if is_valid_session_id(session_id):
@@ -1121,6 +1163,104 @@ async def _await_turn(websocket: WebSocket, turn: asyncio.Task[Any]) -> None:
                 raise asyncio.CancelledError
 
 
+def _terminal_allowed(websocket: WebSocket) -> bool:
+    """A shell on this machine, sudo included: only for the browser on this machine, unless allowed."""
+    return is_local_request(websocket) or os.getenv("WEB_TERMINAL_PUBLIC", "").strip().lower() in {"1", "true", "yes"}
+
+
+@app.get("/api/terminal/status")
+async def terminal_status(request: Request, session: str = Query("")) -> dict[str, Any]:
+    allowed = is_local_request(request) or os.getenv("WEB_TERMINAL_PUBLIC", "").strip().lower() in {"1", "true", "yes"}
+    valid = bool(session) and is_valid_session_id(session)
+    term = web_terminal.get(session) if valid else None
+    explicit = os.getenv("SQUIDWINGS_WORKSPACE", "").strip()
+    cwd = explicit or (str(session_workspace(session, create=False)) if valid else "")
+    return {"allowed": allowed, "running": bool(term), "busy": bool(term and not term.at_prompt),
+            "agent_command": term.agent_command if term else "", "cwd": cwd}
+
+
+@app.get("/api/preview")
+async def preview_list() -> dict[str, Any]:
+    return {"previews": await asyncio.to_thread(preview.active)}
+
+
+@app.post("/api/preview/open")
+async def preview_open(request: Request) -> dict[str, Any]:
+    """A link to the dev server on ``port``: local for a browser on this machine, a tunnel link from afar."""
+    body = await request.json()
+    try:
+        port = int(body.get("port"))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="port must be a number") from None
+    if not await asyncio.to_thread(preview.listening, port):
+        raise HTTPException(status_code=404, detail=f"Belum ada server di port {port}.")
+    if is_local_request(request):
+        return {"port": port, "url": preview.local_url(port), "local": True}
+    try:
+        url = await preview.open_public(port)
+    except (RuntimeError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=502, detail=f"Link publik gagal dibuat: {exc}") from exc
+    return {"port": port, "url": url, "local": False, "ready_in": preview.ready_in(port)}
+
+
+@app.websocket("/ws/terminal")
+async def websocket_terminal(websocket: WebSocket, session: str = Query("")) -> None:
+    """The chat's shell in the browser (xterm.js). See utils.web_terminal.
+
+    Client sends {"type": "input", "data": "..."}, {"type": "resize", "cols": n, "rows": n},
+    or {"type": "restart"}. Server sends {"type": "output", "data": "..."} and {"type": "exit"}.
+    """
+    if not _terminal_allowed(websocket):
+        await websocket.close(code=4403, reason="The terminal opens only on this computer (set WEB_TERMINAL_PUBLIC=true to allow).")
+        return
+    if not is_valid_session_id(session):
+        await websocket.close(code=4400, reason="Invalid session id")
+        return
+    await websocket.accept()
+    explicit = os.getenv("SQUIDWINGS_WORKSPACE", "").strip()
+    cwd = Path(explicit) if explicit else session_workspace(session)
+    term = await web_terminal.open_terminal(session, cwd)
+    queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2048)
+
+    def listener(data: bytes) -> None:
+        with contextlib.suppress(asyncio.QueueFull):
+            queue.put_nowait(data)
+
+    history = term.subscribe(listener)
+
+    async def pump() -> None:
+        if history:
+            await websocket.send_json({"type": "output", "data": history.decode("utf-8", errors="replace")})
+        while True:
+            chunk = await queue.get()
+            # Batch what arrived meanwhile so a fast build log is not one message per read.
+            while not queue.empty() and len(chunk) < 65536:
+                chunk += queue.get_nowait()
+            await websocket.send_json({"type": "output", "data": chunk.decode("utf-8", errors="replace")})
+
+    sender = asyncio.create_task(pump())
+    try:
+        while True:
+            message = await websocket.receive_json()
+            kind = message.get("type") if isinstance(message, dict) else None
+            if kind == "input":
+                term.write(str(message.get("data", ""))[:65536])
+            elif kind == "resize":
+                term.resize(int(message.get("rows") or 30), int(message.get("cols") or 110))
+            elif kind == "restart":
+                term.unsubscribe(listener)
+                web_terminal.close(session)
+                term = await web_terminal.open_terminal(session, cwd)
+                term.subscribe(listener)
+            if not term.alive:
+                await websocket.send_json({"type": "exit"})
+    except (WebSocketDisconnect, RuntimeError, ValueError):
+        pass
+    finally:
+        sender.cancel()
+        term.unsubscribe(listener)
+
+
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket) -> None:
     """WebSocket endpoint for real-time streaming chat.
@@ -1243,6 +1383,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
             # This chat's folder, vault, graph, and Ponytail mode.
             session_stack.enter(session_id)
 
+            # From the Studio's chat panel: this turn edits one video, with the editor's context.
+            studio_token = studio_context.set_current(studio_context.clean(data.get("studio"))) if studio_context else None
             try:
                 turn = asyncio.create_task(orch.process(
                     user_input=message,
@@ -1260,6 +1402,8 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     on_reset=on_reset,
                     on_event=on_event,
                 ))
+                if studio_context:
+                    studio_context.reset(studio_token)   # the turn task keeps its own copy
                 await _await_turn(websocket, turn)
                 response = turn.result()
 

@@ -2,7 +2,8 @@
 
    - A loading bar at the top while requests run, and a spinner on the button that started one.
      A GET that repeats within a few seconds is a poll, so it never shows the bar.
-   - Inside the chat page (in a frame): tells the chat page it is ready, takes its theme, and
+   - The palette (colour set from tokens.css): remembered per browser, a swatch menu for any button.
+   - Inside the chat page (in a frame): tells the chat page it is ready, takes its theme and palette, and
      reports itself hidden while another page is shown, so its polling rests. */
 (() => {
   'use strict';
@@ -113,6 +114,101 @@
     return nativeFetch(input, init).finally(() => { end(); unspin(); });
   };
 
+  /* ── Palette: one of the colour sets in tokens.css ── */
+  // The list lives in the CSS (--palette-list), so a palette added there shows up in every picker.
+  const PALETTE_KEY = 'sq:palette';
+  function paletteList() {
+    const css = getComputedStyle(root);
+    const ids = (css.getPropertyValue('--palette-list') || '').replace(/["']/g, '').trim().split(/\s+/).filter(Boolean);
+    const labels = Object.fromEntries((css.getPropertyValue('--palette-labels') || '').replace(/["']/g, '').trim()
+      .split(/\s+/).filter(Boolean).map(pair => pair.split(':')));
+    return ids.map(id => ({ id, label: labels[id] || id }));
+  }
+  const validPalette = id => typeof id === 'string' && /^[a-z0-9-]{2,24}$/.test(id);
+  function getPalette() {
+    return root.dataset.palette || 'laut';
+  }
+  function applyPalette(id, remember) {
+    if (!validPalette(id)) return;
+    root.dataset.palette = id;
+    if (remember) { try { localStorage.setItem(PALETTE_KEY, id); } catch { /* not remembered */ } }
+    window.dispatchEvent(new CustomEvent('sq-palette', { detail: id }));
+  }
+  try { const saved = localStorage.getItem(PALETTE_KEY); if (validPalette(saved)) root.dataset.palette = saved; } catch { /* default */ }
+
+  /** A small menu of swatches under ``button``; ``onPick(id)`` runs after the palette changes. */
+  function paletteMenu(button, onPick) {
+    let menu = null;
+    const close = () => { if (menu) { menu.remove(); menu = null; button.setAttribute('aria-expanded', 'false'); } };
+    button.setAttribute('aria-haspopup', 'true');
+    button.setAttribute('aria-expanded', 'false');
+    button.addEventListener('click', e => {
+      e.stopPropagation();
+      if (menu) { close(); return; }
+      menu = document.createElement('div');
+      menu.className = 'sq-palette-menu';
+      menu.setAttribute('role', 'menu');
+      const current = getPalette();
+      for (const p of paletteList()) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.setAttribute('role', 'menuitemradio');
+        item.setAttribute('aria-checked', String(p.id === current));
+        item.className = 'sq-palette-item';
+        const sw = document.createElement('span');
+        sw.className = 'sq-swatch';
+        sw.dataset.palette = p.id;            // the swatch takes that palette's own tokens
+        const name = document.createElement('span');
+        name.textContent = p.label;
+        item.append(sw, name);
+        item.onclick = () => { applyPalette(p.id, true); close(); if (onPick) onPick(p.id); };
+        menu.append(item);
+      }
+      const box = button.getBoundingClientRect();
+      menu.style.left = Math.max(8, Math.min(box.left, window.innerWidth - 200)) + 'px';
+      if (box.top > window.innerHeight / 2) menu.style.bottom = (window.innerHeight - box.top + 6) + 'px';
+      else menu.style.top = (box.bottom + 6) + 'px';
+      document.body.append(menu);
+      const first = menu.querySelector('[aria-checked="true"]') || menu.firstChild;
+      if (first) first.focus();
+    });
+    document.addEventListener('click', e => { if (menu && !menu.contains(e.target)) close(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+  }
+
+  /* ── Motion helpers ──────────────────────────────── */
+  const calm = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /** Let ``els`` rise into place one after another (``from`` = stagger index of the first). */
+  function reveal(els, from = 0) {
+    const list = Array.from(els || []).filter(el => el instanceof Element);
+    list.forEach((el, i) => {
+      el.style.setProperty('--i', String(from + i));
+      el.classList.remove('sq-in');
+      el.classList.add('sq-reveal');
+    });
+    if (calm()) { list.forEach(el => el.classList.add('sq-in')); return; }
+    requestAnimationFrame(() => requestAnimationFrame(() => list.forEach(el => el.classList.add('sq-in'))));
+  }
+
+  /** Count a number up (or down) inside ``el`` from what it showed to ``to``; ``fmt`` renders each frame. */
+  function countTo(el, to, fmt, ms = 700) {
+    if (!el) return;
+    const target = Number(to);
+    if (!Number.isFinite(target)) { el.textContent = fmt(to); return; }
+    const from = Number(el.dataset.sqValue);
+    el.dataset.sqValue = String(target);
+    if (calm() || !Number.isFinite(from) || from === target) { el.textContent = fmt(target); return; }
+    const t0 = performance.now();
+    const step = now => {
+      const k = Math.min(1, (now - t0) / ms);
+      const e = 1 - Math.pow(1 - k, 4);
+      el.textContent = fmt(from + (target - from) * e);
+      if (k < 1 && el.dataset.sqValue === String(target)) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
   /* ── Inside the chat page ────────────────────────── */
   let shown = true;
   if (embedded) {
@@ -132,6 +228,8 @@
         if (e.data.theme === 'system') root.removeAttribute('data-theme');
         else root.dataset.theme = e.data.theme;
         window.dispatchEvent(new CustomEvent('sq-theme', { detail: e.data.theme }));
+      } else if (e.data.type === 'sq-palette') {
+        applyPalette(e.data.palette, false);
       } else if (e.data.type === 'sq-visible') {
         const next = Boolean(e.data.visible);
         if (next !== shown) {
@@ -167,5 +265,5 @@
     if (channel) channel.postMessage(message);
   }
 
-  window.SquidPage = { begin, end, hold, track, notify, embedded };
+  window.SquidPage = { begin, end, hold, track, notify, embedded, paletteList, getPalette, applyPalette, paletteMenu, reveal, countTo, calm };
 })();

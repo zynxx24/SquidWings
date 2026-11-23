@@ -54,6 +54,14 @@ def test_ai_title_reads_the_cheap_models_reply():
     assert title == "Landing Page Warung Kopi"
 
 
+def test_ai_title_ignores_a_no_answer_placeholder():
+    class Client:
+        async def chat_completion(self, **kwargs):
+            return {"choices": [{"message": {"content": "[No answer: the model spent all its tokens thinking]"}}]}
+
+    assert asyncio.run(session_names.ai_title(Client(), lambda: "cheap", "buatkan video")) is None
+
+
 def test_a_new_chat_folder_takes_the_reserved_name():
     reserve_session_name("sess-aaa111", "web", "Fix bug login")
     folder = session_workspace("sess-aaa111")

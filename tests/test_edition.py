@@ -1,4 +1,4 @@
-"""The community edition runs without the Enterprise trading module. Offline."""
+"""Everything runs without the optional trading module. Offline."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def test_the_web_shows_what_trading_is_instead_of_an_error(monkeypatch):
     monkeypatch.setattr(server, "edition", lambda: "community")
     client = TestClient(server.app, client=("127.0.0.1", 50000))
     page = client.get("/trading?embed=1")
-    assert page.status_code == 200 and "Enterprise" in page.text and "trading.js" not in page.text
+    assert page.status_code == 200 and "tidak terpasang" in page.text and "trading.js" not in page.text
     assert client.get("/trading").status_code == 200          # the chat page, with the link hidden
     assert client.get("/api/trading/panel").json()["external"] is False
     config = client.get("/api/config").json()

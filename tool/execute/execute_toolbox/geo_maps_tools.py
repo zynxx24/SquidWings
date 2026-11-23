@@ -24,9 +24,12 @@ from typing import Any
 from urllib.parse import quote_plus
 
 from knowledge import gmaps_import
+from utils.logger import get_logger
 
 from . import _files, _net
 from .catalog import group, param, spec
+
+logger = get_logger(__name__)
 
 group("maps", "Maps, places and locations",
       "google maps, gmaps, maps, peta, map, lokasi, location, tempat, place, places, alamat, address, koordinat, "
@@ -302,7 +305,7 @@ async def _near_point(near: str | None) -> tuple[float, float] | None:
         return found[0]["lat"], found[0]["lon"]
 
 
-@spec("places_search", "Search imported Google Maps places in this session: by words, category, city, minimum rating or "
+@spec("places_search", "Search Google Maps places imported in this session (or, when none are imported, OpenStreetMap live by name or kind near an area, without ratings): by words, category, city, minimum rating or "
       "review count, website or not, and distance from a point or address. Sort by rating, reviews, distance, or a score "
       "that balances rating with review count.",
       "maps", [param("text", description="Words that must appear (name, category, address).", required=False),
@@ -322,6 +325,8 @@ async def places_search(text: str | None = None, dataset: str | None = None, cat
                         has_website: bool | None = None, near: str | None = None, radius_km: float | None = None,
                         sort: str = "score", open_only: bool = True, limit: int = 20,
                         workspace_path: str | None = None) -> dict[str, Any]:
+    if not _datasets(workspace_path):
+        return await _live_places(text, category, city, near, radius_km, limit)
     places = _filter(_load(dataset, workspace_path), text, category, city, min_rating, min_reviews, has_website, open_only)
     point = await _near_point(near)
     if point:
@@ -341,6 +346,32 @@ async def places_search(text: str | None = None, dataset: str | None = None, cat
     return {"matched": len(places), "places": [_brief(p) for p in shown],
             **({"from": list(point)} if point else {}),
             **({"note": "distance sort needs near"} if sort == "distance" and not point else {})}
+
+
+async def _live_places(text: str | None, category: str | None, city: str | None, near: str | None,
+                       radius_km: float | None, limit: int) -> dict[str, Any]:
+    """No Google Maps data imported yet: search OpenStreetMap live instead of failing."""
+    words = " ".join(filter(None, [text, category])).strip()
+    if not (near or city):
+        raise ValueError("no places imported in this chat yet. For a live OpenStreetMap search give city or near "
+                         "(and text or category); for Google ratings import a scrape with gmaps_import or gmaps_scrape")
+    point = await _near_point(near or city)
+    found = await _photon(words or str(city), point, limit=50)
+    if point and radius_km is not None:
+        found = [p for p in found if p.get("distance_km") is not None and p["distance_km"] <= float(radius_km)]
+    if point:
+        found.sort(key=lambda p: p.get("distance_km", 1e9))
+    area = near or city or ""
+    search = quote_plus(f"{words} {area}".strip())
+    return {
+        "live": True, "matched": len(found), "places": found[: max(1, min(int(limit), 50))],
+        **({"from": list(point)} if point else {}),
+        "google_maps_search": f"https://www.google.com/maps/search/{search}",
+        "source": "OpenStreetMap via Photon, live (no Google data has been imported in this chat)",
+        "note": "OpenStreetMap has no ratings or review counts. For 'terbaik' or ratings, use web_search for reviews, "
+                "or import a Google Maps scrape with gmaps_import / gmaps_scrape. Share google_maps_search so the user "
+                "can open the same search in Google Maps.",
+    }
 
 
 def _score(p: dict[str, Any]) -> float:
@@ -483,6 +514,74 @@ async def gmaps_scrape(queries: list[str], depth: int = 1, language: str = "id",
 
 
 # ── OpenStreetMap (live) ──────────────────────────────────────────────────────
+# Overpass servers are often busy; each is tried in turn, and one that just failed waits a while.
+_OVERPASS_MIRRORS = (
+    ("overpass-api.de", "/api/interpreter"),
+    ("overpass.kumi.systems", "/api/interpreter"),
+    ("overpass.private.coffee", "/api/interpreter"),
+    ("maps.mail.ru", "/osm/tools/overpass/api/interpreter"),
+)
+_MIRROR_REST_SECONDS = 300.0
+_MIRROR_TIMEOUT = 8.0
+# Two busy servers in a row means Overpass is having a bad time; Photon answers in about a second.
+_MIRRORS_PER_QUERY = 2
+_mirror_failed: dict[str, float] = {}
+_mirror_good: list[str] = []
+
+
+async def _overpass(query: str) -> dict[str, Any]:
+    now = time.monotonic()
+    rested = [m for m in _OVERPASS_MIRRORS if now - _mirror_failed.get(m[0], -1e9) > _MIRROR_REST_SECONDS]
+    # The server that answered last goes first.
+    rested.sort(key=lambda m: m[0] not in _mirror_good)
+    errors = []
+    for host, path in rested[:_MIRRORS_PER_QUERY]:
+        try:
+            data = await _net.get_json(host, path, method="POST", data=query, timeout=_MIRROR_TIMEOUT)
+        except _net.NetError as exc:
+            _mirror_failed[host] = time.monotonic()
+            errors.append(str(exc))
+            continue
+        _mirror_good[:] = [host]
+        return data if isinstance(data, dict) else {"elements": []}
+    raise _net.NetError("Overpass busy: " + ("; ".join(errors) or "every server is resting after a failure"))
+
+
+def _photon_tags(osm_filter: str) -> list[str]:
+    """'["amenity"="pharmacy"]' or '["shop"~"a|b"]' as Photon osm_tag values (key:value)."""
+    found = re.match(r'\["(\w+)"\s*([=~])\s*"([^"]+)"\]', osm_filter)
+    if not found:
+        return []
+    key, _, values = found.groups()
+    return [f"{key}:{v}" for v in values.split("|")]
+
+
+async def _photon(text: str, point: tuple[float, float] | None, tags: list[str] | None = None,
+                  limit: int = 30) -> list[dict[str, Any]]:
+    """Photon (komoot) search over OpenStreetMap: fast, typo tolerant, biased toward a point."""
+    params: dict[str, Any] = {"q": text, "limit": max(1, min(int(limit), 50))}
+    if point:
+        params.update({"lat": point[0], "lon": point[1], "location_bias_scale": 0.2})
+    if tags:
+        params["osm_tag"] = tags
+    data = await _net.get_json("photon.komoot.io", "/api/", params, timeout=12)
+    out = []
+    for feature in data.get("features") or []:
+        props = feature.get("properties") or {}
+        coords = (feature.get("geometry") or {}).get("coordinates") or []
+        if len(coords) != 2 or not props.get("name"):
+            continue
+        lon, lat = float(coords[0]), float(coords[1])
+        address = ", ".join(filter(None, [
+            " ".join(filter(None, [props.get("street"), props.get("housenumber")])),
+            props.get("district") or props.get("locality"), props.get("city") or props.get("county"), props.get("state"),
+        ]))
+        out.append({"name": props["name"], "category": f"{props.get('osm_key', '')}:{props.get('osm_value', '')}",
+                    "address": address or None, "city": props.get("city") or props.get("county"), "lat": lat, "lon": lon,
+                    **({"distance_km": round(haversine(point, (lat, lon)), 3)} if point else {}),
+                    "google_maps": f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"})
+    return out
+
 async def _geocode(query: str, limit: int, country: str = "") -> list[dict[str, Any]]:
     params: dict[str, Any] = {"q": query, "format": "jsonv2", "limit": max(1, min(int(limit), 10)), "addressdetails": 1,
                               "accept-language": "id,en"}
@@ -553,8 +652,25 @@ async def osm_nearby(kind: str, near: str, radius_km: float = 2, limit: int = 15
     if point is None:
         raise ValueError("near is required")
     radius = int(max(0.1, min(float(radius_km), 25)) * 1000)
-    query = f"[out:json][timeout:25];nwr{_OSM_KINDS[k]}(around:{radius},{point[0]},{point[1]});out center 200;"
-    data = await _net.get_json("overpass-api.de", "/api/interpreter", method="POST", data=query, timeout=30)
+    query = f"[out:json][timeout:9];nwr{_OSM_KINDS[k]}(around:{radius},{point[0]},{point[1]});out center 200;"
+    try:
+        data = await _overpass(query)
+    except _net.NetError as exc:
+        # Overpass busy everywhere: Photon knows the same OpenStreetMap places, without opening hours.
+        logger.info(f"[maps] Overpass unavailable, using Photon: {exc}")
+        tags = _photon_tags(_OSM_KINDS[k])
+        words = list(dict.fromkeys([kind.strip(), k.replace("_", " ")]))
+        merged: dict[tuple[float, float], dict[str, Any]] = {}
+        for word in words:
+            for place in await _photon(word, point, tags, limit=40):
+                merged.setdefault((place["lat"], place["lon"]), place)
+        nearby = sorted(merged.values(), key=lambda p: p.get("distance_km", 1e9))
+        inside = [p for p in nearby if p.get("distance_km", 1e9) <= radius / 1000]
+        shown = inside or nearby[:5]
+        return {"kind": k, "from": list(point), "radius_km": radius / 1000, "count": len(inside),
+                "places": shown[: max(1, min(int(limit), 100))],
+                **({} if inside else {"note": f"none within {radius / 1000:g} km; these are the nearest found"}),
+                "source": "OpenStreetMap via Photon (Overpass was busy; coverage varies by area)"}
     found = []
     for el in data.get("elements", []):
         lat = el.get("lat", el.get("center", {}).get("lat"))

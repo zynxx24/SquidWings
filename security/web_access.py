@@ -223,8 +223,13 @@ class WebSecurityMiddleware:
                 await self._http_error(send, 429, "Too many requests; please retry later.", retry_after=exc.retry_after)
             return
 
+        # This machine itself (the owner's browser, the Studio's frame renderer) never takes a slot:
+        # the limit protects the app from visitors through a tunnel or the network, not from its owner.
+        counted = not self._from_this_machine(scope, headers)
         try:
-            if kind == "websocket" and scope.get("path") == "/ws/chat":
+            if not counted:
+                pass
+            elif kind == "websocket" and scope.get("path") == "/ws/chat":
                 await self.capacity.acquire_websocket(user_id)
             elif not new_user_cookie:
                 # Only returning browsers hold a slot. A client that sends no
@@ -263,7 +268,7 @@ class WebSecurityMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
-            if kind == "websocket" and scope.get("path") == "/ws/chat":
+            if counted and kind == "websocket" and scope.get("path") == "/ws/chat":
                 await self.capacity.release_websocket(user_id)
 
     def _host_allowed(self, headers: Mapping[str, str]) -> bool:
@@ -283,6 +288,17 @@ class WebSecurityMiddleware:
     def _client_ip(scope: Scope) -> str:
         client = scope.get("client")
         return str(client[0]) if isinstance(client, tuple) and client else "unknown"
+
+    @staticmethod
+    def _from_this_machine(scope: Scope, headers: Mapping[str, str]) -> bool:
+        """A loopback client no proxy relayed (see is_local_request; cloudflared also connects from loopback)."""
+        client = scope.get("client")
+        host = str(client[0]) if isinstance(client, tuple) and client else ""
+        if not is_loopback_host(host) or any(headers.get(name) for name in FORWARDED_HEADERS):
+            return False
+        if _public_mode:
+            return is_loopback_host(urlsplit("//" + (headers.get("host") or "")).hostname or "")
+        return True
 
     def _identity(self, scope: Scope, headers: Mapping[str, str]) -> tuple[str, bool]:
         cookies = self._cookies(headers.get("cookie", ""))

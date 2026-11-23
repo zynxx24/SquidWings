@@ -9,7 +9,7 @@ tools: load_skill, read_file, file_write, file_patch, execute_command
 ---
 # Humanizer Indonesia
 
-Diadaptasi dari adhiprib/humanizer-indonesia versi 1.7 (MIT, lihat LICENSE; commit 62fe1ae). Panduan, katalog, preset suara, dan skrip metriknya milik penulis asli dan tidak diubah. Halaman ini hanya cara menjalankannya di SquidWings.
+Diadaptasi dari adhiprib/humanizer-indonesia versi 1.7.2 (MIT, lihat LICENSE; commit 05231b5). Panduan, katalog, preset suara, dan skrip metriknya milik penulis asli dan tidak diubah. Halaman ini hanya cara menjalankannya di SquidWings.
 
 Tugasnya: menyunting teks bahasa Indonesia supaya enak dibaca, membuang nominalisasi bertumpuk, konektor berlebihan, ritme kalimat yang seragam, kalke dari bahasa Inggris, dan pola khas keluaran model lain. Hasilnya **draf untuk disunting penulis**, bukan teks jadi.
 

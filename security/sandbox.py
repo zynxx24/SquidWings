@@ -43,7 +43,7 @@ _SYSTEM_FILES = (
     "/etc/passwd", "/etc/group", "/etc/alternatives", "/etc/ld.so.cache", "/etc/localtime",
 )
 # Tools installed outside the system folders (nvm, uv, ...) stay usable.
-_USER_TOOLS = ("node", "npm", "npx", "pnpm", "yarn", "uv", "go", "cargo", "rustc", "aislop", "graphify")
+_USER_TOOLS = ("node", "npm", "npx", "pnpm", "yarn", "uv", "go", "cargo", "rustc", "aislop", "graphify", "motlab")
 # Where uv keeps the Python that uv-installed tools such as graphify run on.
 _USER_TOOL_DIRS = ("~/.local/share/uv/tools", "~/.local/share/uv/python")
 # Browsers Playwright downloaded. HOME is /tmp/home inside, so the path is passed explicitly.

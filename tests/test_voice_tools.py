@@ -64,12 +64,28 @@ def ws(tmp_path):
     workspace_context._active_workspace.reset(token)
 
 
-def test_without_a_key_both_tools_say_how_to_connect(no_key, ws):
-    for name, kwargs in (("voice_list", {}), ("voice_speak", {"text": "Halo", "output": "a.mp3"})):
+def test_asking_for_elevenlabs_without_a_key_says_how_to_connect(no_key, ws):
+    for name, kwargs in (("voice_list", {"engine": "elevenlabs"}),
+                         ("voice_speak", {"text": "Halo", "output": "a.mp3", "engine": "elevenlabs"})):
         out = run(name, **kwargs)
         assert out["ok"] is False and out["connected"] is False
         assert "Kredensial" in out["setup"] and "ELEVENLABS_API_KEY" in out["setup"]
     assert not list(ws.iterdir())
+
+
+def test_without_a_key_the_free_edge_voice_speaks_with_captions(no_key, ws, monkeypatch):
+    seen = {}
+
+    async def fake_edge(text, dest, voice, speed, pitch, captions):
+        seen.update(voice=voice, text=text)
+        dest.write_bytes(b"ID3fake")
+        return {"words": 3, "captions_srt": dest.with_suffix(".srt").name}
+
+    monkeypatch.setattr(voice_tools, "_edge_speak", fake_edge)
+    out = run("voice_speak", text="Halo ini untuk video kita", output="voice/a", share=False)
+    assert out["engine"] == "edge" and seen["voice"] == "id-ID-GadisNeural"
+    assert (ws / "voice" / "a.mp3").read_bytes() == b"ID3fake"
+    assert run("voice_speak", text="Halo", output="b.mp3", voice="pria", share=False)["voice"] == "id-ID-ArdiNeural"
 
 
 def test_list_shows_voices_and_what_is_left(api):
@@ -95,10 +111,11 @@ def test_an_unknown_voice_lists_the_choices(api, ws):
     assert out["ok"] is False and "Rachel" in out["error"] and "Adam" in out["error"]
 
 
-def test_too_long_text_is_refused_before_any_call(api, ws):
-    out = run("voice_speak", text="a" * 5001, output="a.mp3", share=False)
-    assert out["ok"] is False and "split" in out["error"]
-    assert api == []
+def test_long_text_is_spoken_in_pieces_not_refused(api, ws):
+    text = ". ".join(["Kalimat panjang untuk narasi video"] * 300) + "."
+    out = run("voice_speak", text=text, output="a.mp3", share=False)
+    assert out["engine"] == "elevenlabs" and out["pieces"] >= 2
+    assert out["characters"] == len(text)
 
 
 def test_a_rejected_key_is_reported_plainly(monkeypatch, ws):

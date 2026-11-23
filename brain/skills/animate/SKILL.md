@@ -9,6 +9,8 @@ tools: execute_command, load_skill, share_file, read_file, file_write, file_patc
 ---
 # Animating in code
 
+> If the motlab skill is also loaded: use motlab when the user gave references (logo, app screenshots, product photos, footage) or wants an ad or promo they review in a viewer; use this skill for a story or explainer animation from text that you render yourself.
+
 Adapted from cth9191/animate (MIT, see LICENSE). The kit, tools, styles, and story grammar are theirs, unchanged. This page is how to drive them from SquidWings.
 
 A video here is one `index.html`: a `<canvas>` drawn frame by frame, plus a score synthesized in code, rendered to MP4 by a headless browser and ffmpeg. Every frame is deterministic, so the review tools can measure it.

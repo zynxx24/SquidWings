@@ -1312,7 +1312,7 @@
     S.selectedEdge = null;
     S.schedule = source.schedule || { mode: 'off' };
     S.members = source.members.map(m => ({ ...m, depends_on: m.depends_on || [], config: m.config || {} }));
-    $('team-video').checked = source.mode === 'video';
+    $('team-mode').value = ['video', 'motion'].includes(source.mode) ? source.mode : 'standard';
     $('team-name').value = source.name || '';
     if (S.ndv) closeNdv();
     resetRunView();
@@ -1411,7 +1411,7 @@
       lead_id: S.lead,
       reviewer_id: S.reviewer || null,
       schedule: S.schedule || { mode: 'off' },
-      mode: $('team-video').checked ? 'video' : 'standard',
+      mode: $('team-mode').value || 'standard',
     };
     const saved = S.team
       ? await api(`/api/teams/${S.team}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -1435,7 +1435,7 @@
     if (key && confirmLeave()) useTemplate(key);
   };
   $('team-name').oninput = () => markDirty();
-  $('team-video').onchange = () => markDirty();
+  $('team-mode').onchange = () => markDirty();
   $('save-team').onclick = () => saveTeam().then(() => toast('Tersimpan.')).catch(e => toast(e.message));
   $('new-team').onclick = () => { $('wf-menu').open = false; if (confirmLeave()) blankTeam(); };
   $('tidy-board').onclick = () => {

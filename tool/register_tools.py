@@ -27,6 +27,7 @@ from tool.execute.execute_code_intel.quality_tools import (
     has_graphify,
 )
 from tool.execute.execute_command_prompt.run_command_tool import execute_command
+from tool.execute.execute_command_prompt.terminal_tool import preview_url, terminal_run
 from tool.execute.execute_discard_change_file.discard_tool import discard_changes
 from tool.execute.execute_local_memory.memory_tool import graphify_ingest, graphify_query
 from tool.execute.execute_local_memory.project_memory_tool import (
@@ -178,11 +179,11 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
     exec_cmd_schema = ToolSchema(
         name="execute_command",
         description=(
-            "Execute a shell command and return stdout/stderr. "
-            "Commands are sanitized for safety — dangerous commands "
-            "like rm -rf /, sudo, etc. are blocked. "
-            "Use for: running scripts, checking file status, "
-            "installing packages, running tests, etc."
+            "Execute a shell command on this machine and return the whole stdout/stderr. sudo works: with the "
+            "owner's saved sudo password it runs right away (never shown to you); otherwise it opens in the user's "
+            "Terminal panel for them to type it. Only commands that would wreck the machine (rm -rf /, mkfs, dd onto "
+            "a disk, shutdown) are refused. Use for: scripts, builds, tests, installing packages (apt, composer, npm, "
+            "pip), databases and services."
         ),
         parameters=[
             ToolParameter(
@@ -208,6 +209,52 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         ],
     )
     reg.register(exec_cmd_schema, execute_command)
+
+    # ─── Tool 3b: terminal_run (the user's Terminal panel, outside the sandbox) ───
+    terminal_schema = ToolSchema(
+        name="terminal_run",
+        description=(
+            "Type a command into the user's Terminal panel in the web app: a real bash on this machine, in this "
+            "chat's folder, that the user watches and can type into. Use it for long-running things the user should "
+            "see: dev servers they open in the browser (php artisan serve, npm run dev), watchers, interactive "
+            "installers. A sudo password prompt is answered with the owner's saved password when there is one, "
+            "else the user types it in the panel (never in the chat). Waits until the command finishes or the timeout; a server keeps "
+            "running. command='' reads new output of the command still running; interrupt=true sends Ctrl+C."
+        ),
+        parameters=[
+            ToolParameter(name="command", param_type=ParamType.STRING,
+                          description="The command, as typed at a bash prompt. Empty to keep waiting and read new output.",
+                          required=False, default=""),
+            ToolParameter(name="timeout", param_type=ParamType.INTEGER,
+                          description="Seconds to wait (default 120, at most 900). A password prompt adds 90.",
+                          required=False, default=120),
+            ToolParameter(name="interrupt", param_type=ParamType.BOOLEAN,
+                          description="Send Ctrl+C to stop what is running.", required=False, default=False),
+            ToolParameter(name="answer", param_type=ParamType.STRING,
+                          description="Text plus Enter for a question the running command asks (Y/n, a setup wizard). "
+                                      "Never a password. Prefer flags like -y so no question comes up.",
+                          required=False, default=""),
+        ],
+    )
+    reg.register(terminal_schema, terminal_run)
+
+    preview_schema = ToolSchema(
+        name="preview_url",
+        description=(
+            "Get a link to a web server running on this machine (Laravel, Flask, Django, Node, Vite, a static "
+            "folder served with python -m http.server), so the user can open the result. Returns the local link and, "
+            "when the user works from another device through the tunnel, a public https link of its own. Start the "
+            "server with terminal_run first; call this after it says it is listening."
+        ),
+        parameters=[
+            ToolParameter(name="port", param_type=ParamType.INTEGER, description="The port the server listens on, e.g. 8000.",
+                          required=True),
+            ToolParameter(name="public", param_type=ParamType.BOOLEAN,
+                          description="Force a public link (true) or local only (false). Default: public when the "
+                                      "user is on the tunnel.", required=False),
+        ],
+    )
+    reg.register(preview_schema, preview_url)
 
     # ─── Tool 4: discard_changes ─────────────────────────────────────
     discard_schema = ToolSchema(
@@ -964,7 +1011,7 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
         web_read,
     )
 
-    # --- trading (Enterprise): read-only snapshot of the local trading server ---
+    # --- trading (optional module): read-only snapshot of the local trading server ---
     if trading_enabled():
         from tool.execute.execute_trading.snapshot_tool import SECTIONS as TRADING_SECTIONS
         from tool.execute.execute_trading.snapshot_tool import trading_snapshot

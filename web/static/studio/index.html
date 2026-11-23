@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio video</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/page.css">
+<link rel="stylesheet" href="/static/studio/studio.css">
+<script src="/static/js/page.js"></script>
+</head>
+<body class="page-studio">
+<header class="st-top">
+  <div class="st-brand" aria-hidden="true"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M7 3v18M17 3v18M3 8h4M17 8h4M3 16h4M17 16h4M3 12h18"/></svg><span>Studio</span></div>
+  <div class="st-project">
+    <label class="st-project-label" for="project-select">Proyek</label>
+    <select id="project-select"></select>
+    <button id="new-project" class="st-btn" type="button" title="Proyek video baru"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M12 5v14M5 12h14"/></svg><span>Baru</span></button>
+  </div>
+  <div class="st-history" role="group" aria-label="Riwayat">
+    <button id="undo" class="st-btn icon" type="button" title="Urungkan (Ctrl+Z)" aria-label="Urungkan"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+    <button id="redo" class="st-btn icon" type="button" title="Ulangi (Ctrl+Shift+Z)" aria-label="Ulangi"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+  </div>
+  <span id="save-state" class="st-save" aria-live="polite"></span>
+  <div class="st-actions">
+    <button id="show-keys" class="st-btn icon" type="button" title="Pintasan keyboard (?)" aria-label="Pintasan keyboard"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/></svg></button>
+    <button id="send-ai" class="st-btn" type="button" title="Kirim catatan terbuka ke AI di chat"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M22 2 11 13"/><path d="m22 2-7 20-4-9-9-4z"/></svg><span>Kirim catatan ke AI</span></button>
+    <button id="export" class="st-btn primary" type="button" title="Ekspor MP4"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg><span>Ekspor MP4</span></button>
+  </div>
+</header>
+
+<div id="banner" class="st-banner" hidden></div>
+
+<main class="st-main">
+  <aside class="st-left" aria-label="Isi video">
+    <section class="st-panel">
+      <h2>Lapisan</h2>
+      <div class="st-add" role="group" aria-label="Tambah lapisan">
+        <button type="button" data-add="text" title="Tambah teks"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/></svg><span>Teks</span></button>
+        <button type="button" data-add="rect" title="Tambah kotak"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><rect x="4" y="6" width="16" height="12" rx="2"/></svg><span>Kotak</span></button>
+        <button type="button" data-add="ellipse" title="Tambah elips"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><ellipse cx="12" cy="12" rx="8.5" ry="6.5"/></svg><span>Elips</span></button>
+        <button type="button" data-add="polygon" title="Tambah poligon"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="m12 3 8.5 6.2-3.2 10H6.7L3.5 9.2z"/></svg><span>Poligon</span></button>
+        <button type="button" data-add="star" title="Tambah bintang"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="m12 3 2.7 5.6 6.1.8-4.5 4.3 1.1 6.1L12 17l-5.4 2.8 1.1-6.1-4.5-4.3 6.1-.8z"/></svg><span>Bintang</span></button>
+        <button type="button" data-add="path" title="Tambah path"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M4 18c4-10 8 2 16-12"/><circle cx="4" cy="18" r="1.6"/><circle cx="20" cy="6" r="1.6"/></svg><span>Path</span></button>
+        <button type="button" data-add="image" title="Tambah gambar"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg><span>Gambar</span></button>
+        <button type="button" data-add="video" title="Tambah video"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="m16 10 5-3v10l-5-3z"/></svg><span>Video</span></button>
+      </div>
+      <ol id="layer-list" class="st-list" aria-label="Daftar lapisan, paling atas di atas"></ol>
+    </section>
+    <section class="st-panel">
+      <h2>Audio</h2>
+      <label class="st-btn st-upload"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/></svg><span>Tambah musik</span><input id="audio-input" type="file" accept="audio/*" class="visually-hidden"></label>
+      <ol id="audio-list" class="st-list"></ol>
+    </section>
+    <section class="st-panel">
+      <h2>Catatan <span id="note-count" class="st-count"></span></h2>
+      <p class="st-hint">Pilih mode Catatan, lalu klik atau seret kotak di video.</p>
+      <ol id="note-list" class="st-list"></ol>
+    </section>
+  </aside>
+
+  <section class="st-stage" aria-label="Pratinjau">
+    <div id="canvas-wrap" class="st-canvas-wrap">
+      <div id="stage-empty" class="st-stage-empty" hidden>
+        <div class="st-empty-art" aria-hidden="true"><span></span><span></span><span></span></div>
+        <h2 id="stage-empty-title">Belum ada video</h2>
+        <p id="stage-empty-text"></p>
+        <div id="stage-empty-actions" class="st-empty-actions"></div>
+      </div>
+      <canvas id="view"></canvas>
+      <canvas id="overlay" class="st-overlay"></canvas>
+    </div>
+    <div class="st-transport">
+      <div class="st-modes" role="radiogroup" aria-label="Mode">
+        <button type="button" data-mode="select" class="on" role="radio" aria-checked="true" title="Pilih dan geser (V)"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="m5 3 14 7-6 2-2 6z"/></svg>Pilih</button>
+        <button type="button" data-mode="note" role="radio" aria-checked="false" title="Beri catatan (N)"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M4 4h16v12H8l-4 4z"/></svg>Catatan</button>
+      </div>
+      <button id="to-start" class="st-btn icon" type="button" title="Ke awal (Home)" aria-label="Ke awal"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M6 5v14"/><path d="m18 5-9 7 9 7z"/></svg></button>
+      <button id="prev-frame" class="st-btn icon" type="button" title="Mundur satu frame (←)" aria-label="Frame sebelumnya"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="m15 18-6-6 6-6"/></svg></button>
+      <button id="play" class="st-btn icon play" type="button" title="Putar / jeda (Spasi)" aria-label="Putar"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico st-ico-play"><path d="M7 4.5v15l12.5-7.5z"/></svg><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico st-ico-pause"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg></button>
+      <button id="next-frame" class="st-btn icon" type="button" title="Maju satu frame (→)" aria-label="Frame berikutnya"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="m9 18 6-6-6-6"/></svg></button>
+      <span id="clock" class="st-clock">0:00.00 / 0:00.00</span>
+      <label class="st-check"><input id="loop" type="checkbox" checked> Ulang</label>
+    </div>
+  </section>
+
+  <aside class="st-right" aria-label="Panel kanan">
+    <div class="st-tabs" role="tablist" aria-label="Panel">
+      <button type="button" role="tab" data-tab="props" aria-selected="true" class="on">Properti</button>
+      <button type="button" role="tab" data-tab="chat" aria-selected="false">Chat AI <span id="chat-dot" class="st-dot" hidden></span></button>
+      <button type="button" role="tab" data-tab="code" aria-selected="false">Kode</button>
+    </div>
+    <div id="inspector" class="st-tab-body" role="tabpanel"></div>
+    <div id="chat-panel" class="st-tab-body st-chat" role="tabpanel" hidden>
+      <div id="chat-log" class="st-chat-log" aria-live="polite"></div>
+      <div id="chat-context" class="st-chat-context"></div>
+      <form id="chat-form" class="st-chat-form">
+        <textarea id="chat-input" rows="3" placeholder="Minta revisi bagian ini, misalnya: geser logo ke kiri atas, judul masuk lebih pelan" aria-label="Pesan untuk AI"></textarea>
+        <button id="chat-send" class="st-btn primary" type="submit">Kirim</button>
+      </form>
+    </div>
+    <div id="code-panel" class="st-tab-body st-code" role="tabpanel" hidden>
+      <p class="st-hint">Ini kode video yang dibaca dan diubah AI (motion.json). Edit langsung, lalu Terapkan.</p>
+      <textarea id="code-text" spellcheck="false" aria-label="motion.json"></textarea>
+      <div class="st-row"><button id="code-apply" class="st-btn primary" type="button">Terapkan</button><button id="code-reload" class="st-btn" type="button">Muat ulang</button></div>
+      <p id="code-status" class="st-hint" aria-live="polite"></p>
+    </div>
+  </aside>
+</main>
+
+<section class="st-timeline" aria-label="Timeline">
+  <div class="st-tl-head">
+    <span class="st-tl-title">Timeline</span>
+    <span class="st-hint">Klik untuk pindah waktu · seret batang untuk geser, ujungnya untuk potong · Ctrl+scroll untuk zoom</span>
+    <button id="tl-keys" class="st-link" type="button">Semua pintasan</button>
+    <button id="zoom-out" class="st-btn icon" type="button" aria-label="Perkecil timeline">−</button>
+    <button id="zoom-in" class="st-btn icon" type="button" aria-label="Perbesar timeline">+</button>
+  </div>
+  <div id="tl-scroll" class="st-tl-scroll">
+    <div id="tl-inner" class="st-tl-inner">
+      <div id="ruler" class="st-ruler"></div>
+      <div id="tl-rows" class="st-tl-rows"></div>
+      <div id="playhead" class="st-playhead"><span></span></div>
+    </div>
+  </div>
+</section>
+
+<dialog id="export-dialog" class="st-dialog">
+  <form method="dialog">
+    <h2>Ekspor MP4</h2>
+    <label>Resolusi
+      <select id="export-scale">
+        <option value="1">Penuh</option>
+        <option value="0.75">75%</option>
+        <option value="0.5">50% (cepat)</option>
+      </select>
+    </label>
+    <label>Kualitas
+      <select id="export-quality">
+        <option value="0.12">Standar</option>
+        <option value="0.2" selected>Tinggi</option>
+        <option value="0.32">Sangat tinggi</option>
+      </select>
+    </label>
+    <progress id="export-progress" max="1" value="0" hidden></progress>
+    <p id="export-status" class="st-hint" aria-live="polite"></p>
+    <div class="st-dialog-actions">
+      <button value="cancel" class="st-btn" id="export-close">Tutup</button>
+      <button id="export-start" class="st-btn primary" type="button">Mulai ekspor</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="new-dialog" class="st-dialog st-new">
+  <form id="new-form" method="dialog">
+    <h2>Video baru</h2>
+    <p class="st-hint">Pilih bentuknya dulu; isi, warna dan durasi bisa diubah kapan saja, atau minta AI mengisinya.</p>
+    <label>Nama <input id="new-name" type="text" maxlength="60" value="promo" required autocomplete="off"></label>
+    <fieldset class="st-formats">
+      <legend>Bentuk</legend>
+      <label class="st-format"><input type="radio" name="fmt" value="1080x1920" checked><span class="st-ratio r916"></span><b>9:16</b><small>Reels, TikTok, Shorts</small></label>
+      <label class="st-format"><input type="radio" name="fmt" value="1920x1080"><span class="st-ratio r169"></span><b>16:9</b><small>YouTube, presentasi</small></label>
+      <label class="st-format"><input type="radio" name="fmt" value="1080x1080"><span class="st-ratio r11"></span><b>1:1</b><small>Feed persegi</small></label>
+      <label class="st-format"><input type="radio" name="fmt" value="1080x1350"><span class="st-ratio r45"></span><b>4:5</b><small>Feed Instagram</small></label>
+    </fieldset>
+    <label>Durasi (detik) <input id="new-duration" type="number" min="1" max="600" step="1" value="8"></label>
+    <p id="new-error" class="st-error" role="alert"></p>
+    <div class="st-dialog-actions">
+      <button value="cancel" class="st-btn" type="button" id="new-cancel">Batal</button>
+      <button class="st-btn primary" type="submit" id="new-create">Buat video</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="keys-dialog" class="st-dialog st-keys">
+  <form method="dialog">
+    <h2>Pintasan keyboard</h2>
+    <dl class="st-keylist">
+      <div><dt><kbd>Spasi</kbd></dt><dd>Putar / jeda</dd></div>
+      <div><dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Satu frame mundur / maju</dd></div>
+      <div><dt><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd>Satu detik</dd></div>
+      <div><dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>Ke awal / akhir</dd></div>
+      <div><dt><kbd>V</kbd></dt><dd>Mode pilih dan geser</dd></div>
+      <div><dt><kbd>N</kbd></dt><dd>Mode catatan: klik atau seret di video</dd></div>
+      <div><dt><kbd>K</kbd></dt><dd>Keyframe posisi di waktu ini</dd></div>
+      <div><dt><kbd>Delete</kbd></dt><dd>Hapus keyframe atau lapisan terpilih</dd></div>
+      <div><dt><kbd>Ctrl</kbd> + <kbd>Z</kbd></dt><dd>Urungkan (Shift untuk ulangi)</dd></div>
+      <div><dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Simpan sekarang</dd></div>
+      <div><dt><kbd>Shift</kbd> + seret penggaris</dt><dd>Catatan untuk rentang waktu</dd></div>
+      <div><dt><kbd>Ctrl</kbd> + scroll</dt><dd>Zoom timeline</dd></div>
+      <div><dt><kbd>Esc</kbd></dt><dd>Lepas pilihan</dd></div>
+      <div><dt><kbd>?</kbd></dt><dd>Daftar ini</dd></div>
+    </dl>
+    <div class="st-dialog-actions"><button class="st-btn primary" value="close">Mengerti</button></div>
+  </form>
+</dialog>
+
+<input id="image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="visually-hidden">
+<input id="video-input" type="file" accept="video/mp4,video/webm,video/quicktime" class="visually-hidden">
+<div id="note-pop" class="st-note-pop" hidden role="dialog" aria-label="Catatan baru">
+  <p id="note-pop-where" class="st-hint"></p>
+  <textarea id="note-pop-text" rows="3" placeholder="Apa yang perlu diubah di sini?"></textarea>
+  <div class="st-row"><button id="note-pop-save" class="st-btn primary" type="button">Simpan catatan</button><button id="note-pop-cancel" class="st-btn" type="button">Batal</button></div>
+</div>
+<script src="/static/js/marked.min.js"></script>
+<script src="/static/js/purify.min.js"></script>
+<script src="/static/studio/render.js"></script>
+<script src="/static/studio/studio.js"></script>
+</body>
+</html>

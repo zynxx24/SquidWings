@@ -47,6 +47,10 @@ def split_label(text: str) -> tuple[str | None, str]:
     return match.group(1).lower(), text[match.end():].strip()
 
 
+# What a provider or proxy sends instead of an answer; such text must never become a chat's name.
+_PLACEHOLDER = re.compile(r"^\s*\[?\s*(no answer|no response|empty (response|answer)|error)\b", re.IGNORECASE)
+
+
 def quick_title(text: str) -> str:
     """A title from the message itself, for the moment before the AI answers."""
     first = next((line for line in (text or "").splitlines() if line.strip()), "")
@@ -82,7 +86,10 @@ async def ai_title(client: Any, model: str | Callable[[], str | None] | None, te
             return await call if inspect.isawaitable(call) else call
 
         raw = await asyncio.wait_for(request(), timeout=timeout)
-        title = clean_ai_title(ResponseHandler.handle(raw).content)
+        content = ResponseHandler.handle(raw).content or ""
+        if _PLACEHOLDER.match(content):                 # "[No answer: the model spent ...]" is not a title
+            return None
+        title = clean_ai_title(content)
         return title if len(title) >= 3 else None
     except Exception as exc:  # noqa: BLE001 - a missing title must never break a chat
         logger.debug(f"[names] AI title unavailable: {exc}")

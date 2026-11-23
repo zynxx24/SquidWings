@@ -9,7 +9,15 @@ from typing import Any
 import pytest
 
 from agent.agent_loop import AgentLoop
+from dataclasses import replace
+
 from agent.harness import Harness, scaffold_for
+
+
+def _capped(model: str):
+    """A run with a tool cap (tiers themselves no longer cap): the priority order is what these tests pin."""
+    scaffold = scaffold_for(model)
+    return scaffold if "opus" in model else replace(scaffold, max_tools=16)
 from agent.harness.guards import normalize_arguments
 from agent.harness.tool_select import select_tools, toolbox_hint
 from config.constants import TaskType
@@ -40,13 +48,13 @@ def session(tmp_path, monkeypatch):
 # ── What each tier is offered ─────────────────────────────────────────────────
 @pytest.mark.parametrize("model", ["x-flash", "x-sonnet", "x-opus"])
 def test_no_toolbox_tool_rides_along_on_an_ordinary_request(schemas, model):
-    offered = names(select_tools(schemas, TaskType.CODE, "perbaiki bug login", scaffold_for(model)))
+    offered = names(select_tools(schemas, TaskType.CODE, "perbaiki bug login", _capped(model)))
     assert not offered & deferred_names()
 
 
 @pytest.mark.parametrize("model", ["x-flash", "x-sonnet"])
 def test_small_models_always_get_find_tools_within_their_limit(schemas, model):
-    scaffold = scaffold_for(model)
+    scaffold = _capped(model)
     for task in (TaskType.CODE, TaskType.ACTIVITY, TaskType.REASON, TaskType.SCHOOL_TASK):
         offered = select_tools(schemas, task, "tolong bantu", scaffold)
         assert "find_tools" in names(offered) and len(offered) <= scaffold.max_tools
@@ -65,17 +73,17 @@ def test_the_request_brings_its_tool_on_every_tier(schemas, model, request_text,
 
 def test_matched_tools_never_push_out_the_core_kit(schemas):
     offered = names(select_tools(schemas, TaskType.CODE, "hitung statistik rata-rata median csv json warna kontras",
-                                 scaffold_for("x-flash")))
+                                 _capped("x-flash")))
     assert {"read_file", "file_patch", "file_write", "execute_command"} <= offered
 
 
 def test_math_requests_get_the_exact_calculator(schemas):
-    offered = names(select_tools(schemas, TaskType.MATH, "berapa 17 x 23", scaffold_for("x-flash")))
+    offered = names(select_tools(schemas, TaskType.MATH, "berapa 17 x 23", _capped("x-flash")))
     assert {"calc", "solve_equation"} <= offered
 
 
 def test_a_named_hidden_tool_needs_its_whole_name(schemas):
-    flash = scaffold_for("x-flash")
+    flash = _capped("x-flash")
     assert "calc" in names(select_tools(schemas, TaskType.ACTIVITY, "pakai calc ya", flash))
     assert "calc" not in names(select_tools(schemas, TaskType.CODE, "fix calculateTotal()", scaffold_for("x-opus")))
 
@@ -95,13 +103,13 @@ def test_disabled_toolbox_tools_are_never_offered(schemas):
 
 
 def test_the_hint_is_added_only_with_find_tools(schemas):
-    offered = select_tools(schemas, TaskType.ACTIVITY, "x", scaffold_for("x-flash"))
+    offered = select_tools(schemas, TaskType.ACTIVITY, "x", _capped("x-flash"))
     assert "find_tools" in toolbox_hint(offered) and "hidden" in toolbox_hint(offered)
     assert toolbox_hint([]) == ""
 
 
 def test_workspace_path_stays_hidden_from_the_model(schemas):
-    offered = select_tools(schemas, TaskType.ACTIVITY, "rekap csv penjualan per kota", scaffold_for("x-flash"))
+    offered = select_tools(schemas, TaskType.ACTIVITY, "rekap csv penjualan per kota", _capped("x-flash"))
     table = next(t for t in offered if t["function"]["name"] == "table_query")
     assert "workspace_path" not in table["function"]["parameters"]["properties"]
 
@@ -156,7 +164,7 @@ class _Client:
 
 def test_find_tools_offers_what_it_unlocked_from_the_next_request_on(schemas, session):
     registry = register_all_tools()
-    scaffold = scaffold_for("x-flash")
+    scaffold = _capped("x-flash")
     tools = select_tools(schemas, TaskType.ACTIVITY, "tolong bantu", scaffold)
     assert "loan_payment" not in names(tools)
     harness = Harness(scaffold=scaffold, tools=tools,
@@ -178,7 +186,7 @@ def test_find_tools_offers_what_it_unlocked_from_the_next_request_on(schemas, se
 
 def test_a_toolbox_tool_called_without_being_offered_still_runs(schemas, session):
     registry = register_all_tools()
-    scaffold = scaffold_for("x-flash")
+    scaffold = _capped("x-flash")
     harness = Harness(scaffold=scaffold, tools=select_tools(schemas, TaskType.ACTIVITY, "x", scaffold),
                       parameters={s["function"]["name"]: s["function"]["parameters"] for s in schemas},
                       user_input="x", workspace=str(session))
@@ -246,15 +254,15 @@ def test_an_awake_google_maps_skill_brings_its_tools(schemas, session):
     from agent.harness.briefing import skill_guidance
 
     text = "tolong rekap hasil scrape google maps klinik gigi di bandung"
-    guide, used = skill_guidance(text, TaskType.ACTIVITY, scaffold_for("x-flash").skill_chars)
+    guide, used = skill_guidance(text, TaskType.ACTIVITY, _capped("x-flash").skill_chars)
     assert "google-maps" in used and "gmaps_import" in guide
-    offered = names(select_tools(schemas, TaskType.ACTIVITY, "lanjutkan", scaffold_for("x-flash")))
+    offered = names(select_tools(schemas, TaskType.ACTIVITY, "lanjutkan", _capped("x-flash")))
     assert {"gmaps_import", "places_search"} <= offered
 
 
 @pytest.mark.enterprise
 def test_trading_skill_brings_the_risk_calculators(schemas):
-    offered = names(select_tools(schemas, TaskType.ACTIVITY, "analisa posisi xauusd di akun mt4 saya", scaffold_for("x-flash")))
+    offered = names(select_tools(schemas, TaskType.ACTIVITY, "analisa posisi xauusd di akun mt4 saya", _capped("x-flash")))
     assert {"trading_snapshot", "position_size", "risk_reward"} <= offered
 
 

@@ -19,7 +19,7 @@ from utils.workspace_context import get_active_session
 ALLOWED_HOSTS = frozenset({
     "nominatim.openstreetmap.org", "overpass-api.de", "api.open-meteo.com", "geocoding-api.open-meteo.com",
     "api.frankfurter.app", "api.frankfurter.dev", "date.nager.at", "id.wikipedia.org", "en.wikipedia.org",
-    "api.dictionaryapi.dev",
+    "api.dictionaryapi.dev", "photon.komoot.io", "overpass.kumi.systems", "overpass.private.coffee", "maps.mail.ru",
 })
 _HEADERS = {"User-Agent": "SquidWings/1.0 (self-hosted agent)", "Accept": "application/json"}
 _CACHE: dict[tuple[str, str], tuple[float, Any]] = {}

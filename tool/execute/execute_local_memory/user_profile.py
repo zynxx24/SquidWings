@@ -4,9 +4,10 @@ Project memory ends at the workspace folder, and chat history ends with the
 session. Preferences and your name should not. They live in one ordinary note,
 ``vault/90-meta/user-profile.md``, which you can read and edit in Obsidian.
 
-Only things you stated are saved: an explicit "ingat: ..." or "nama saya ...", or
-a tool call by the model. Nothing is inferred, so nothing is saved by surprise.
-Text that looks like a credential is refused.
+Only things you stated are saved: an explicit "ingat: ..." or "nama saya ...", a
+standing instruction about how the agent should work ("mulai sekarang jawab singkat",
+"jangan pakai emoji", "aku lebih suka tabel"), or a tool call by the model. Nothing is
+guessed from behaviour. Text that looks like a credential is refused.
 """
 
 from __future__ import annotations
@@ -39,6 +40,22 @@ _REMEMBER_RE = re.compile(
 )
 # Questions about memory start the same way: "ingat gak nama saya?"
 _NOT_A_STATEMENT_RE = re.compile(r"^(?:gak|ga|nggak|enggak|tidak|kah|apa|what|when|who)\b", re.IGNORECASE)
+# A standing instruction: a "from now on / always / never / I prefer" marker plus a word about how
+# the agent answers or works. "selalu error" or "jangan dihapus filenya" do not qualify.
+_PREFERENCE_MARK_RE = re.compile(
+    r"\b(mulai sekarang|dari sekarang|mulai hari ini|lain kali|ke ?depannya|setiap kali|tiap kali|selalu|"
+    r"jangan pernah|jangan lagi|tolong jangan|saya lebih suka|aku lebih suka|gue lebih suka|gw lebih suka|"
+    r"saya suka kalau|aku suka kalau|saya mau kamu|aku mau kamu|from now on|always|never|i prefer)\b",
+    re.IGNORECASE,
+)
+_PREFERENCE_TOPIC_RE = re.compile(
+    r"\b(jawab\w*|balas\w*|respon\w*|tulis\w*|format|bahasa|panggil|sapa|emoji|bullet|poin|tabel|singkat|"
+    r"ringkas|panjang|detail|santai|formal|baku|gaul|penjelasan|jelaskan|contoh|kode|komentar|sumber|"
+    r"answer|reply|respond|write|call me|language|tone|short|brief|table)\b",
+    re.IGNORECASE,
+)
+_PREFERENCE_MAX_CHARS = 200
+
 # The name must be capitalised, or "nama saya dan file apa" would save "dan".
 _NAME_RE = re.compile(
     r"(?<!\w)(?:[Nn]ama saya|[Nn]amaku|[Pp]anggil saya|[Mm]y name is|[Cc]all me)\s+(?P<name>[A-Z][\w'-]{1,30})"
@@ -123,12 +140,28 @@ def capture_from_message(message: str) -> list[str]:
             statement = match.group("text").strip()
             if not _NOT_A_STATEMENT_RE.match(statement) and remember(statement):
                 saved.append(statement)
+        preference = _preference(message)
+        if preference and remember(f"Preferensi: {preference}"):
+            saved.append(f"Preferensi: {preference}")
         name = _NAME_RE.search(message)
         if name and not message.rstrip().endswith("?") and remember(f"Nama: {name.group('name')}"):
             saved.append(f"Nama: {name.group('name')}")
     except Exception as exc:  # noqa: BLE001 - memory must never break a turn
         logger.warning(f"[user_profile] capture failed: {exc}")
     return saved
+
+
+def _preference(message: str) -> str:
+    """The sentence that sets a standing preference, or "". Questions and long pastes never count."""
+    if len(message) > 600 or "```" in message:
+        return ""
+    for sentence in re.split(r"(?<=[.!?\n])\s+", message.strip()):
+        sentence = sentence.strip()
+        if not sentence or sentence.endswith("?") or len(sentence) > _PREFERENCE_MAX_CHARS:
+            continue
+        if _PREFERENCE_MARK_RE.search(sentence) and _PREFERENCE_TOPIC_RE.search(sentence):
+            return sentence.rstrip(".! ")
+    return ""
 
 
 def prompt_block() -> str:

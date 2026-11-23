@@ -29,7 +29,7 @@ logger = get_logger(__name__)
 MAX_PREVIEW_BYTES = 512_000  # 512KB
 DOCUMENT_EXTENSIONS = DOCUMENT_SUFFIXES
 MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
-MAX_DOCUMENT_CHARS = 20_000
+MAX_DOCUMENT_CHARS = 2_000_000  # whole documents; the provider context is the only limit
 MARKDOWN_EXTENSIONS = {".md", ".markdown"}
 COMPACT_MARKDOWN_ABOVE_CHARS = 6_000
 

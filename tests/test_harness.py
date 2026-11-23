@@ -129,21 +129,23 @@ def test_cheaper_tiers_get_more_supervision() -> None:
     lite, top = scaffold_for("x-flash"), scaffold_for("x-opus")
     assert lite.stuck_after < top.stuck_after
     assert lite.advisor_calls > top.advisor_calls
-    assert lite.max_tools is not None and top.max_tools is None
+    # The owner's rule: no tier sees less; only the provider's context window limits a model.
+    assert lite.max_tools is None and top.max_tools is None
+    assert lite.context_chars == top.context_chars and lite.tool_result_chars == top.tool_result_chars
 
 
 # --- tool selection ------------------------------------------------------
 
 
-def test_tool_selection_is_small_and_relevant() -> None:
+def test_tool_selection_offers_every_core_tool_to_every_tier() -> None:
     from tool.register_tools import register_all_tools
 
     schemas = register_all_tools().get_all_schemas()
     lite = scaffold_for("x-flash")
     names = [s["function"]["name"] for s in select_tools(schemas, TaskType.CODE, "perbaiki bug", lite)]
-    assert len(names) <= 16
     assert {"read_file", "file_patch", "execute_command"} <= set(names)
-    assert "obsidian_write" not in names
+    # A cheap model is no longer cut to a short list; the 127-tool toolbox still waits until asked for.
+    assert set(names) == {s["function"]["name"] for s in select_tools(schemas, TaskType.CODE, "perbaiki bug", scaffold_for("x-opus"))}
 
     wants_vault = [s["function"]["name"] for s in select_tools(schemas, TaskType.CODE, "simpan ke vault", lite)]
     assert "vault_write" in wants_vault
@@ -520,7 +522,9 @@ async def test_reasoning_lockout_is_waited_out_with_a_bigger_budget(registry, tm
 
 async def test_failure_after_tool_work_keeps_the_result(registry, tmp_path) -> None:
     """Regression: the work was done, yet the user only saw an error."""
-    outcomes: list[Any] = [reply("", [("file_write", {"path": "a.txt", "content": "x"})]), RuntimeError("502")]
+    # The second chance (no stream, no tools) fails too, so the run ends honestly.
+    outcomes: list[Any] = [reply("", [("file_write", {"path": "a.txt", "content": "x"})]), RuntimeError("502"),
+                           RuntimeError("502")]
 
     class Client:
         async def chat_completion(self, **_kwargs: Any) -> dict[str, Any]:
@@ -537,6 +541,56 @@ async def test_failure_after_tool_work_keeps_the_result(registry, tmp_path) -> N
     assert result.finish_reason == "error"
     assert "Belum selesai" in result.notes
     assert harness.stats.unresolved
+
+
+async def test_a_dropped_stream_after_tool_work_is_asked_once_more_for_the_answer(registry, tmp_path) -> None:
+    """Regression: a stream timeout after five tools left only "model did not write a summary"."""
+    requests: list[dict[str, Any]] = []
+    outcomes: list[Any] = [
+        reply("", [("file_write", {"path": "a.txt", "content": "x"})]), TimeoutError("stream timed out"), reply("Ringkasan."),
+    ]
+
+    class Client:
+        async def chat_completion(self, **kwargs: Any) -> dict[str, Any]:
+            requests.append(kwargs)
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    shown: list[str] = []
+    harness = make_harness(registry, tmp_path)
+    result = await AgentLoop(Client(), registry, harness=harness).run(  # type: ignore[arg-type]
+        "m", [{"role": "user", "content": "x"}], stream=False, on_content_chunk=shown.append
+    )
+    assert result.content == "Ringkasan." and "Ringkasan." in shown
+    assert "tools" not in requests[-1] and "terputus" in requests[-1]["messages"][-1]["content"]
+    assert not result.notes
+
+
+async def test_an_exhausted_provider_after_tool_work_hands_the_answer_to_another(registry, tmp_path) -> None:
+    """Regression: the provider ran out of accounts after the video was saved, and the retry used it again."""
+    models: list[str] = []
+    outcomes: list[Any] = [
+        reply("", [("file_write", {"path": "a.txt", "content": "x"})]), RuntimeError("semua akun sedang istirahat"),
+        reply("Video sudah disimpan."),
+    ]
+
+    class Client:
+        async def chat_completion(self, **kwargs: Any) -> dict[str, Any]:
+            models.append(kwargs["model"])
+            outcome = outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+    harness = make_harness(registry, tmp_path)
+    harness.recovery_model = "lh/ag/claude-opus-5-5"
+    result = await AgentLoop(Client(), registry, harness=harness).run(  # type: ignore[arg-type]
+        "lh/vk/anthropic/claude-opus-4.8", [{"role": "user", "content": "x"}], stream=False
+    )
+    assert result.content == "Video sudah disimpan."
+    assert models == ["lh/vk/anthropic/claude-opus-4.8", "lh/vk/anthropic/claude-opus-4.8", "lh/ag/claude-opus-5-5"]
 
 
 async def test_failure_after_tool_work_hands_over_to_the_stronger_model(registry, tmp_path) -> None:
@@ -644,16 +698,20 @@ async def test_past_the_deadline_the_first_answer_is_final(registry, tmp_path) -
     assert len(client.requests) == 1
 
 
-def test_limits_shrink_every_tier_and_turn_off_the_advisor() -> None:
+def test_limits_cap_rounds_but_never_what_a_model_sees() -> None:
     from agent.harness import RunLimits
 
     limits = RunLimits(max_rounds=10, tokens=1, deadline=0.0)
     for model in ("x-flash", "prov/claude-sonnet-4-6", "prov/openai/gpt-6-sol"):
-        scaffold = limits.apply(scaffold_for(model))
+        tier = scaffold_for(model)
+        scaffold = limits.apply(tier)
         assert scaffold.max_iterations == 10
-        assert scaffold.context_chars <= 24_000
-        assert scaffold.max_tools == 10
+        assert scaffold.context_chars == tier.context_chars
+        assert scaffold.tool_result_chars == tier.tool_result_chars
+        assert scaffold.max_tools is None
         assert scaffold.advisor_calls == 0
+    gate = RunLimits(max_rounds=1, tokens=1, deadline=0.0, max_tools=0).apply(scaffold_for("x-flash"))
+    assert gate.max_tools == 0
 
 
 # --- harness optimisations ------------------------------------------------

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 from collections.abc import AsyncIterator
@@ -250,7 +251,11 @@ async def chat_stream(provider: ProviderConfig, model: str, messages: list[dict[
         usage: dict[str, Any] | None = None
         try:
             try:
-                async with _client(provider, account).stream("POST", _path(provider, "chat"), json=payload) as response:
+                idle = max(float(provider.timeout_s), _stream_idle_seconds())
+                async with _client(provider, account).stream(
+                    "POST", _path(provider, "chat"), json=payload,
+                    timeout=httpx.Timeout(float(provider.timeout_s), connect=10.0, read=idle),
+                ) as response:
                     if response.status_code >= 400:
                         await response.aread()
                         message = _message(response)
@@ -271,7 +276,7 @@ async def chat_stream(provider: ProviderConfig, model: str, messages: list[dict[
                             yielded = True
                             yield chunk
             except httpx.TimeoutException as exc:
-                raise _UpstreamError(408, f"timed out after {provider.timeout_s}s") from exc
+                raise _UpstreamError(408, f"sent nothing for {int(idle)}s") from exc
             except httpx.HTTPError as exc:
                 raise _UpstreamError(0, f"cannot connect to {provider.base_url}: {exc}") from exc
             rotator.success(provider.id, account.id, (time.monotonic() - started) * 1000)
@@ -344,3 +349,11 @@ async def close() -> None:
 
 
 __all__ = ["chat", "chat_stream", "list_models", "route", "close"]
+
+
+def _stream_idle_seconds() -> float:
+    """Longest silence a streamed reply may have; thinking models are quiet before the first token."""
+    try:
+        return float(os.getenv("STREAM_IDLE_SECONDS", "300"))
+    except ValueError:
+        return 300.0

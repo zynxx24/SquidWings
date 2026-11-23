@@ -183,6 +183,17 @@ class UsageLog:
         return {"period": period, "group": group, "since": since or first, "until": now, "bucket_s": bucket,
                 "totals": totals, "rows": rows, "series": filled}
 
+    def recent(self, limit: int = 30) -> list[dict[str, Any]]:
+        """The newest requests, newest first: when, where to, which model, tokens, speed, and whether it worked."""
+        with self._lock:
+            db = self._db()
+            db.row_factory = sqlite3.Row
+            rows = [dict(r) for r in db.execute(
+                "SELECT ts, provider, account_label, model, input, output, cached, total, latency_ms, ok, reported, stream, error "
+                "FROM usage ORDER BY ts DESC LIMIT ?", (max(1, min(int(limit), 200)),))]
+            db.row_factory = None
+        return rows
+
 
 def _cost(price: Callable[[str], Any], cache: dict[str, Any], row: dict[str, Any]) -> float | None:
     model = row["model"]

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from config.edition import studio_enabled
 from utils import session_settings
 from utils.workspace_context import get_active_workspace
 
@@ -27,6 +28,9 @@ from . import (  # noqa: F401 - importing registers the tools in the catalog
     voice_tools,
 )
 from .catalog import CATALOG, GROUPS, groups_line, match, search
+
+if studio_enabled():   # optional module: the video Studio's tools
+    from . import studio_tools  # noqa: F401
 
 FIND_TOOLS = "find_tools"
 # Per call, so one vague query cannot flood a small model's tool list.

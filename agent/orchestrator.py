@@ -26,18 +26,21 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from brain import skills
 from brain.classifier.continuation import continuation_hint, is_continuation_input
 from brain.classifier.intent_classifier import IntentClassifier
 from brain.classifier.llm_classifier import LLMIntentClassifier
 from brain.context.context_assembler import ContextAssembler
 from brain.max_token.max_token_calculator import MaxTokenCalculator
 from brain.max_token.max_token_config import MaxTokenConfig
+from brain.memory import chat_recall
 from brain.memory.agent_working_memory import AgentWorkingMemory
 from brain.memory.context_window_manager import ContextWindowManager
 from brain.memory.conversation_store import ConversationStore
 from brain.memory.project_memory import ProjectMemory
 from brain.prompt_must_think.base_think_prompt import ThinkPromptManager
 from config.constants import TOKEN_BUFFER, ResponseStatus, TaskType
+from config.edition import studio_module
 from config.secrets import get_secrets
 from config.settings import Settings
 from model.connection.api_client import APIClient
@@ -60,9 +63,11 @@ from tool.execute.execute_local_memory import user_profile
 from tool.execute.execute_local_memory.session_distill import distill_session
 from tool.register_tools import register_all_tools
 from tool.registry.tool_registry import ToolRegistry
+from utils import session_settings
 from utils.exceptions import RateLimitError
 from utils.extract import intent_of
 from utils.logger import get_logger
+from utils.now import now_line
 from utils.session_names import ai_title
 from utils.workspace_context import get_active_workspace
 
@@ -530,6 +535,13 @@ class Orchestrator:
             # 5a. L1 vault memory as an uncached block after the cached prefix
             # (same behaviour as the CLI in main.py).
             self._inject_vault_memory(ctx.messages)
+            # 5a'. What earlier chats already worked out about requests like this one.
+            if persist and task_hint is None and os.getenv("CHAT_RECALL", "on").strip().lower() not in {"0", "off", "false"}:
+                recalled = await asyncio.to_thread(
+                    chat_recall.recall, self.conversation_store, intent_text, session_id
+                )
+                if recalled:
+                    self._append_system(ctx.messages, recalled)
 
             # 5b. Attach images (data URLs) to the final user message
             if images and not getattr(model, "supports_vision", True):
@@ -556,7 +568,8 @@ class Orchestrator:
                 user_input, classification.task_type, difficulty
             )
             harness = await self._build_harness(
-                model, classification.task_type, intent_text, ctx.messages, on_reset, on_event, limits
+                model, classification.task_type, intent_text, ctx.messages, on_reset, on_event, limits,
+                chosen=bool(override_model),
             )
 
             if use_pipeline:
@@ -883,8 +896,9 @@ class Orchestrator:
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug(f"[orchestrator] Health lookup failed: {exc}")
 
+        # Quality max is for a chat on Auto only, never for a model the user picked that is down.
         model = self._router.route(
-            task_type, difficulty, healthy_models=healthy_models
+            task_type, difficulty, healthy_models=healthy_models, auto=not override_model
         )
         if model:
             logger.info(
@@ -906,8 +920,8 @@ class Orchestrator:
         )
 
         text = build_context() + build_global_context() + user_profile.prompt_block()
-        if text:
-            Orchestrator._append_system(messages, text)
+        # The date changes every day, so it lives here, after the cached prefix.
+        Orchestrator._append_system(messages, f"\n\n{now_line()}{text}")
 
     @staticmethod
     def _attach_images(messages: list[dict[str, Any]], images: list[str]) -> None:
@@ -937,8 +951,13 @@ class Orchestrator:
         on_reset: Callable[[], None] | None,
         on_event: Callable[[dict[str, Any]], None] | None,
         limits: RunLimits | None = None,
+        chosen: bool = False,
     ) -> Harness:
-        """Prepare supervision for one run and add its guidance to the prompt."""
+        """Prepare supervision for one run and add its guidance to the prompt.
+
+        ``chosen``: the user picked this model instead of Auto. The run then stays on it: no router
+        lookup for an advisor to escalate to, no switch to another provider's model on failure.
+        """
         scaffold = limits.apply(scaffold_for(model.id)) if limits else scaffold_for(model.id)
         disabled = frozenset(
             name.strip()
@@ -968,15 +987,28 @@ class Orchestrator:
             max_output=model.max_output or 0,
             advisor_model=(
                 pick_advisor(self._router, self._health_checker, model.id, task_type)
-                if tools and not limits
+                if tools and not limits and not chosen
                 else None
             ),
             limits=limits,
             on_event=on_event,
             on_reset=on_reset,
+            recovery_model=self._recovery_model(model.id) if tools and not chosen else None,
         )
 
         restricted = bool(limits and limits.only_tools is not None)
+        if not restricted:
+            # Always-on skills hold for every request of this kind, with or without tools.
+            rules = skills.always_text(task_type.value)
+            if rules:
+                self._append_system(messages, rules)
+            # A turn from the Studio's chat panel: the editor's protocol, its skill, and the video as it is now.
+            studio_context = studio_module("utils.studio_context")   # optional module: the video Studio
+            if studio_context and studio_context.current() and workspace:
+                session_settings.activate_skills(workspace, ["studio"])
+                guide = skills.load_all().get("studio")
+                block = studio_context.prompt_block(workspace)
+                self._append_system(messages, (f"\n\n{guide.body}" if guide else "") + block)
         if tools:
             protocol = protocol_text(scaffold)
             if protocol:
@@ -999,6 +1031,26 @@ class Orchestrator:
                 if briefing:
                     self._append_system(messages, briefing)
         return harness
+
+    def _recovery_model(self, current: str) -> str | None:
+        """The strongest chat model reached through another provider than ``current``'s."""
+        from model.settings.model_picker import is_chat_model
+
+        from .harness.tiers import tier_for
+
+        def route(model_id: str) -> str:
+            parts = model_id.split("/")
+            # Ids from the local router carry its prefix first ("lh/vk/..."): the provider is the next part.
+            return parts[1] if len(parts) > 2 and parts[0] == "lh" else parts[0]
+
+        try:
+            ids = [m.id for m in self._registry.get_all()]
+        except Exception:  # noqa: BLE001 - no fallback is better than a failed turn
+            return None
+        mine = route(current)
+        options = [m for m in ids if m != current and is_chat_model(m) and route(m) != mine]
+        options.sort(key=lambda m: -int(tier_for(m)))
+        return options[0] if options else None
 
     @staticmethod
     def _append_system(messages: list[dict[str, Any]], text: str) -> None:

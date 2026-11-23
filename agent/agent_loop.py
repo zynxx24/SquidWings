@@ -47,12 +47,13 @@ from .harness.guards import (
     repair_json_arguments,
     tool_failed,
 )
+from .harness.tiers import rounds_override
 from .harness.verifier import verify_turn
 
 logger = get_logger(__name__)
 
 # Web pages are the evidence for the answer: a small model needs them whole too.
-_RESULT_FLOOR = {"web_research": 16_000, "web_read": 12_000}
+_RESULT_FLOOR = {"web_research": 120_000, "web_read": 60_000}
 _TOOL_PROGRESS_STEP = 1_500
 # The file or command in tool arguments that are still being written.
 _PARTIAL_TARGET_RE = re.compile(r'"(?:path|file_path|dir_path|command|query|url|name)"\s*:\s*"((?:[^"\\]|\\.)*)"?')
@@ -173,12 +174,15 @@ class AgentLoop:
         empty_streak = 0  # consecutive fully-empty responses (no content, no thinking, no tool calls)
 
         harness = self._harness
-        max_iterations = harness.scaffold.max_iterations if harness else self._max_iterations
+        max_iterations = harness.scaffold.max_iterations if harness else (rounds_override() or self._max_iterations)
         iteration_limit = max_iterations + MAX_THINKING_ONLY_ITERATIONS
         guard = LoopGuard(harness.scaffold.stuck_after) if harness else None
         verify_rounds_left = harness.scaffold.verify_rounds if harness else 0
         advisor_calls_left = harness.scaffold.advisor_calls if harness else 0
         force_final = False
+        # One second chance after a failed call that followed real tool work: no stream, no tools,
+        # just "write the answer from what you found". A stream that stalls once rarely stalls twice.
+        recovery_tried = False
         warned = False
         idle_warned = False
 
@@ -276,6 +280,27 @@ class AgentLoop:
                 if target != model_id:
                     model_id = target
                     continue
+                if not recovery_tried:
+                    recovery_tried = True
+                    force_final = True
+                    stream = False
+                    logger.warning(f"[agent_loop] Model failed after tool work, asking once more for the answer: {exc}")
+                    if harness.recovery_model and harness.recovery_model != model_id:
+                        model_id = harness.recovery_model
+                        result.model = model_id
+                        harness.emit(type="status", note=True, text=f"Model tadi tidak tersedia, jawaban ditulis {model_id}")
+                    else:
+                        harness.emit(type="status", note=True, text="Koneksi model terputus, menulis ulang jawabannya")
+                    if harness.on_reset:
+                        harness.on_reset()   # half a sentence from the broken stream must not stay on screen
+                    current_messages.append({
+                        "role": "user",
+                        "content": (
+                            "Panggilan sebelumnya terputus. Jangan panggil tool lagi. Tulis jawaban akhir sekarang "
+                            "dari hasil tool di atas: apa yang selesai, apa hasilnya, dan apa yang belum."
+                        ),
+                    })
+                    continue
                 logger.warning(f"[agent_loop] Model failed after tool work: {exc}")
                 problem = f"Model gagal sebelum menulis ringkasan: {str(exc)[:200]}"
                 harness.stats.unresolved = [problem]
@@ -288,6 +313,8 @@ class AgentLoop:
             result.total_completion_tokens += parsed.completion_tokens
             result.finish_reason = parsed.finish_reason
             result.parsed_response = parsed
+            if recovery_tried and not stream and parsed.content and on_content_chunk:
+                on_content_chunk(parsed.content)   # the recovery call does not stream, so show it whole
 
             # Many cheap models write tool calls as text instead of using the
             # API field. Treat them as real calls and take the text back.

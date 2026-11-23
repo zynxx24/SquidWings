@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import IntEnum
 from pathlib import Path
 
@@ -18,7 +19,7 @@ _CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "models_config.y
 
 # Used when models_config.yaml has no ``harness.tiers`` section.
 _DEFAULT_PATTERNS: dict[str, list[str]] = {
-    "frontier": [r"opus", r"gpt-6-sol", r"fable"],
+    "frontier": [r"opus", r"gpt-6(?:\.\d+)?-sol", r"fable"],
     "lite": [r"flash", r"haiku", r"\bmini\b", r"-mini", r"lite", r"nano", r"free", r"gemma", r"glm"],
 }
 
@@ -64,10 +65,27 @@ class Scaffold:
     skill_chars: int
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, "") or default))
+    except ValueError:
+        return default
+
+
+# The owner's rule (2026-11-22): the harness sets no limit of its own on what a model sees; only the
+# provider's context window does. 1M tokens is about 3.6M characters. A cheap model needs more
+# information to understand a task, not less, so every tier gets every tool, whole files and tool
+# results, and the full skill guides. AGENT_CONTEXT_CHARS / AGENT_TOOL_RESULT_CHARS change the ceiling.
+PROVIDER_CONTEXT_CHARS = _env_int("AGENT_CONTEXT_CHARS", 3_600_000)
+TOOL_RESULT_CHARS = _env_int("AGENT_TOOL_RESULT_CHARS", PROVIDER_CONTEXT_CHARS // 4)
+BRIEFING_CHARS = 40_000
+SKILL_CHARS = 400_000
+
 _SCAFFOLDS: dict[Tier, Scaffold] = {
-    Tier.LITE: Scaffold(Tier.LITE, "harness_lite.txt", 16, 20, 6_000, 60_000, 2, 2, 2, 1_800, 12_000),
-    Tier.STANDARD: Scaffold(Tier.STANDARD, "harness_standard.txt", 18, 30, 12_000, 120_000, 3, 2, 1, 1_500, 8_000),
-    Tier.FRONTIER: Scaffold(Tier.FRONTIER, "", None, 40, 30_000, 400_000, 4, 1, 0, 800, 0),
+    Tier.LITE: Scaffold(Tier.LITE, "harness_lite.txt", None, 20, TOOL_RESULT_CHARS, PROVIDER_CONTEXT_CHARS, 2, 2, 2, BRIEFING_CHARS, SKILL_CHARS),
+    Tier.STANDARD: Scaffold(Tier.STANDARD, "harness_standard.txt", None, 30, TOOL_RESULT_CHARS, PROVIDER_CONTEXT_CHARS, 3, 2, 1, BRIEFING_CHARS, SKILL_CHARS),
+    # Frontier models get the skill index and load a guide when they want it (0 = index only).
+    Tier.FRONTIER: Scaffold(Tier.FRONTIER, "", None, 40, TOOL_RESULT_CHARS, PROVIDER_CONTEXT_CHARS, 4, 1, 0, BRIEFING_CHARS, 0),
 }
 
 _patterns_cache: dict[str, list[re.Pattern[str]]] | None = None
@@ -98,8 +116,27 @@ def tier_for(model_id: str) -> Tier:
     return Tier.STANDARD
 
 
+# What AGENT_MAX_ROUNDS=0 means: no practical cap on tool rounds in one turn.
+UNLIMITED_ROUNDS = 1_000_000
+
+
+def rounds_override() -> int | None:
+    """Tool rounds per turn set by the owner in ``.env`` (AGENT_MAX_ROUNDS), or None for the tier's own.
+
+    0, "unlimited", "none" or "off" lift the cap: the agent keeps working until the task is done.
+    The stuck guard still stops a model that repeats the same failing call."""
+    raw = os.getenv("AGENT_MAX_ROUNDS", "").strip().lower()
+    if raw in {"0", "unlimited", "none", "off", "tanpa batas"}:
+        return UNLIMITED_ROUNDS
+    if raw.isdigit():
+        return int(raw)
+    return None
+
+
 def scaffold_for(model_id: str) -> Scaffold:
-    return _SCAFFOLDS[tier_for(model_id)]
+    scaffold = _SCAFFOLDS[tier_for(model_id)]
+    rounds = rounds_override()
+    return replace(scaffold, max_iterations=rounds) if rounds else scaffold
 
 
 def protocol_text(scaffold: Scaffold) -> str:

@@ -1,12 +1,16 @@
 SquidWings
-Copyright (c) 2025-2026 zynxx24. All rights reserved.
+Copyright (c) 2025-2026 zynxx24
 
-SquidWings adalah perangkat lunak berbayar (proprietary) di bawah SquidWings
-Commercial License. Teks lengkapnya ada di berkas LICENSE. Pemakaian, penjualan,
-dan distribusi memerlukan lisensi atau izin tertulis dari pemilik hak cipta.
+SquidWings adalah perangkat lunak bebas untuk dibagikan, dirilis di bawah
+GNU Affero General Public License versi 3 (AGPL-3.0-only). Teks lengkapnya ada
+di berkas LICENSE.
 
-Pembelian lisensi dan izin khusus: aguswiraw60@gmail.com
-Repositori resmi: https://github.com/zynxx24/SquidWings
+Kamu boleh memakai, menyalin, mengubah, dan membagikan SquidWings, termasuk
+untuk keperluan komersial, selama kode sumber versimu ikut dibuka dengan
+lisensi yang sama, juga bila dijalankan sebagai layanan lewat jaringan.
+Pemberitahuan hak cipta ini, LICENSE, dan NOTICE wajib dipertahankan.
+
+Repositori asli: https://github.com/zynxx24/SquidWings
 
 Komponen pihak ketiga
 ---------------------
@@ -26,3 +30,5 @@ dan teks lisensinya wajib dipertahankan di setiap salinan.
       highlight.js, lisensi BSD-3-Clause
   - web/static/css/soft.css
       dibangun dengan Tailwind CSS (lisensi MIT)
+  - web/static/vendor/fonts/
+      lihat web/static/vendor/fonts/LICENSE.md

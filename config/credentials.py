@@ -46,6 +46,14 @@ FIELDS: tuple[Field, ...] = (
           "api.telegram.org/bot<token>/getUpdates untuk melihat id-nya.", r"-?\d{1,20}|@\w{1,64}", "123456789 atau @channel"),
     Field("brave_search_api_key", "Brave Search API key", "search", True, "BRAVE_SEARCH_API_KEY",
           "Dari api-dashboard.search.brave.com. Ada paket gratis.", r"[A-Za-z0-9_-]{10,200}", "BSA..."),
+    Field("tavily_api_key", "Tavily API key", "search", True, "TAVILY_API_KEY",
+          "Dari app.tavily.com. Gratis 1000 pencarian per bulan, dibuat untuk agent AI.", r"tvly-[A-Za-z0-9_-]{10,200}", "tvly-..."),
+    Field("google_cse_key", "Google Programmable Search API key", "search", True, "GOOGLE_CSE_KEY",
+          "Dari console.cloud.google.com (Custom Search API). Gratis 100 pencarian per hari. Isi juga Search engine ID.",
+          r"[A-Za-z0-9_-]{20,100}", "AIza..."),
+    Field("google_cse_cx", "Google Search engine ID (cx)", "search", False, "GOOGLE_CSE_CX",
+          "Dari programmablesearchengine.google.com: buat mesin pencari untuk seluruh web, salin Search engine ID.",
+          r"[A-Za-z0-9:_-]{5,100}", "a1b2c3d4e5f6g7h8i"),
     Field("searxng_url", "URL SearXNG", "search", False, "SEARXNG_URL",
           "Instance SearXNG milikmu, dengan format JSON aktif.", r"https?://\S{3,300}", "http://127.0.0.1:8888"),
     Field("elevenlabs_api_key", "ElevenLabs API key", "voice", True, "ELEVENLABS_API_KEY",
@@ -66,6 +74,10 @@ FIELDS: tuple[Field, ...] = (
           "", r"mysql://\S{3,500}", "mysql://user:pass@host:3306/db"),
     Field("team_db_mongodb_url", "MongoDB URL", "database", True, "TEAM_DB_MONGODB_URL",
           "", r"mongodb(\+srv)?://\S{3,500}", "mongodb://user:pass@host:27017/db"),
+    Field("sudo_password", "Password sudo", "system", True, "SUDO_PASSWORD",
+          "Password login laptop ini. Dengan ini agent menjalankan perintah sudo (apt, Laravel, MySQL, nginx) sendiri "
+          "tanpa menunggumu. Tidak pernah dikirim ke AI: dipakai lewat descriptor tertutup, dan disensor dari output.",
+          r"[^\r\n]{1,200}", "••••••••"),
     Field("team_run_seconds", "Waktu satu permintaan (detik)", "limits", False, "TEAM_RUN_SECONDS",
           "Batas waktu seluruh alur untuk satu permintaan.", r"[1-9]\d{0,6}", "600"),
     Field("team_member_seconds", "Waktu tiap agent (detik)", "limits", False, "TEAM_MEMBER_SECONDS",
@@ -90,6 +102,7 @@ GROUPS = {
     "voice": {"label": "ElevenLabs (suara)", "description": "Voice-over dan text to speech. Tanpa ini tool suara menjelaskan cara menyambungkannya."},
     "google": {"label": "Google Workspace (Sheets)", "description": "Database online di Google Sheets: dibaca dan diedit agent dan tab Data."},
     "database": {"label": "Database", "description": "Tujuan node Database dan sumber data PostgreSQL, MySQL, MongoDB. SQLite lokal selalu tersedia tanpa diisi."},
+    "system": {"label": "Sistem (sudo)", "description": "Biar agent bisa sudo sendiri untuk framework dan server lokal. Kosongkan untuk tetap lewat panel Terminal."},
     "limits": {"label": "Batas tim", "description": "Batas waktu, putaran, dan token untuk satu permintaan tim. Kosongkan untuk memakai nilai bawaan."},
 }
 

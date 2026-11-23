@@ -27,6 +27,8 @@
     chart: '<path d="M4 19V5M4 19h16M8 15l4-5 3 3 5-6"/>',
     theme: '<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M5.6 18.4 7 17M17 7l1.4-1.4"/>',
     layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
+    terminal: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
+    film: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4M3 15h4M17 9h4M17 15h4"/>',
     chevron: '<path d="m9 6 6 6-6 6"/>',
     trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
     down: '<path d="M12 5v14M6 13l6 6 6-6"/>',
@@ -34,6 +36,17 @@
     refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>',
     external: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
     router: '<rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 17h.01M11 17h.01M12 14V9M8.5 6.5a5 5 0 0 1 7 0M6 4a8.5 8.5 0 0 1 12 0"/>',
+    code: '<path d="m8 7-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/>',
+    layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/>',
+    bug: '<rect x="7" y="8" width="10" height="12" rx="5"/><path d="M12 8v12M9 5l1.5 2M15 5l-1.5 2M3 13h4M17 13h4M4 19l3.5-2M20 19l-3.5-2M4 7l3.5 2M20 7l-3.5 2"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/>',
+    edit: '<path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+    retry: '<path d="M4 12a8 8 0 0 1 14-5.3L20 9"/><path d="M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-14 5.3L4 15"/><path d="M4 20v-5h5"/>',
+    speak: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
+    pin: '<path d="M9 4h6l-1 6 4 3v2H6v-2l4-3z"/><path d="M12 15v6"/>',
+    download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
+    command: '<path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3z"/>',
+    keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>',
   };
   const icon = (name, size = 18) =>
     `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -48,9 +61,47 @@
   // An image written as a relative path (![chart](plot.png)) is a file in this chat's folder,
   // so it is loaded through the session file endpoint. Absolute and data: URLs are left alone.
   const RELATIVE_SRC = /^(?![a-z][a-z0-9+.-]*:|\/|#)/i;
-  const md = text => {
-    if (!(window.marked && window.DOMPurify)) return esc(text).replace(/\n/g, '<br>');
-    const clean = window.DOMPurify.sanitize(window.marked.parse(text || ''));
+
+  // Math: $$..$$ and \[..\] as blocks, $..$ and \(..\) inline. Formulas are taken out before marked
+  // runs (it would eat the backslashes and underscores) and put back as KaTeX after sanitizing.
+  // KaTeX escapes its input and runs with trust off, so \href and raw HTML never come through.
+  // Code spans and fences are skipped. "$5 dan $10" stays text: the closing $ may not touch a digit.
+  const MATH_RE = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|(?<![\\$\w])\$(?![\s$])((?:\\\$|[^$\n])+?)(?<![\s\\])\$(?![\d$])/g;
+  const CODE_RE = /(^|\n) {0,3}(```+|~~~+)[\s\S]*?(?:\n {0,3}\2[ \t]*(?=\n|$)|$)|(`+)(?!`)[\s\S]*?[^`]\3(?!`)/g;
+  const takeMath = text => {
+    const found = [];
+    const swap = chunk => chunk.replace(MATH_RE, (whole, block, bracket, paren, inline) => {
+      const tex = block ?? bracket ?? paren ?? inline;
+      if (!tex || !tex.trim()) return whole;
+      found.push({ tex: tex.trim(), display: block !== undefined || bracket !== undefined, raw: whole });
+      return `KTXMATH${found.length - 1}END`;
+    });
+    let out = '';
+    let last = 0;
+    for (const m of text.matchAll(CODE_RE)) {
+      out += swap(text.slice(last, m.index)) + m[0];
+      last = m.index + m[0].length;
+    }
+    out += swap(text.slice(last));
+    return { text: out, found };
+  };
+  const putMath = (html, found) => html.replace(/KTXMATH(\d+)END/g, (whole, i) => {
+    const item = found[Number(i)];
+    if (!item) return whole;
+    if (!window.katex) return esc(item.raw);
+    try {
+      return window.katex.renderToString(item.tex, {
+        displayMode: item.display, throwOnError: false, strict: 'ignore', trust: false, output: 'htmlAndMathml',
+      });
+    } catch (_) {
+      return `<code>${esc(item.raw)}</code>`;
+    }
+  });
+
+  const md = raw => {
+    if (!(window.marked && window.DOMPurify)) return esc(raw).replace(/\n/g, '<br>');
+    const { text, found } = takeMath(raw || '');
+    const clean = putMath(window.DOMPurify.sanitize(window.marked.parse(text)), found);
     if (!clean.includes('<img')) return clean;
     const doc = new DOMParser().parseFromString(`<body>${clean}</body>`, 'text/html');
     doc.querySelectorAll('img').forEach(img => {
@@ -75,6 +126,11 @@
       newTab: () => (LOCAL ? `http://${location.hostname}/trading` : '/trading'),
     },
     router: { title: 'Router & token', path: '/router', loading: 'Membuka router model', src: () => '/router?embed=1', newTab: () => '/router' },
+    studio: {
+      title: 'Studio video', path: '/studio', loading: 'Membuka studio video',
+      src: () => `/studio?embed=1&session=${encodeURIComponent(S.studioSession || S.session || '')}${S.studioProject ? `&project=${encodeURIComponent(S.studioProject)}` : ''}`,
+      newTab: () => '/studio',
+    },
   };
   const viewFromPath = () => Object.keys(APPS).find(name => APPS[name].path === location.pathname.replace(/\/+$/, '')) || '';
   $('nav-trading').href = APPS.trading.newTab();
@@ -109,6 +165,12 @@
   });
 
   const shortModel = id => String(id || '').split('/').pop();
+  // "[web] Title" -> ['web', 'Title']: the tag says where a chat started; people read the title.
+  const splitTag = title => {
+    const m = /^\[(web|terminal|team)\]\s*/i.exec(title || '');
+    return m ? [m[1].toLowerCase(), title.slice(m[0].length)] : ['', title || ''];
+  };
+  const showTitle = title => { $('chat-title').textContent = splitTag(title)[1] || 'Chat'; };
   const formatTokens = n => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n || 0));
   const formatSeconds = ms => {
     const seconds = Math.round((ms || 0) / 1000);
@@ -170,6 +232,24 @@
     store.set('theme', theme);
     applyTheme(theme);
   };
+
+  /* Palette: the colour set from tokens.css, shared with the pages in the frames. */
+  function showPalette() {
+    const id = window.SquidPage ? SquidPage.getPalette() : 'laut';
+    const item = window.SquidPage ? SquidPage.paletteList().find(p => p.id === id) : null;
+    $('palette-label').textContent = `Palet: ${item ? item.label : id}`;
+    $('palette-swatch').dataset.palette = id;
+    document.querySelectorAll('#app-frames iframe').forEach(frame => tellFrame(frame, { type: 'sq-palette', palette: id }));
+  }
+  if (window.SquidPage && SquidPage.paletteMenu) SquidPage.paletteMenu($('pick-palette'), showPalette);
+  showPalette();
+
+  /* The empty chat greets by the time of day. */
+  (() => {
+    const hour = new Date().getHours();
+    $('hero-greet').textContent = hour < 4 ? 'Masih begadang?' : hour < 11 ? 'Selamat pagi' : hour < 15 ? 'Selamat siang'
+      : hour < 19 ? 'Selamat sore' : 'Selamat malam';
+  })();
 
   /* ── Models ───────────────────────────────────────── */
   function fillModelOptions(select, selected, withAuto) {
@@ -249,18 +329,27 @@
   function renderSessions() {
     const query = $('session-search').value.trim().toLowerCase();
     const list = $('session-list');
-    const shown = S.sessions.filter(s => !query || (s.title || '').toLowerCase().includes(query));
+    const pins = pinned();
+    const shown = S.sessions.filter(s => !query || (s.title || '').toLowerCase().includes(query))
+      .sort((a, b) => Number(pins.has(b.session_id)) - Number(pins.has(a.session_id)));
     if (!shown.length) {
       list.innerHTML = `<p class="session-none">${query ? 'Tidak ada yang cocok.' : 'Belum ada chat.'}</p>`;
       return;
     }
     let html = '';
     let group = '';
+    let n = 0;
     for (const s of shown) {
-      const label = groupLabel(s.updated_at);
+      const label = pins.has(s.session_id) ? 'Disematkan' : groupLabel(s.updated_at);
       if (label !== group) { html += `<div class="session-group">${label}</div>`; group = label; }
-      html += `<div class="session ${s.session_id === S.session ? 'active' : ''}" data-id="${esc(s.session_id)}">
-        <button class="session-open" title="${esc(s.title)}">${esc(s.title || 'Chat')}</button>
+      // "[web] Title": the place a chat started in becomes a small tag, the title stays readable.
+      const m = /^\[(web|terminal|team)\]\s*/i.exec(s.title || '');
+      const where = m ? m[1].toLowerCase() : '';
+      let title = (m ? (s.title || '').slice(m[0].length) : s.title) || 'Chat';
+      if (/^\[?\s*no answer\b/i.test(title)) title = 'Chat tanpa judul';   // an old title made from a failed reply
+      const tag = where ? `<span class="session-tag t-${where}" title="Dimulai dari ${where === 'web' ? 'web' : where === 'team' ? 'tim agent' : 'terminal'}">${where === 'terminal' ? 'cli' : where}</span>` : '';
+      html += `<div class="session ${s.session_id === S.session ? 'active' : ''}" data-id="${esc(s.session_id)}" style="--i:${Math.min(n++, 14)}">
+        <button class="session-open" title="${esc(s.title)} · klik kanan untuk menu">${pins.has(s.session_id) ? `<span class="session-pin" aria-label="disematkan">${icon('pin', 12)}</span>` : ''}${tag}<span class="session-name">${esc(title)}</span></button>
         <button class="session-del" aria-label="Hapus chat ${esc(s.title)}">${icon('trash', 14)}</button>
       </div>`;
     }
@@ -269,6 +358,7 @@
       const id = item.dataset.id;
       item.querySelector('.session-open').onclick = () => openSession(id);
       item.querySelector('.session-del').onclick = () => deleteSession(id);
+      if (window.SQMenu) window.SQMenu.on(item, () => sessionMenu(id));
     });
   }
   $('session-search').oninput = renderSessions;
@@ -303,6 +393,8 @@
     const data = await api('/api/session/new');
     S.session = data.session_id;
     store.set('session', S.session);
+    if (window.SQ.terminal) window.SQ.terminal.sessionChanged();
+    if (frames.studio) { S.studioProject = ''; S.studioSession = ''; tellFrame(frames.studio.frame, { type: 'sq-studio-open', session: S.session }); }
     $('chat-title').textContent = 'Chat baru';
     clearThread();
     await post('/api/model/select', { session_id: S.session, model_id: S.model }).catch(() => {});
@@ -320,7 +412,9 @@
       const data = await api(`/api/session/${encodeURIComponent(id)}/messages`);
       S.session = id;
       store.set('session', id);
-      $('chat-title').textContent = data.title || 'Chat';
+      if (window.SQ.terminal) window.SQ.terminal.sessionChanged();
+      if (frames.studio) { S.studioProject = ''; S.studioSession = ''; tellFrame(frames.studio.frame, { type: 'sq-studio-open', session: id }); }
+      showTitle(data.title || 'Chat');
       clearThread();
       for (const message of data.messages || []) {
         if (message.role === 'user') addUser(userLabel(message.content));
@@ -361,7 +455,45 @@
     bubble.className = 'bubble';
     bubble.textContent = text;
     row.appendChild(bubble);
+    // Like the big chat apps: copy the message, or put it back in the box to change and send again.
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    actions.innerHTML = `<button type="button" class="msg-act" data-act="copy" title="Salin" aria-label="Salin pesan">${icon('copy', 15)}</button>
+      <button type="button" class="msg-act" data-act="edit" title="Edit lalu kirim ulang" aria-label="Edit pesan">${icon('edit', 15)}</button>`;
+    actions.querySelector('[data-act="copy"]').onclick = e => copyText(text, e.currentTarget);
+    actions.querySelector('[data-act="edit"]').onclick = () => {
+      const input = $('input');
+      input.value = text.replace(/^(\[[^\]]+\] )+/, '');
+      autosize();
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      $('composer').classList.remove('sq-flash'); void $('composer').offsetWidth; $('composer').classList.add('sq-flash');
+    };
+    row.appendChild(actions);
     $('thread').appendChild(row);
+  }
+
+  /* The prompt that produced an answer: the user message right before it. */
+  function promptBefore(turnEl) {
+    let el = turnEl.previousElementSibling;
+    while (el && !el.classList.contains('turn-user')) el = el.previousElementSibling;
+    const bubble = el && el.querySelector('.bubble');
+    return bubble ? bubble.textContent : '';
+  }
+
+  /* Read an answer aloud with the browser's voice (Indonesian when the system has one). */
+  function speak(text, button) {
+    const synth = window.speechSynthesis;
+    if (!synth) { toast('Browser ini tidak punya suara bawaan.'); return; }
+    if (synth.speaking) { synth.cancel(); document.querySelectorAll('.msg-act.speaking').forEach(b => b.classList.remove('speaking')); return; }
+    const plain = String(text || '').replace(/```[\s\S]*?```/g, ' (kode) ').replace(/[#*_`>|]/g, ' ').replace(/\s+/g, ' ').trim();
+    const say = new SpeechSynthesisUtterance(plain.slice(0, 6000));
+    const voice = synth.getVoices().find(v => /^id/i.test(v.lang));
+    if (voice) say.voice = voice;
+    say.lang = voice ? voice.lang : 'id-ID';
+    say.onend = say.onerror = () => button.classList.remove('speaking');
+    button.classList.add('speaking');
+    synth.speak(say);
   }
 
   /* Files the agent shared come as Markdown images or links. Videos and audio need their own players. */
@@ -418,8 +550,21 @@
     });
   }
 
+  // Money and quantities line up on the right, so a laba rugi or neraca reads down its columns.
+  const NUMERIC_CELL = /^\(?[-+−]?\s*(Rp\.?\s*)?[\d.,]+(\s?%|\s?(unit|pcs|kg|jt|rb))?\)?$/i;
+  function enhanceTables(container) {
+    container.querySelectorAll('.prose table, table').forEach(table => {
+      if (table.dataset.enhanced) return;
+      table.dataset.enhanced = '1';
+      table.querySelectorAll('td').forEach(cell => {
+        if (NUMERIC_CELL.test(cell.textContent.trim())) cell.classList.add('num');
+      });
+    });
+  }
+
   function enhanceCode(container) {
     enhanceMedia(container);
+    enhanceTables(container);
     container.querySelectorAll('pre > code').forEach(code => {
       const pre = code.parentElement;
       if (pre.parentElement.classList.contains('code')) return;
@@ -451,6 +596,7 @@
     file_write: ['Menulis', 'edit', 'path'], file_patch: ['Mengedit', 'edit', 'path'],
     file_move: ['Memindahkan', 'edit', 'path'], file_delete: ['Menghapus', 'edit', 'path'],
     dir_create: ['Membuat folder', 'edit', 'path'], execute_command: ['Menjalankan', 'run', 'plain'],
+    terminal_run: ['Di terminal', 'run', 'plain'],
     run_checks: ['Menjalankan tes', 'run', 'plain'], aislop_scan: ['Memeriksa kualitas kode', 'run', 'plain'],
     web_research: ['Mencari dan membaca web', 'web', 'quote'], web_search: ['Mencari di web', 'web', 'quote'],
     web_read: ['Membuka', 'web', 'url'], git_status: ['Melihat status git', 'read', 'plain'],
@@ -651,6 +797,11 @@
           if (event.chars > 2000) li.querySelector('.step-meta').textContent = `${(event.chars / 1000).toFixed(1)} rb karakter`;
           setStatus(`${verb} ${target}`.trim(), true);
         } else if (event.kind === 'tool' && event.phase === 'start') {
+          // The agent typing into the Terminal panel (or a sudo command routed there): show it, so the
+          // user sees the command and can type a password.
+          if (window.SQ.terminal && (event.name === 'terminal_run' || (event.name === 'execute_command' && /(^|[\s;&|(])sudo\s/.test(event.detail || '')))) {
+            window.SQ.terminal.open({ focus: /sudo/.test(event.detail || '') });
+          }
           const { verb, group, target } = describeTool(event.name, event.detail);
           const li = stepRow(event.name, event.detail);
           const prepared = [...preparing.entries()].find(([, item]) => item.dataset.tool === event.name);
@@ -701,8 +852,25 @@
         if (tokens) bits.push(`<span>${formatTokens(tokens)} token</span>`);
         if (ms) bits.push(`<span>${formatSeconds(ms)}</span>`);
         if (stats.skills_used && stats.skills_used.length) bits.push(`<span>skill ${esc(stats.skills_used.join(', '))}</span>`);
-        foot.innerHTML = `${bits.join('<span class="sep">·</span>')}<button class="link-btn" type="button">Salin</button>`;
-        foot.querySelector('button').onclick = e => copyText(text || content, e.currentTarget);
+        foot.innerHTML = `<span class="foot-acts">
+            <button type="button" class="msg-act" data-act="copy" title="Salin jawaban" aria-label="Salin jawaban">${icon('copy', 15)}</button>
+            <button type="button" class="msg-act" data-act="retry" title="Coba lagi dengan pertanyaan yang sama" aria-label="Coba lagi">${icon('retry', 15)}</button>
+            <button type="button" class="msg-act" data-act="speak" title="Bacakan" aria-label="Bacakan">${icon('speak', 15)}</button>
+          </span><span class="foot-meta">${bits.join('<span class="sep">·</span>')}</span>`;
+        foot.querySelector('[data-act="copy"]').onclick = e => {
+          const b = e.currentTarget;
+          navigator.clipboard.writeText(text || content).then(() => { b.classList.add('done'); setTimeout(() => b.classList.remove('done'), 1400); })
+            .catch(() => toast('Tidak bisa menyalin.'));
+        };
+        foot.querySelector('[data-act="retry"]').onclick = () => {
+          const prompt = promptBefore(row);
+          if (!prompt) { toast('Pertanyaannya tidak ketemu.'); return; }
+          if (S.busy) { toast('Tunggu balasan selesai, atau tekan stop.'); return; }
+          $('input').value = prompt.replace(/^(\[[^\]]+\] )+/, '');
+          autosize();
+          sendMessage();
+        };
+        foot.querySelector('[data-act="speak"]').onclick = e => speak(text || content, e.currentTarget);
         foot.classList.remove('hidden');
       },
     };
@@ -772,7 +940,7 @@
         else if (m.type === 'thinking') turn.thinking(m.content);
         else if (m.type === 'reset') turn.reset();
         else if (m.type === 'progress') turn.progress(m);
-        else if (m.type === 'meta' && m.event === 'title' && m.session_id === S.session) $('chat-title').textContent = m.title;
+        else if (m.type === 'meta' && m.event === 'title' && m.session_id === S.session) showTitle(m.title);
         else if (m.type === 'done') {
           turn.finish();
           turn.foot({ model: m.model_used, tokens: m.total_tokens, ms: m.latency_ms, harness: m.harness });
@@ -819,8 +987,9 @@
       button.onclick = () => { S.attachments.splice(Number(button.dataset.remove), 1); renderChips(); };
     });
   }
-  $('file-input').onchange = async e => {
-    for (const file of e.target.files) {
+  $('file-input').onchange = async e => { await attachFiles(e.target.files); e.target.value = ''; };
+  async function attachFiles(fileList) {
+    for (const file of fileList) {
       try {
         const query = `name=${encodeURIComponent(file.name)}&session=${encodeURIComponent(S.session || '')}`;
         const response = await fetch(`/api/upload?${query}`, { method: 'POST', body: file });
@@ -832,9 +1001,8 @@
         else if (data.truncated) toast(`${file.name} panjang: teks lengkap tersimpan, AI membukanya saat perlu.`);
       } catch (err) { toast(`${file.name}: ${err.message}`); }
     }
-    e.target.value = '';
     renderChips();
-  };
+  }
 
   /* ── Session panel ────────────────────────────────── */
   const openCards = new Set((store.get('open-cards') || 'ponytail,graphify,aislop').split(',').filter(Boolean));
@@ -1073,6 +1241,7 @@
       f.state = 'ready';
       showAppState(f);
       tellFrame(f.frame, { type: 'sq-theme', theme });
+      if (window.SquidPage) tellFrame(f.frame, { type: 'sq-palette', palette: SquidPage.getPalette() });
       tellFrame(f.frame, { type: 'sq-visible', visible: S.view === f.name });
       const app = APPS[f.name];
       if (app.here && app.hint && !app.hintShown && S.view === f.name) { app.hintShown = true; toast(app.hint); }
@@ -1102,6 +1271,31 @@
     if (e.data.type === 'sq-ready') readyApp(f);
     else if (e.data.type === 'sq-models') refreshModels(true);
     else if (e.data.type === 'sq-nav' && (e.data.view === 'chat' || APPS[e.data.view])) showView(e.data.view);
+    else if (e.data.type === 'sq-chat' && typeof e.data.text === 'string' && e.data.text.trim()) {
+      // The Studio hands its notes to the agent: they go into this chat as a message.
+      showView('chat');
+      if (S.busy) { $('input').value = e.data.text; toast('Pesan dari Studio siap dikirim setelah balasan ini selesai.'); return; }
+      $('input').value = e.data.text;
+      sendMessage();
+    }
+  });
+
+  /** Open the Studio on a project: from a "see your video" button in a chat answer or a team result.
+   *  A team run keeps its video in the run's own folder, so the link names that session. */
+  function openStudio(project, session) {
+    S.studioProject = project || S.studioProject || '';
+    S.studioSession = session || '';
+    if (frames.studio) tellFrame(frames.studio.frame, { type: 'sq-studio-open', session: S.studioSession || S.session, project: S.studioProject });
+    showView('studio');
+  }
+  window.SQ_openStudio = openStudio;
+  document.addEventListener('click', e => {
+    const link = e.target instanceof Element ? e.target.closest('a[href]') : null;
+    if (!link || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const url = new URL(link.getAttribute('href'), location.href);
+    if (url.origin !== location.origin || url.pathname.replace(/\/+$/, '') !== '/studio' || link.closest('.rail-foot')) return;
+    e.preventDefault();
+    openStudio(url.searchParams.get('project') || '', url.searchParams.get('session') || '');
   });
   window.addEventListener('popstate', () => showView(viewFromPath() || 'chat', { fromHistory: true }));
 
@@ -1124,10 +1318,10 @@
     e.preventDefault();
     showView(link.dataset.view);
   }));
-  // Alt+1 chat, Alt+2 team, Alt+3 trading, Alt+4 router.
+  // Alt+1 chat, Alt+2 team, Alt+3 trading, Alt+4 router, Alt+5 studio.
   window.addEventListener('keydown', e => {
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
-    const name = { 1: 'chat', 2: 'team', 3: 'trading', 4: 'router' }[e.key];
+    const name = { 1: 'chat', 2: 'team', 3: 'trading', 4: 'router', 5: 'studio' }[e.key];
     if (name) { e.preventDefault(); showView(name); }
   });
 
@@ -1147,6 +1341,220 @@
   }
   setInterval(checkUpdate, 10 * 60 * 1000);
 
+  /* ── Chat comforts: pins, rename, export, command palette, drop, shortcuts ── */
+  // Pins are a per-browser convenience (localStorage): which chats stay at the top of this list.
+  function pinned() {
+    try { return new Set(JSON.parse(store.get('pinned-chats') || '[]')); } catch { return new Set(); }
+  }
+  function togglePin(id) {
+    const set = pinned();
+    if (set.has(id)) set.delete(id); else set.add(id);
+    store.set('pinned-chats', JSON.stringify([...set]));
+    renderSessions();
+  }
+  const titleOf = id => (S.sessions.find(s => s.session_id === id) || {}).title || 'Chat';
+
+  async function renameSession(id, title) {
+    let clean = String(title || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (!clean) return;
+    const [tag] = splitTag(titleOf(id));
+    if (tag && !splitTag(clean)[0]) clean = `[${tag}] ${clean}`;     // keep where it started
+    await post(`/api/session/${encodeURIComponent(id)}/title`, { title: clean });
+    const s = S.sessions.find(x => x.session_id === id);
+    if (s) s.title = clean;
+    if (id === S.session) showTitle(clean);
+    renderSessions();
+    toast('Nama chat diganti.');
+  }
+
+  /* The title in the top bar is editable in place: click it, type, Enter to keep, Esc to cancel. */
+  function editTitle(id = S.session) {
+    if (!id || S.view !== 'chat') return;
+    const h1 = $('chat-title');
+    if (h1.querySelector('input')) return;
+    const before = h1.textContent;
+    const input = document.createElement('input');
+    input.className = 'title-edit';
+    input.value = before === 'Chat baru' ? '' : before;
+    input.placeholder = 'Nama chat';
+    input.maxLength = 80;
+    input.setAttribute('aria-label', 'Nama chat');
+    h1.replaceChildren(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = keep => {
+      if (done) return;
+      done = true;
+      const next = input.value.trim();
+      h1.textContent = keep && next ? next : before;
+      if (keep && next && next !== before) renameSession(id, next).catch(e => { h1.textContent = before; toast(e.message); });
+    };
+    input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); finish(true); } else if (e.key === 'Escape') finish(false); };
+    input.onblur = () => finish(true);
+  }
+  $('chat-title').title = 'Klik untuk ganti nama';
+  $('chat-title').onclick = () => editTitle();
+
+  async function exportChat(id = S.session) {
+    try {
+      const data = await api(`/api/session/${encodeURIComponent(id)}/messages`);
+      const title = data.title || titleOf(id);
+      const lines = [`# ${title}`, '', `_Diekspor dari SquidWings, ${new Date().toLocaleString('id-ID')}_`, ''];
+      for (const m of data.messages || []) {
+        if (m.role === 'user') lines.push('## Kamu', '', userLabel(m.content), '');
+        else if (m.role === 'assistant') lines.push(`## Agent${m.model_used ? ` (${shortModel(m.model_used)})` : ''}`, '', m.content || '', '');
+      }
+      const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').slice(0, 60) || 'chat'}.md`;
+      document.body.append(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    } catch (e) { toast(e.message); }
+  }
+
+  function sessionMenu(id) {
+    const isPinned = pinned().has(id);
+    return [
+      { heading: titleOf(id).slice(0, 40) },
+      { label: 'Buka', run: () => openSession(id) },
+      { label: 'Ganti nama', hint: 'klik judul', run: async () => { if (id !== S.session) await openSession(id); editTitle(id); } },
+      { label: isPinned ? 'Lepas sematan' : 'Sematkan di atas', run: () => togglePin(id) },
+      { label: 'Ekspor Markdown', run: () => exportChat(id) },
+      { separator: true },
+      { label: 'Hapus chat', danger: true, run: () => deleteSession(id) },
+    ];
+  }
+
+  /* Command palette (Ctrl+K): every chat and every action, found by typing. */
+  const palette = { el: null, items: [], index: 0 };
+  function commands() {
+    const go = view => () => showView(view);
+    const list = [
+      { group: 'Aksi', label: 'Chat baru', hint: 'Ctrl+Shift+O', icon: 'plus', run: () => newChat().catch(e => toast(e.message)) },
+      { group: 'Aksi', label: 'Ganti nama chat ini', icon: 'edit', run: () => { showView('chat'); setTimeout(() => editTitle(), 60); } },
+      { group: 'Aksi', label: pinned().has(S.session) ? 'Lepas sematan chat ini' : 'Sematkan chat ini', icon: 'pin', run: () => togglePin(S.session) },
+      { group: 'Aksi', label: 'Ekspor chat ini (Markdown)', icon: 'download', run: () => exportChat() },
+      { group: 'Aksi', label: 'Lampirkan file', icon: 'clip', run: () => $('file-input').click() },
+      { group: 'Aksi', label: 'Buka terminal', hint: 'Ctrl+`', icon: 'terminal', run: () => $('open-terminal').click() },
+      { group: 'Aksi', label: 'Ganti tema', icon: 'theme', run: () => $('toggle-theme').click() },
+      { group: 'Aksi', label: 'Pintasan keyboard', hint: 'Ctrl+/', icon: 'keyboard', run: () => showShortcuts() },
+      { group: 'Halaman', label: 'Chat', hint: 'Alt+1', icon: 'chat', run: go('chat') },
+      { group: 'Halaman', label: 'Tim agent', hint: 'Alt+2', icon: 'team', run: go('team') },
+      { group: 'Halaman', label: 'Trading', hint: 'Alt+3', icon: 'chart', run: go('trading') },
+      { group: 'Halaman', label: 'Router & token', hint: 'Alt+4', icon: 'router', run: go('router') },
+      { group: 'Halaman', label: 'Studio video', hint: 'Alt+5', icon: 'film', run: go('studio') },
+    ];
+    if (window.SquidPage) for (const p of SquidPage.paletteList()) {
+      list.push({ group: 'Palet warna', label: `Palet ${p.label}`, icon: 'theme', run: () => { SquidPage.applyPalette(p.id, true); showPalette(); } });
+    }
+    for (const s of S.sessions) list.push({ group: 'Chat', label: s.title || 'Chat', icon: pinned().has(s.session_id) ? 'pin' : 'chat', run: () => openSession(s.session_id) });
+    return list;
+  }
+  function openPalette() {
+    if (palette.el) { closePalette(); return; }
+    const wrap = document.createElement('div');
+    wrap.className = 'cmdk';
+    wrap.innerHTML = `<div class="cmdk-box" role="dialog" aria-label="Palet perintah">
+        <div class="cmdk-search">${icon('search', 18)}<input type="text" placeholder="Cari chat, halaman, atau aksi…" aria-label="Cari perintah" autocomplete="off"><kbd>Esc</kbd></div>
+        <div class="cmdk-list" role="listbox"></div>
+        <div class="cmdk-foot"><span><kbd>↑</kbd><kbd>↓</kbd> pilih</span><span><kbd>Enter</kbd> buka</span><span><kbd>Ctrl</kbd><kbd>K</kbd> tutup</span></div>
+      </div>`;
+    document.body.append(wrap);
+    palette.el = wrap;
+    const input = wrap.querySelector('input');
+    const all = commands();
+    const render = () => {
+      const q = input.value.trim().toLowerCase();
+      const words = q.split(/\s+/).filter(Boolean);
+      palette.items = all.filter(c => words.every(w => `${c.label} ${c.group}`.toLowerCase().includes(w))).slice(0, 60);
+      palette.index = Math.min(palette.index, Math.max(0, palette.items.length - 1));
+      let group = '';
+      const listEl = wrap.querySelector('.cmdk-list');
+      listEl.innerHTML = palette.items.length ? palette.items.map((c, i) => {
+        const head = c.group !== group ? `<div class="cmdk-group">${esc((group = c.group))}</div>` : '';
+        return `${head}<button type="button" class="cmdk-item${i === palette.index ? ' on' : ''}" data-i="${i}" role="option" aria-selected="${i === palette.index}">
+          ${icon(c.icon || 'chevron', 16)}<span>${esc(c.label)}</span>${c.hint ? `<kbd>${esc(c.hint)}</kbd>` : ''}</button>`;
+      }).join('') : '<p class="cmdk-none">Tidak ada yang cocok.</p>';
+      listEl.querySelectorAll('.cmdk-item').forEach(b => {
+        b.onclick = () => runPalette(Number(b.dataset.i));
+        b.onmousemove = () => { if (palette.index !== Number(b.dataset.i)) { palette.index = Number(b.dataset.i); mark(); } };
+      });
+    };
+    const mark = () => wrap.querySelectorAll('.cmdk-item').forEach(b => {
+      const on = Number(b.dataset.i) === palette.index;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', String(on));
+      if (on) b.scrollIntoView({ block: 'nearest' });
+    });
+    input.oninput = () => { palette.index = 0; render(); };
+    input.onkeydown = e => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); palette.index = Math.min(palette.items.length - 1, palette.index + 1); mark(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); palette.index = Math.max(0, palette.index - 1); mark(); }
+      else if (e.key === 'Enter') { e.preventDefault(); runPalette(palette.index); }
+      else if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+    };
+    wrap.onmousedown = e => { if (e.target === wrap) closePalette(); };
+    palette.index = 0;
+    render();
+    input.focus();
+  }
+  function closePalette() { if (palette.el) { palette.el.remove(); palette.el = null; } }
+  function runPalette(i) {
+    const c = palette.items[i];
+    closePalette();
+    if (c) c.run();
+  }
+
+  function showShortcuts() {
+    if (document.querySelector('.kbd-sheet')) return;
+    const rows = [
+      ['Ctrl+K', 'Palet perintah: cari chat dan aksi'], ['Ctrl+Shift+O', 'Chat baru'], ['Ctrl+B', 'Tampilkan/sembunyikan daftar chat'],
+      ['Ctrl+`', 'Terminal'], ['Alt+1 … Alt+5', 'Chat, tim, trading, router, studio'], ['Enter', 'Kirim'], ['Shift+Enter', 'Baris baru'],
+      ['Esc', 'Tutup panel atau menu'], ['Ctrl+/', 'Daftar ini'], ['Klik kanan chat', 'Ganti nama, sematkan, ekspor, hapus'],
+    ];
+    const wrap = document.createElement('div');
+    wrap.className = 'cmdk kbd-sheet';
+    wrap.innerHTML = `<div class="cmdk-box" role="dialog" aria-label="Pintasan keyboard"><h2>Pintasan keyboard</h2>
+      <dl>${rows.map(([k, v]) => `<div><dt>${k.split(/(\s…\s|\+)/).map(x => (x === '+' || x.includes('…') ? esc(x) : `<kbd>${esc(x)}</kbd>`)).join('')}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>
+      <button type="button" class="btn btn-primary">Mengerti</button></div>`;
+    const close = () => { wrap.remove(); document.removeEventListener('keydown', onKey, true); };
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    wrap.querySelector('button').onclick = close;
+    wrap.onmousedown = e => { if (e.target === wrap) close(); };
+    document.addEventListener('keydown', onKey, true);
+    document.body.append(wrap);
+    wrap.querySelector('button').focus();
+  }
+
+  $('open-cmdk').onclick = () => openPalette();
+  window.addEventListener('keydown', e => {
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
+    else if (mod && e.key === '/') { e.preventDefault(); showShortcuts(); }
+    else if (mod && e.shiftKey && e.key.toLowerCase() === 'o') { e.preventDefault(); newChat().catch(err => toast(err.message)); }
+    else if (e.key === 'Escape' && palette.el) closePalette();
+  });
+
+  /* Drop files anywhere on the chat to attach them. */
+  (() => {
+    const view = $('view-chat');
+    let depth = 0;
+    const hasFiles = e => [...(e.dataTransfer && e.dataTransfer.types || [])].includes('Files');
+    view.addEventListener('dragenter', e => { if (!hasFiles(e)) return; e.preventDefault(); depth += 1; view.classList.add('drop-on'); });
+    view.addEventListener('dragover', e => { if (hasFiles(e)) e.preventDefault(); });
+    view.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) view.classList.remove('drop-on'); });
+    view.addEventListener('drop', e => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      view.classList.remove('drop-on');
+      attachFiles(e.dataTransfer.files);
+    });
+  })();
+
   /* ── Start ────────────────────────────────────────── */
   // /trading and /router open straight on that page; the chat loads behind it.
   S.booting = true;
@@ -1156,7 +1564,7 @@
       const config = await api('/api/config').catch(() => ({ features: {} }));
       S.features = config.features || {};
       $('nav-team').classList.toggle('hidden', S.features.teams === false);
-      // Trading is the Enterprise module: without it the link goes, and /trading shows what it is.
+      // Trading is an optional module: without it the link goes, and /trading shows what it is.
       $('nav-trading').classList.toggle('hidden', S.features.trading === false);
       await loadModels();
       await loadSessions();

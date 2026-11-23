@@ -141,7 +141,7 @@ async def _test_voice() -> str:
     """List the account's voices: proves the key works without spending a character."""
     from tool.execute.execute_toolbox import voice_tools
 
-    out = await voice_tools.voice_list()
+    out = await voice_tools.voice_list(engine="elevenlabs")
     if not out.get("ok"):
         raise OutputError(out.get("error") or voice_tools.SETUP)
     quota = out.get("quota") or {}

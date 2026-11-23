@@ -86,7 +86,7 @@ class CommandExecutor:
     """
 
     DEFAULT_TIMEOUT: float = 30.0
-    MAX_OUTPUT_SIZE: int = 100_000  # 100KB max output
+    MAX_OUTPUT_SIZE: int = 4_000_000  # whole output; only the provider's context window limits the model
 
     def __init__(
         self,

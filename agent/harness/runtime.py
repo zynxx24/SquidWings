@@ -64,29 +64,21 @@ class RunLimits:
     extra_tools: tuple[str, ...] = ()
 
     def apply(self, scaffold: Scaffold) -> Scaffold:
-        if self.override_tier:
-            return replace(
-                scaffold,
-                max_iterations=self.max_rounds,
-                context_chars=self.context_chars,
-                tool_result_chars=self.tool_result_chars,
-                max_tools=None if scaffold.max_tools is None else max(scaffold.max_tools, self.max_tools),
-                briefing_chars=self.briefing_chars,
-                skill_chars=self.skill_chars,
-                verify_rounds=min(scaffold.verify_rounds, 1),
-                advisor_calls=0,
-            )
-        return replace(
-            scaffold,
-            max_iterations=min(scaffold.max_iterations, self.max_rounds),
-            context_chars=min(scaffold.context_chars, self.context_chars),
-            tool_result_chars=min(scaffold.tool_result_chars, self.tool_result_chars),
-            max_tools=min(self.max_tools if scaffold.max_tools is None else scaffold.max_tools, self.max_tools),
-            briefing_chars=min(scaffold.briefing_chars, self.briefing_chars),
-            skill_chars=min(scaffold.skill_chars, self.skill_chars),
+        """A shared run keeps its rounds, tokens and time budget, but never sees less than the tier allows:
+        what a model may read (context, tool results, tools, briefing, skills) is only ever raised here,
+        because the owner's rule is that only the provider's context window limits it."""
+        more = dict(
+            context_chars=max(scaffold.context_chars, self.context_chars),
+            tool_result_chars=max(scaffold.tool_result_chars, self.tool_result_chars),
+            # 0 is a deliberate "answer without tools" (a gate), not a size limit
+            max_tools=0 if self.max_tools == 0 else None if scaffold.max_tools is None else max(scaffold.max_tools, self.max_tools),
+            briefing_chars=max(scaffold.briefing_chars, self.briefing_chars),
+            skill_chars=max(scaffold.skill_chars, self.skill_chars),
             verify_rounds=min(scaffold.verify_rounds, 1),
             advisor_calls=0,
         )
+        rounds = self.max_rounds if self.override_tier else min(scaffold.max_iterations, self.max_rounds)
+        return replace(scaffold, max_iterations=rounds, **more)
 
     def exceeded(self, tokens_used: int) -> bool:
         return tokens_used >= self.tokens or time.time() >= self.deadline
@@ -126,6 +118,9 @@ class Harness:
     text_tools: bool = False
     workspace: str = ""
     advisor_model: str | None = None
+    # A strong model on another provider, for writing the answer when this one fails after tool work
+    # (its provider ran out of accounts or quota, which a retry on the same model cannot fix).
+    recovery_model: str | None = None
     max_output: int = 0
     on_event: Callable[[dict[str, Any]], None] | None = None
     on_reset: Callable[[], None] | None = None

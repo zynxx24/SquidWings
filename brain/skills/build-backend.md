@@ -2,7 +2,8 @@
 name: build-backend
 description: Build backends with sound validation, auth, data access, and error handling.
 tasks: code, activity
-triggers: backend, api, rest, endpoint, database, server, auth, login, sql, migration, migrasi, fastapi, express, django, flask, graphql, webhook, queue
+triggers: backend, api, rest, endpoint, database, server, auth, login, sql, migration, migrasi, fastapi, express, django, flask, graphql, webhook, queue, laravel, php, artisan, composer, mysql, postgres
+tools: terminal_run, preview_url
 ---
 # Building a backend
 
@@ -20,7 +21,17 @@ triggers: backend, api, rest, endpoint, database, server, auth, login, sql, migr
 
 **Secrets and config.** Read them from the environment, keep them out of git and logs, and provide an `.env.example`. Default to the safe option: CORS allowlist rather than `*`, debug mode off.
 
+**System setup and running it.** Packages, PHP extensions, database servers and services need root: just run them
+with `sudo` (`sudo apt-get install -y php8.3-xml php8.3-mysql`, `sudo systemctl start mysql`). With the sudo
+password saved by the owner (Kredensial → Sistem) they run by themselves; otherwise they open in the Terminal panel
+for the user to type it — never ask for it in the chat. Start the app with `terminal_run`
+(`php artisan serve --host=127.0.0.1 --port=8000`, `uvicorn app:app --port 8001`), then `preview_url(port)` and
+give the user the link. For Laravel load the `laravel` skill: it has the full path from an empty machine to a
+running app and the fixes for the errors that always come up.
+
 **Verify.** Run `run_checks`, then call the endpoint for real: the success case, invalid input, no auth, and someone else's record. Test the data layer against a real database when you can, because mocks hide query bugs.
+
+**Then attack it.** An API that works is not an API that is safe. For auth, data, or file endpoints, run the `redhat` skill (`load_skill("redhat")`): it exploits the running app for SQL injection, missing authorization/IDOR, command injection, SSRF, and secret leaks, then fixes each and re-tests until a full pass is clean.
 
 ## How to think this through
 

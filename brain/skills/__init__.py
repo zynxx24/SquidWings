@@ -22,6 +22,10 @@ an awake contextual skill must be offered, even on a small model's short list.
 From then on it stays active for that session only, so "lanjutkan" does not
 lose it halfway, and other chats never see it.
 
+``scope: always`` is a short rule set that is in every prompt its ``tasks`` cover,
+whatever the request says, small model or frontier, tools or none. Keep such a
+body under ``ALWAYS_MAX_CHARS``: every request pays for it.
+
 A skill with ``companion: build-web, animate`` is built in to those works: it is
 always added when one of them is picked, or when its own triggers match, on top
 of the usual limit. ``aislop`` is one: every web page, video or image comes with
@@ -39,7 +43,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -48,6 +52,8 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 _BUILTIN_DIR = Path(__file__).resolve().parent
+ALWAYS_MAX_CHARS = 40_000
+_SCOPES = ("core", "contextual", "always")
 
 
 @dataclass(frozen=True)
@@ -102,7 +108,7 @@ def _parse(path: Path) -> Skill | None:
         from config.edition import trading_enabled
 
         if not trading_enabled():
-            return None   # an Enterprise skill whose module is not installed
+            return None   # a trading skill whose module is not installed
     folder = path.name == "SKILL.md"
     return Skill(
         name=fields["name"],
@@ -110,7 +116,7 @@ def _parse(path: Path) -> Skill | None:
         triggers=tuple(t.strip().lower() for t in fields.get("triggers", "").split(",") if t.strip()),
         body=match.group(2).strip(),
         requires=tuple(r.strip() for r in fields.get("requires", "").split(",") if r.strip()),
-        scope="contextual" if fields.get("scope", "").lower() == "contextual" else "core",
+        scope=scope if (scope := fields.get("scope", "").lower()) in _SCOPES else "core",
         context=tuple(c.strip().lower() for c in fields.get("context", "").split(",") if c.strip()),
         tasks=tuple(t.strip().lower() for t in fields.get("tasks", "").split(",") if t.strip()),
         tools=tuple(t.strip() for t in fields.get("tools", "").split(",") if t.strip()),
@@ -135,8 +141,25 @@ def load_all() -> dict[str, Skill]:
                 logger.warning(f"[skills] could not read {path}: {exc}")
                 continue
             if skill and skill.name.lower() not in disabled:
+                if skill.scope == "always" and len(skill.body) > ALWAYS_MAX_CHARS:
+                    logger.warning(f"[skills] {skill.name} is scope: always but {len(skill.body)} chars; kept as core")
+                    skill = replace(skill, scope="core")
                 skills[skill.name] = skill
     return skills
+
+
+def always(task: str = "") -> list[Skill]:
+    """Skills that are in every prompt of this kind of task."""
+    return [
+        s for s in load_all().values()
+        if s.scope == "always" and not (task and s.tasks and task not in s.tasks)
+    ]
+
+
+def always_text(task: str = "") -> str:
+    """The always-on rules for this task, ready for the system prompt. Empty when there are none."""
+    bodies = [s.body for s in always(task)]
+    return "\n\n" + "\n\n".join(bodies) if bodies else ""
 
 
 def _hits(words: tuple[str, ...], text: str) -> int:
@@ -168,6 +191,8 @@ def select(user_input: str, limit: int = 2, active: tuple[str, ...] | list[str] 
     awake = set(active) | set(woken(user_input, task))
     scored: list[tuple[int, Skill]] = []
     for skill in load_all().values():
+        if skill.scope == "always":
+            continue   # already in the prompt through always_text
         if skill.scope == "contextual" and skill.name not in awake:
             continue
         if task and skill.tasks and task not in skill.tasks:
@@ -199,6 +224,8 @@ def visible(active: tuple[str, ...] | list[str] = (), task: str = "") -> list[Sk
     """Skills the model is told about: core ones meant for this task, plus contextual ones awake in the session."""
     out = []
     for s in load_all().values():
+        if s.scope == "always":
+            continue   # its rules are already in the prompt
         if s.scope == "contextual" and s.name not in active:
             continue
         if task and s.tasks and task not in s.tasks and s.name not in active:
@@ -242,4 +269,4 @@ def install(skill: Skill, workspace: Path, session_id: str) -> Path:
     return target
 
 
-__all__ = ["Skill", "index_text", "install", "load_all", "select", "tools_for", "visible", "woken"]
+__all__ = ["Skill", "always", "always_text", "index_text", "install", "load_all", "select", "tools_for", "visible", "woken"]

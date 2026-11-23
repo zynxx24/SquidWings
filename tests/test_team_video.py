@@ -35,15 +35,15 @@ def test_video_limits_lift_a_cheap_models_caps():
                       context_chars=60_000, tool_result_chars=16_000, max_tools=16, skill_chars=7_000)
     applied = video.apply(lite)
     assert applied.max_iterations == 40 > lite.max_iterations
-    assert applied.skill_chars == 7_000 and applied.tool_result_chars == 16_000
-    assert applied.max_tools == 16 and applied.advisor_calls == 0
+    assert applied.skill_chars >= 7_000 and applied.tool_result_chars >= 16_000   # never below the tier
+    assert applied.max_tools is None and applied.advisor_calls == 0
 
 
 def test_ordinary_limits_still_only_shrink():
     lite = scaffold_for("x-flash")
     applied = RunLimits(max_rounds=40, tokens=1, deadline=0).apply(lite)
-    assert applied.max_iterations == lite.max_iterations
-    assert applied.skill_chars <= lite.skill_chars
+    assert applied.max_iterations == min(lite.max_iterations, 40)
+    assert applied.skill_chars == lite.skill_chars
 
 
 def test_budget_share_counts_tokens_rounds_and_time():

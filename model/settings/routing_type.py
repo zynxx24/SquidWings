@@ -8,6 +8,11 @@ routing configuration with difficulty-based escalation:
   medium → any model that is not top tier
   hard   → the strongest models listed
 
+``ROUTING_QUALITY=max`` sends every task to the strongest tier (Opus, Fable, GPT-6 sol), for
+answers at frontier level whatever the difficulty estimate says; ``balanced`` (default) is the
+table above. It applies only to a chat on "Auto" (``auto=True``): a model the user picked, the
+advisor lookup and fallbacks route as usual. A model pinned in models_config.yaml always wins.
+
 No model is named in the code. A task can pin one in models_config.yaml, and otherwise the choice
 comes from what the endpoint lists.
 """
@@ -151,6 +156,7 @@ class RoutingType:
         task_type: TaskType,
         difficulty: Difficulty = Difficulty.EASY,
         healthy_models: list[str] | None = None,
+        auto: bool = False,
     ) -> ModelInfo | None:
         """Select the best model for a task.
 
@@ -173,6 +179,12 @@ class RoutingType:
 
         # Get the model ID for the requested difficulty
         model_id = task_config.get(difficulty.value)
+
+        if auto and not model_id and os.getenv("ROUTING_QUALITY", "balanced").strip().lower() == "max":
+            strongest = self._strongest(healthy_models)
+            if strongest is not None:
+                logger.info(f"[router] Quality max: {task_type.value}/{difficulty.value} → {strongest.id}")
+                return strongest
 
         if not model_id:
             # Fall back to default difficulty

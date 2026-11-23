@@ -44,6 +44,7 @@ from agent.team_outputs import (
 )
 from config import credentials
 from config.constants import ResponseStatus
+from config.edition import STUDIO_NOTE, studio_enabled, studio_module
 from utils import session_settings, shared_files, workspace_context
 from utils.datastore import access as data_access
 from utils.datastore.access import Access
@@ -59,7 +60,9 @@ from utils.workspace_context import (
 
 logger = get_logger(__name__)
 MAX_TEAM_MEMBERS = 12
-TEAM_MODES = ("standard", "video")
+TEAM_MODES = ("standard", "video", "motion")
+# "motion": the team builds a Studio video (motion.json) the user can then edit and comment on.
+STUDIO_SKILL = "studio"
 VIDEO_SKILL = "animate"
 MAX_AGENTS = 6
 SCHEDULE_CHECK_SECONDS = 30
@@ -67,9 +70,9 @@ TELEGRAM_IDLE_SECONDS = 30
 # A schedule this late was missed, say the server was off. Running it now would surprise.
 SCHEDULE_LATE_SECONDS = 300
 GATE_TOKENS = 8_000
-MAX_CONTEXT_CHARS = 24_000
-MAX_DRAFT_CHARS = 40_000
-MAX_REPORT_CHARS = 8_000
+MAX_CONTEXT_CHARS = 1_000_000
+MAX_DRAFT_CHARS = 1_000_000
+MAX_REPORT_CHARS = 200_000
 MAX_REVIEW_ROUNDS = 1
 # Workers stop here, so the lead always has time to write the answer.
 WORKER_SHARE_OF_RUN = 0.7
@@ -230,6 +233,7 @@ class Team:
     schedule: dict[str, Any] = field(default_factory=lambda: {"mode": "off"})
     last_scheduled_at: float | None = None
     # "video" gives every agent the time to build and render, and wakes the animate skill.
+    # "motion" gives the same time and wakes the studio skill: the result opens in the video editor.
     mode: str = "standard"
 
 
@@ -537,7 +541,47 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
         "Pakai time_now untuk memastikan hari dan jam. "
     )
 
-    return [
+    # Optional Studio module: a team that builds an editable video in the Studio.
+    motion_studio = [
+        {
+            "key": "motion-studio",
+            "name": "Studio motion (bisa diedit)",
+            "description": (
+                "Penulis menyusun adegan, desainer memilih arah visual, animator membangun video di Studio, "
+                "pemeriksa melihat cuplikan dan membereskan masalah. Hasilnya dibuka di editor video: geser, "
+                "ubah keyframe, beri catatan, lalu ekspor MP4."
+            ),
+            "members": [
+                {**member("script", "Penulis adegan", "Menyusun daftar adegan, teks, dan durasi", mid),
+                 "instructions": (
+                     "Tulis daftar adegan untuk video Studio: tujuan video dan penontonnya, ukuran (9:16, 16:9, 1:1), "
+                     "durasi total, lalu tiap adegan dengan detik mulai-selesai, teks persis yang tampil (sekitar 3 kata "
+                     "per detik), elemen visual, dan gerak masuk-keluar. Pakai isi nyata dari tugas, tanpa klaim "
+                     "atau angka karangan.")},
+                {**member("designer", "Desainer", "Memilih arah visual video", lite, "script"),
+                 "instructions": (
+                     f"{visual('video')} Tulis palet hex (latar, teks, aksen), dua font Google, gaya bentuk, dan "
+                     "aturan gerak (ease, jeda antar elemen). Cek kontras teks dengan contrast_check.")},
+                {**member("animator", "Animator Studio", "Membangun video di Studio dari adegan dan arah visual", top,
+                          "script", "designer"),
+                 "instructions": (
+                     "Pakai skill studio. studio_create(nama, width, height, fps, duration), lalu tulis seluruh video "
+                     "dengan studio_save: satu lapisan per elemen, id yang jelas (judul, sub, logo, cta), keyframe "
+                     "untuk setiap gerak, fonts diisi. Perbaiki setiap fix_first dari hasil cek lalu simpan lagi.")},
+                {**member("checker", "Pemeriksa", "Melihat cuplikan, membereskan masalah, dan menyerahkan", mid, "animator"),
+                 "instructions": (
+                     "Pakai skill studio. studio_check dan studio_still pada momen penting setiap adegan. Perbaiki "
+                     "teks terpotong, bertumpuk, kurang kontras, atau terlalu cepat dengan studio_get lalu "
+                     "studio_save. Tulis ringkasan adegan dan detiknya, dan beri tahu pengguna bahwa video bisa "
+                     "diedit dan diberi catatan di Studio.")},
+            ],
+            "lead_id": "checker",
+            "reviewer_id": None,
+            "mode": "motion",
+        },
+    ] if studio_enabled() else []
+
+    return [*motion_studio,
         {
             "key": "reminder",
             "name": "Alarm bangun dan pengingat jadwal",
@@ -1225,11 +1269,13 @@ class TeamOrchestrator:
         mode = mode or "standard"
         if mode not in TEAM_MODES:
             raise ValueError(f"Mode tim tidak dikenal: {mode}.")
+        if mode == "motion" and not studio_enabled():
+            raise ValueError(STUDIO_NOTE)
         return mode
 
     @staticmethod
     def _budget(team: Team) -> dict[str, Any]:
-        if team.mode == "video":
+        if team.mode in ("video", "motion"):
             return {
                 "mode": "video",
                 "run_seconds": credentials.number("team_video_run_seconds"),
@@ -1382,6 +1428,8 @@ class TeamOrchestrator:
         self._workspaces[run.id] = Path(stack.workspace)
         if team.mode == "video":
             session_settings.activate_skills(stack.workspace, [VIDEO_SKILL])
+        elif team.mode == "motion":
+            session_settings.activate_skills(stack.workspace, [STUDIO_SKILL])
         try:
             if team.mode == "video":
                 free = free_bytes(stack.workspace)
@@ -1443,6 +1491,7 @@ class TeamOrchestrator:
                     logger.info("[teams] Run %s: shared %s, which no agent had shared", run_id, rendered[0])
             # A revision or a fallback answer can drop the video an agent shared earlier in the run.
             run.result = f"{run.result}{shared_files.missing_from(stack.workspace, run.id, run.result)}".strip()
+            run.result = f"{run.result}{self._studio_buttons(Path(stack.workspace), run)}".strip()
             run.status = "completed"
             if team.mode == "video" and not self._has_video(stack.workspace):
                 # Agents can finish with a report and no file. That is not a finished video.
@@ -1553,6 +1602,24 @@ class TeamOrchestrator:
             return None, f"export.mjs selesai tanpa {target}/renders/share.mp4."
         logger.info("[teams] Run %s: rendered %s after the agents stopped", run_id, video)
         return str(video.relative_to(workspace)), ""
+
+    @staticmethod
+    def _studio_buttons(workspace: Path, run: TeamRun) -> str:
+        """A 'see your video' button for every Studio video this run made or changed, if the answer lacks one."""
+        from urllib.parse import urlencode
+
+        studio_doc = studio_module("utils.studio_doc")
+        if studio_doc is None:
+            return ""
+
+        lines = []
+        for project in studio_doc.projects(workspace):
+            if project["modified"] < (run.started_at or 0) - 1:
+                continue
+            link = f"/studio?{urlencode({'session': run.id, 'project': project['name']})}"
+            if link not in (run.result or ""):
+                lines.append(f"[▶ Lihat & edit video \"{project['name']}\" di Studio]({link})")
+        return ("\n\n" + "\n\n".join(lines)) if lines else ""
 
     @staticmethod
     def _has_video(workspace: Any) -> bool:

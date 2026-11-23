@@ -27,6 +27,8 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
+from utils import latex_text
+
 # Common file extensions to programming language mapping
 LANG_EXTENSIONS: dict[str, str] = {
     "py": "python",
@@ -379,7 +381,7 @@ def render_terminal_markdown(
     tracker.clear()
 
     # Pre-clean markdown for Rich Markdown compatibility if needed
-    cleaned_text = _normalize_markdown(text)
+    cleaned_text = _normalize_markdown(latex_text.to_text(text))
     md = CustomTerminalMarkdown(cleaned_text, code_theme=config.syntax_theme)
     console.print(md)
 

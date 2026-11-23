@@ -244,6 +244,16 @@ def usage(period: str = Query("24h"), group: str = Query("provider")) -> dict[st
     return data
 
 
+@router.get("/recent")
+def recent(limit: int = Query(30, ge=1, le=200)) -> dict[str, Any]:
+    """The newest model requests for the live list on the usage page."""
+    names = {p.id: p.name for p in get_store().providers()}
+    rows = usage_log.get_usage_log().recent(limit)
+    for row in rows:
+        row["provider_name"] = names.get(row["provider"], row["provider"])
+    return {"rows": rows}
+
+
 @router.get("/prices")
 def prices() -> dict[str, Any]:
     """The price used for every model that has tokens, plus the ones typed on the page. USD per 1M tokens."""

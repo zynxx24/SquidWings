@@ -4,7 +4,7 @@ description: Video dan audio - unduh video, audio, atau subtitle dari link (yt-d
 triggers: youtube, unduh video, download video, download audio, unduh lagu, mp3, subtitle, subtitel, takarir, transkrip, transkripsi, transcribe, transcript, speech to text, suara ke teks, whisper, yt-dlp, hyperframes, remotion, render video, bikin video, buat video, video intro, video explainer, video promosi, caption video, video vertikal, reels, shorts
 scope: contextual
 context: video, audio, mp4, mp3, link, youtube, youtu.be, tiktok, instagram, rekaman, podcast, wawancara, rapat, kuliah, intro, explainer, caption, subtitle, render, klip, clip, reels, shorts, durasi, detik, menit
-tools: media_tools_status, media_info, media_download, transcribe, video_new, video_docs, video_check, video_render, share_file, read_file, file_write, file_patch, style_pick, voice_speak, aislop_scan
+tools: media_tools_status, media_info, media_download, transcribe, video_new, video_docs, video_check, video_render, share_file, read_file, file_write, file_patch, style_pick, voice_speak, voice_list, aislop_scan
 ---
 # Video dan audio
 
@@ -38,9 +38,55 @@ Alur:
 
 1. `video_new(name="videos/<nama>", engine=...)`. HyperFrames: `resolution="portrait"` untuk Reels/Shorts/TikTok, `audio="<file>"` untuk membangun video dari narasi (ditranskripsi untuk caption).
 2. **HyperFrames:** baca `video_docs("data-attributes")` dan `video_docs("compositions")`, lalu `AGENTS.md` di folder proyek, sebelum menulis `index.html`. Animasi memakai GSAP (`video_docs("gsap")`), audio lihat `video_docs("audio")`. **Remotion:** komposisi didaftarkan di `src/Root.tsx`, komponennya di `src/`. Kalau perlu referensi, `web_read` ke https://www.remotion.dev/docs.
-3. Gaya visual: `style_pick(medium="video")` supaya tiap video terlihat berbeda. Narasi: `voice_speak` (ElevenLabs) lalu masukkan MP3-nya sebagai audio.
+3. Gaya visual: `style_pick(medium="video")` supaya tiap video terlihat berbeda. Narasi: lihat **Suara** di bawah.
 4. `video_check(project)`: perbaiki setiap error. Untuk Remotion, ini juga mendaftar id komposisinya.
 5. Bilang ke pengguna bahwa render dimulai, lalu `video_render(project)`. Untuk Remotion dengan beberapa komposisi, isi `composition`. Hasilnya `renders/<nama>.mp4` dan langsung tampil di chat.
 6. Jalankan `aislop_scan` untuk kode yang kamu tulis, dan perbaiki temuannya.
 
 Kalau render gagal, baca `log_tail`, perbaiki penyebabnya, dan render lagi. Jangan menurunkan kualitas hanya untuk menyembunyikan error.
+
+## Suara (voice-over) — selalu bisa, gratis
+
+`voice_speak(text, output)` membuat MP3. Tanpa key ElevenLabs ia memakai suara neural Edge **gratis**:
+`id-ID-GadisNeural` (wanita) dan `id-ID-ArdiNeural` (pria) untuk Indonesia, atau `voice="pria"`/`"wanita"`;
+300+ suara lain lewat `voice_list(search="en-US")`. Dengan key ElevenLabs suaranya lebih natural (berbayar).
+
+- Tulis naskah seperti diucapkan: angka dan singkatan dieja ("dua puluh lima ribu", "Es Ka Te").
+- Panjang bebas, tidak perlu dipotong. Ubah tempo dengan `speed` (0.9 tenang, 1.1 iklan), warna suara Edge dengan `pitch`.
+- Selain MP3, Edge menulis `<nama>.srt` dan `<nama>.words.json` (setiap kata dengan detik mulai/selesai): pakai itu
+  untuk caption yang pas dengan suara dan untuk menentukan durasi video. Jangan menebak durasi.
+- Musik latar: file milik pengguna atau berlisensi bebas; volume 0.15–0.25 di bawah suara.
+
+## Remotion (React) — pakai kit, jangan mulai dari nol
+
+`video_new(name, engine="remotion")` sekarang menyalin template dari cache (detik, bukan menit) dan memasang
+**`src/kit`**: baca `src/kit/README.md` dulu. Komponen siap: `<Voice file="voice.mp3"/>`, `<Captions words={words}/>`
+(sinkron per kata, kata yang diucapkan menyala), `<Title text sub/>` (kata muncul dengan spring), `<KenBurns file/>`,
+`<Backdrop/>`, hook `useEnter`, `useExit`, `useSec`.
+
+Resep video narasi (Reels/TikTok 1080×1920, 30 fps):
+
+1. `voice_speak(naskah, output="videos/<nama>/public/voice.mp3")` → `voice.mp3`, `voice.words.json`.
+2. `src/Main.tsx`:
+   ```tsx
+   import {AbsoluteFill, Sequence} from 'remotion';
+   import words from '../public/voice.words.json';
+   import {Backdrop, Captions, Title, Voice, useSec} from './kit';
+   export const Main = () => { const s = useSec(); return (
+     <AbsoluteFill>
+       <Backdrop a="#FF8A3D" b="#2F6BFF"/>
+       <Sequence durationInFrames={s(2.5)}><Title text="Kopi Senja" sub="Promo minggu ini"/></Sequence>
+       <Captions words={words}/>
+       <Voice file="voice.mp3"/>
+     </AbsoluteFill>); };
+   ```
+3. `src/Root.tsx`: `<Composition id="Main" component={Main} fps={30} width={1080} height={1920}
+   durationInFrames={Math.ceil((words[words.length - 1].end + 0.8) * 30)}/>` (import `words` di sana juga).
+4. `video_check` → `video_render(project, composition="Main")`. Render memakai hampir semua core (h264, CRF 18);
+   `VIDEO_RENDER_CONCURRENCY` di `.env` mengubahnya.
+
+Supaya render cepat dan mulus: animasikan hanya `transform` dan `opacity`; hindari `filter: blur()` dan `box-shadow`
+besar yang berubah tiap frame; `<Img>` dan `<OffthreadVideo>` dari `remotion` (bukan `<img>`/`<video>`); gambar
+seukuran output; font dengan `@remotion/google-fonts` (`npm i @remotion/google-fonts`, lalu
+`import {loadFont} from '@remotion/google-fonts/PlusJakartaSans'; const {fontFamily} = loadFont();`); semua waktu
+dari `useCurrentFrame()` — jangan `Date.now()`, `setTimeout`, atau CSS animation/transition (tidak ikut render).

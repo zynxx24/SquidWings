@@ -450,6 +450,7 @@ class APIClient(BaseClient):
                     "POST",
                     "/chat/completions",
                     json=payload,
+                    timeout=self._stream_timeout(),
                 ) as response:
                     if response.status_code >= 400:
                         await response.aread()
@@ -520,11 +521,23 @@ class APIClient(BaseClient):
                         raise
                     if isinstance(e, httpx.TimeoutException):
                         raise TimeoutError(
-                            message=f"Stream to model '{model}' timed out after {self.timeout}s",
+                            message=f"Stream to model '{model}' sent nothing for {self._stream_idle()}s",
                             model_id=model,
                             timeout_seconds=self.timeout,
                         ) from None
                     raise
+
+    def _stream_idle(self) -> int:
+        """Longest silence a stream may have. A thinking model ("-high", reasoning) can say nothing for
+        minutes before its first token, so this is longer than a plain request timeout."""
+        try:
+            idle = float(os.getenv("STREAM_IDLE_SECONDS", "300"))
+        except ValueError:
+            idle = 300.0
+        return int(max(float(self.timeout), idle))
+
+    def _stream_timeout(self) -> httpx.Timeout:
+        return httpx.Timeout(float(self.timeout), connect=10.0, read=float(self._stream_idle()))
 
     async def list_models(self) -> list[dict[str, Any]]:
         """Fetch all available models from /v1/models.

@@ -561,3 +561,17 @@ async def test_client_follows_provider_edits_on_the_router_page():
     assert not first.is_closed        # a reply may still be streaming on it; closed at shutdown
     await D.close()
     assert first.is_closed and second.is_closed
+
+
+def test_usage_recent_lists_newest_first(tmp_path):
+    log = U.UsageLog(tmp_path / "u.db")
+    import time
+
+    now = time.time()                                   # old rows would be pruned by the keep window
+    log.record(provider="p1", model="a", usage={"prompt_tokens": 3, "completion_tokens": 2}, ts=now - 20)
+    log.record(provider="p2", model="b", usage=None, ok=False, error="429", ts=now - 10)
+    rows = log.recent(10)
+    assert [r["model"] for r in rows] == ["b", "a"]
+    assert rows[0]["ok"] == 0 and rows[0]["error"] == "429"
+    assert rows[1]["total"] == 5
+    assert len(log.recent(1)) == 1

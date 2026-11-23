@@ -40,10 +40,10 @@ from config.edition import trading_enabled
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Skip ``@pytest.mark.enterprise`` tests when the Enterprise trading module is not installed."""
+    """Skip ``@pytest.mark.enterprise`` tests when the optional trading module is not installed."""
     if trading_enabled():
         return
-    skip = pytest.mark.skip(reason="needs the Enterprise trading module")
+    skip = pytest.mark.skip(reason="needs the optional trading module")
     for item in items:
         if "enterprise" in item.keywords:
             item.add_marker(skip)
@@ -86,3 +86,11 @@ def _roomy_disk_for_video_teams(monkeypatch):
     import agent.team_orchestrator as team_module
 
     monkeypatch.setattr(team_module, "free_bytes", lambda path: 50 * 2**30)
+
+
+@pytest.fixture(autouse=True)
+def _owner_limits_do_not_leak_into_tests(monkeypatch):
+    """The owner's .env lifts limits (AGENT_MAX_ROUNDS=0, a saved sudo password); once any test loads it, those
+    values sit in os.environ. Tests count rounds and must never run sudo, so each starts without them."""
+    for name in ("AGENT_MAX_ROUNDS", "SUDO_PASSWORD", "AGENT_CONTEXT_CHARS", "AGENT_TOOL_RESULT_CHARS"):
+        monkeypatch.delenv(name, raising=False)

@@ -35,22 +35,18 @@ class SanitizeResult:
     blocked_reason: str = ""
 
 
-# Patterns that are always blocked
+# Only what would wreck this machine is refused (the owner's rule, 2026-11-22: no other limits on the agent's
+# terminal). sudo, curl | bash installers (composer, nvm, bun), listeners and the rest are ordinary work.
 _BLOCKED_PATTERNS: list[tuple[str, str]] = [
     (r"\brm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+)?/\s*$", "rm of root directory"),
-    (r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/", "recursive rm of root"),
-    (r"\bsudo\b", "sudo commands not allowed"),
-    (r"\bchmod\s+777\b", "chmod 777 not allowed"),
-    (r"\bchown\b", "chown not allowed"),
+    (r"\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/(\s|$|\*)", "recursive rm of root"),
+    (r"\bchmod\s+(-[a-zA-Z]+\s+)*0?777\s+/(\s|$)", "chmod 777 on / not allowed"),
     (r"\bmkfs\b", "mkfs not allowed"),
-    (r"\bdd\s+", "dd command not allowed"),
-    (r"\b:(){ :\|:& };:", "fork bomb detected"),
-    (r"\b>\s*/dev/sd[a-z]", "writing to block device"),
-    (r"\bcurl\b.*\|\s*\b(bash|sh)\b", "piping curl to shell"),
-    (r"\bwget\b.*\|\s*\b(bash|sh)\b", "piping wget to shell"),
-    (r"\bnc\s+-[a-zA-Z]*l", "netcat listener not allowed"),
-    (r"\bshutdown\b", "shutdown not allowed"),
-    (r"\breboot\b", "reboot not allowed"),
+    (r"\bdd\b[^|;&]*\bof=/dev/(sd|nvme|hd|vd|mmcblk)", "dd onto a disk not allowed"),
+    (r":\(\)\s*\{\s*:\|:&\s*\};:", "fork bomb detected"),
+    (r">\s*/dev/(sd[a-z]|nvme\d)", "writing to a disk device"),
+    (r"\b(shutdown|poweroff|halt)\b", "shutting the machine down is left to the user"),
+    (r"\breboot\b", "rebooting the machine is left to the user"),
 ]
 
 
@@ -102,11 +98,7 @@ class CommandSanitizer:
             "curl", "wget",  # Allowed standalone, blocked when piped to shell
             "tree", "diff", "patch",
         }
-        self._blocked = {
-            "rm", "sudo", "su", "chown", "chmod",
-            "mkfs", "dd", "shutdown", "reboot", "kill", "killall",
-            "nc", "ncat",
-        }
+        self._blocked = {"mkfs", "shutdown", "reboot", "poweroff", "halt"}
 
     def _load_config(self, path: Path) -> None:
         """Load config from YAML file."""

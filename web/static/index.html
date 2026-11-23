@@ -8,6 +8,8 @@
 <title>SquidWings</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d7a6f'/%3E%3Cpath d='M16 6c-4 0-7 3-7 7 0 3 2 5 3 6l-3 7m7-20c4 0 7 3 7 7 0 3-2 5-3 6l3 7m-7-13v13' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/static/css/highlight.css">
+<link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="/static/vendor/xterm/xterm.css">
 <link rel="stylesheet" href="/static/css/tokens.css">
 <link rel="stylesheet" href="/static/css/app.css">
 <link rel="stylesheet" href="/static/css/team.css">
@@ -21,7 +23,7 @@
 
   <aside id="rail" class="rail" aria-label="Daftar chat">
     <div class="rail-head">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">S</span><span>SquidWings</span></div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M16 6c-4 0-7 3-7 7 0 3 2 5 3 6l-3 7m7-20c4 0 7 3 7 7 0 3-2 5-3 6l3 7m-7-13v13"/></svg></span><span>SquidWings</span></div>
       <button id="close-rail" class="icon-btn" aria-label="Tutup daftar chat" data-icon="x"></button>
     </div>
     <button id="new-chat" class="btn btn-primary btn-block"><span data-icon="plus"></span>Chat baru</button>
@@ -35,7 +37,11 @@
       <button id="nav-team" data-view="team" class="rail-link hidden" title="Alt+2"><span data-icon="team"></span>Tim agent</button>
       <a id="nav-trading" href="/trading" data-view="trading" class="rail-link" title="Alt+3 · Ctrl+klik untuk tab baru"><span data-icon="chart"></span>Trading</a>
       <a id="nav-router" href="/router" data-view="router" class="rail-link" title="Alt+4 · Ctrl+klik untuk tab baru"><span data-icon="router"></span>Router &amp; token</a>
-      <button id="toggle-theme" class="rail-link"><span data-icon="theme"></span><span id="theme-label">Tema</span></button>
+      <a id="nav-studio" href="/studio" data-view="studio" class="rail-link" title="Alt+5 · editor video motion"><span data-icon="film"></span>Studio video</a>
+      <div class="rail-prefs">
+        <button id="toggle-theme" class="rail-link"><span data-icon="theme"></span><span id="theme-label">Tema</span></button>
+        <button id="pick-palette" class="rail-link rail-palette" type="button" title="Ganti palet warna"><span class="sq-swatch" id="palette-swatch"></span><span id="palette-label">Palet</span></button>
+      </div>
     </div>
   </aside>
 
@@ -49,6 +55,8 @@
           <a id="app-open" class="icon-btn" href="/" target="_blank" rel="noopener" aria-label="Buka di tab baru" title="Buka di tab baru" data-icon="external"></a>
         </div>
         <button id="nav-chat" class="btn btn-ghost hidden"><span data-icon="chat"></span><span class="hide-small">Kembali ke chat</span></button>
+        <button id="open-cmdk" class="btn btn-ghost cmdk-open" type="button" title="Cari chat, halaman, atau aksi (Ctrl+K)"><span data-icon="search"></span><span class="hide-small">Cari</span><kbd class="hide-small">Ctrl K</kbd></button>
+        <button id="open-terminal" class="btn btn-ghost" aria-controls="term-panel" aria-expanded="false" title="Terminal (Ctrl+`)"><span data-icon="terminal"></span><span class="hide-small">Terminal</span></button>
         <button id="open-inspector" class="btn btn-ghost" aria-controls="inspector"><span data-icon="layers"></span><span class="hide-small">Sesi ini</span></button>
       </div>
     </header>
@@ -61,10 +69,10 @@
 
       <div class="dock">
         <div class="hero">
-          <h2>Mau kerjakan apa?</h2>
+          <p id="hero-greet" class="hero-kicker">Halo</p>
+          <h2>Mau kerjakan <span class="hero-accent">apa</span> hari ini?</h2>
           <p>Setiap chat punya folder, vault, graph kode, dan memorinya sendiri.</p>
         </div>
-        <section id="brief" class="brief hidden" aria-label="Brief harian"></section>
         <form id="composer" class="composer">
           <div id="chips" class="chips"></div>
           <textarea id="input" rows="1" placeholder="Tulis tugas atau pertanyaan" aria-label="Pesan"></textarea>
@@ -80,12 +88,25 @@
           </div>
         </form>
         <div class="suggestions">
-          <button class="suggestion" data-prompt="Buat REST API sederhana untuk daftar tugas dengan FastAPI, lengkap dengan tes, lalu jalankan tesnya.">Bangun REST API</button>
-          <button class="suggestion" data-prompt="Buat landing page responsif untuk kedai kopi, satu file HTML, tanpa library.">Buat landing page</button>
-          <button class="suggestion" data-prompt="Tes saya gagal. Saya akan tempel errornya, bantu temukan penyebab dan perbaiki.">Perbaiki bug</button>
-          <button class="suggestion" data-prompt="Riset berita terbaru tentang Python, rangkum poin pentingnya beserta sumber.">Riset di web</button>
+          <button class="suggestion" data-prompt="Buat REST API sederhana untuk daftar tugas dengan FastAPI, lengkap dengan tes, lalu jalankan tesnya."><span class="sg-ico" data-icon="code"></span><b>Bangun REST API</b><small>FastAPI + tes, langsung dijalankan</small></button>
+          <button class="suggestion" data-prompt="Buat landing page responsif untuk kedai kopi, satu file HTML, tanpa library."><span class="sg-ico" data-icon="layout"></span><b>Buat landing page</b><small>Responsif, desain tidak pasaran</small></button>
+          <button class="suggestion" data-prompt="Tes saya gagal. Saya akan tempel errornya, bantu temukan penyebab dan perbaiki."><span class="sg-ico" data-icon="bug"></span><b>Perbaiki bug</b><small>Tempel error, cari akar masalahnya</small></button>
+          <button class="suggestion" data-prompt="Riset berita terbaru tentang Python, rangkum poin pentingnya beserta sumber."><span class="sg-ico" data-icon="globe"></span><b>Riset di web</b><small>Ringkasan dengan sumber</small></button>
         </div>
+        <section id="brief" class="brief hidden" aria-label="Brief harian"></section>
       </div>
+    </section>
+
+    <section id="term-panel" class="term-panel hidden" aria-label="Terminal">
+      <div class="term-head">
+        <span class="term-title"><span data-icon="terminal"></span><span>Terminal</span><code id="term-cwd" class="term-cwd"></code></span>
+        <span id="term-previews" class="term-previews" aria-label="Server yang berjalan"></span>
+        <span id="term-state" class="term-state" aria-live="polite"></span>
+        <button id="term-ctrlc" class="icon-btn term-text-btn" type="button" title="Hentikan perintah yang berjalan (Ctrl+C)">Ctrl+C</button>
+        <button id="term-restart" class="icon-btn" type="button" aria-label="Mulai ulang terminal" title="Mulai ulang" data-icon="refresh"></button>
+        <button id="term-close" class="icon-btn" type="button" aria-label="Tutup panel terminal (tetap berjalan)" title="Tutup (tetap berjalan)" data-icon="x"></button>
+      </div>
+      <div id="term-screen" class="term-screen"></div>
     </section>
 
     <section id="view-team" class="view hidden">
@@ -108,7 +129,12 @@
               <button id="new-team" type="button" role="menuitem">Alur baru</button>
               <select id="template-select" aria-label="Mulai dari template"><option value="">Mulai dari template…</option></select>
               <button id="tidy-board" type="button" role="menuitem">Rapikan tata letak</button>
-              <label class="check" title="Waktu tiap agent sampai 30 menit, untuk membangun dan merender video"><input type="checkbox" id="team-video">Mode video (waktu panjang)</label>
+              <label class="wf-mode" title="Video dan Studio memberi tiap agent waktu sampai 30 menit">Mode
+                <select id="team-mode" aria-label="Mode alur">
+                  <option value="standard">Standar</option>
+                  <option value="video">Video render (animate)</option>
+                  <option value="motion">Studio motion (bisa diedit)</option>
+                </select></label>
               <button id="delete-team" type="button" role="menuitem" class="danger">Hapus alur</button>
             </div>
           </details>
@@ -248,11 +274,15 @@
 <script src="/static/js/marked.min.js"></script>
 <script src="/static/js/purify.min.js"></script>
 <script src="/static/js/highlight.min.js"></script>
+<script src="/static/vendor/katex/katex.min.js"></script>
 <script src="/static/js/ctxmenu.js"></script>
 <script src="/static/js/app.js"></script>
 <script src="/static/js/team.js"></script>
 <script src="/static/js/data.js"></script>
 <script src="/static/js/voice.js"></script>
 <script src="/static/js/brief.js"></script>
+<script src="/static/vendor/xterm/xterm.js"></script>
+<script src="/static/vendor/xterm/addon-fit.js"></script>
+<script src="/static/js/terminal.js"></script>
 </body>
 </html>

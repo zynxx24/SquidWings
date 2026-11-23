@@ -1,0 +1,20 @@
+[
+  {"text": "buat landing page untuk toko roti", "tools": ["style_pick", "file_write", "share_file"], "no_tools": ["trading_snapshot"], "skills": ["build-web"]},
+  {"text": "perbaiki bug login di auth.py", "task": "code", "tools": ["read_file", "file_patch", "run_checks"], "skills": ["fix-bug"]},
+  {"text": "hitung 25*4", "task": "math", "tools": ["calc"], "no_tools": ["web_research", "file_write"]},
+  {"text": "cari info cuaca di jakarta", "tools": ["weather", "web_research"], "skills": ["web-research"]},
+  {"text": "buat laporan penjualan dalam excel", "tools": ["sheet_create", "share_file"], "skills": ["buat-dokumen"], "no_skills": ["jawab-tugas"]},
+  {"text": "buat presentasi pptx tentang AI", "tools": ["slides_create", "share_file"], "skills": ["buat-dokumen"]},
+  {"text": "analisa chart xauusd hari ini dan kasih sinyal trading", "tools": ["trading_snapshot"], "skills": ["analis-trading"], "no_tools": ["file_delete"]},
+  {"text": "ingat bahwa aku suka kopi tanpa gula", "tools": ["memory_remember"]},
+  {"text": "kompres semua file di folder ini jadi zip", "tools": ["archive"]},
+  {"text": "ubah video ini jadi gif", "tools": ["media_convert"]},
+  {"text": "desain logo kedai kopi", "task": "generate_img", "tools": ["style_pick", "file_write", "share_file"], "skills": ["aislop"]},
+  {"text": "baca pdf ini dan rangkum", "tools": ["extract_files"], "skills": ["baca-dokumen"]},
+  {"text": "git diff terakhir apa saja", "task": "code", "tools": ["git_diff"]},
+  {"text": "ganti semua nama fungsi foo jadi bar di semua file", "task": "code", "tools": ["file_replace_all", "file_patch"]},
+  {"text": "pakai tool calc untuk 12 x 12", "tools": ["calc"]},
+  {"text": "buat laporan praktikum fisika tentang pendulum", "skills": ["jawab-tugas"]},
+  {"text": "baca file ini dan perbaiki bug di auth.py", "task": "code", "no_skills": ["baca-dokumen"]},
+  {"text": "tolong baca dokumen ini lalu rangkum", "skills": ["baca-dokumen"]}
+]

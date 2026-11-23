@@ -60,7 +60,7 @@ def test_the_page_never_gets_a_secret_back():
     assert fields["telegram_bot_token"]["masked"] == "…mmnn" and fields["telegram_bot_token"]["set"]
     assert "AAbb" not in str(credentials.public())
     assert fields["telegram_chat_id"]["masked"] == "42", "an ID is not a secret"
-    assert {g["key"] for g in credentials.public()["groups"]} == {"telegram", "search", "voice", "google", "database", "limits"}
+    assert {g["key"] for g in credentials.public()["groups"]} == {"telegram", "search", "voice", "google", "database", "system", "limits"}
 
 
 @pytest.mark.asyncio
@@ -79,6 +79,10 @@ async def test_telegram_and_search_read_the_page_values():
 
 def test_credentials_api(monkeypatch):
     from web.server import app
+
+    # A search source set in this machine's .env would make the "nothing set" check below go online.
+    from_env = credentials._env_value
+    monkeypatch.setattr(credentials, "_env_value", lambda spec: "" if spec.group == "search" else from_env(spec))
 
     client = TestClient(app, client=("127.0.0.1", 50000))
     listed = client.get("/api/teams/credentials").json()

@@ -99,8 +99,17 @@
     const u = S.usage;
     if (!u) return;
     const t = u.totals;
-    const kpi = (label, value, note, shown) => h('div', { class: 'kpi' }, h('div', { class: 'label' }, label),
-      h('div', { class: 'value', title: shown ? money(value) : full(value) }, shown ? usd(value) : fmt(value)), h('div', { class: 'note' }, note || ''));
+    // Numbers count from what the tile showed before, so a new period or a fresh request reads as change.
+    S.kpiPrev = S.kpiPrev || {};
+    const kpi = (label, value, note, shown) => {
+      const el = h('div', { class: 'value', title: shown ? money(value) : full(value) }, shown ? usd(value) : fmt(value));
+      if (window.SquidPage && Number.isFinite(Number(value))) {
+        if (label in S.kpiPrev) el.dataset.sqValue = String(S.kpiPrev[label]);
+        SquidPage.countTo(el, Number(value), v => (shown ? usd(v) : fmt(Math.round(v))));
+      }
+      S.kpiPrev[label] = Number(value);
+      return h('div', { class: `kpi${shown ? ' kpi-money' : ''}` }, h('div', { class: 'label' }, label), el, h('div', { class: 'note' }, note || ''));
+    };
     const unpriced = t.unpriced_models && t.unpriced_models.length
       ? ` · ${t.unpriced_models.length} model belum ada harga` : '';
     const costNote = (t.cost_usd ? `≈ ${money(t.cost_30d_usd)} per 30 hari pada laju ini` : 'belum ada token berharga') + unpriced;
@@ -115,6 +124,7 @@
     $('chart-title').textContent = PERIOD_TITLE[u.period] || 'Token';
     renderChart(u.series, u.bucket_s);
     renderTable(u.rows, u.group);
+    renderFlow();
   }
 
   function label(ts, bucket) {
@@ -282,6 +292,9 @@
     $('show-add').disabled = !S.canEdit;
     $('empty').hidden = S.providers.length > 0;
     $('providers').replaceChildren(...S.providers.map(providerCard));
+    renderHealth();
+    renderFlow();
+    if ($('rt-search').value) filterList($('rt-search').value);
   }
 
   function providerCard(p) {
@@ -291,7 +304,8 @@
     const strategy = h('select', { disabled: edit, 'aria-label': 'Rotasi', onchange: e => patch({ strategy: e.target.value }) },
       Object.entries(STRATEGY).map(([v, t]) => h('option', { value: v, selected: v === p.strategy }, t)));
     const head = h('div', { class: 'p-head' },
-      h('div', null,
+      h('span', { class: 'p-avatar', style: `--h:${hueOf(p.name)}`, 'aria-hidden': 'true' }, (p.name || '?').slice(0, 1).toUpperCase()),
+      h('div', { class: 'p-main' },
         h('div', { class: 'p-title' }, h('h3', null, p.name), p.default ? h('span', { class: 'badge default', title: 'Model tanpa prefix dilayani provider ini' }, 'default') : null,
           h('span', { class: 'badge' }, KIND[p.kind] || p.kind), p.source === 'env' ? h('span', { class: 'badge' }, 'dari .env') : null,
           h('span', { class: 'badge' }, `${p.ready}/${p.accounts.length} akun siap`), p.enabled ? null : h('span', { class: 'badge' }, 'mati')),
@@ -443,4 +457,153 @@
   loadUsage();
   setInterval(() => { if (!document.hidden && !document.activeElement?.matches('input, textarea, select')) loadProviders(); }, 5000);
   setInterval(() => { if (!document.hidden) loadUsage(); }, 15000);
+
+  /* ── shell: one view at a time, like a dashboard app ── */
+  const VIEWS = {
+    usage: ['Pemakaian', 'Pantau request, token, cache, dan biaya per provider.'],
+    providers: ['Provider', 'Endpoint OpenAI- dan Claude-compatible, banyak API key per provider, rotasi pintar.'],
+    models: ['Model', 'Semua model dari semua provider. Model default dipakai chat baru.'],
+    pricing: ['Biaya', 'Harga per 1 juta token, untuk perkiraan biaya di halaman Pemakaian.'],
+    security: ['Keamanan', 'Kunci halaman ini dengan PIN untuk akses lewat tunnel.'],
+    guide: ['Cara kerja rotasi', 'Bagaimana router memilih akun untuk tiap request.'],
+  };
+  function showView(name, push) {
+    if (!VIEWS[name]) name = 'usage';
+    S.view = name;
+    document.querySelectorAll('.rt-view').forEach(sec => { sec.hidden = sec.dataset.view !== name; });
+    document.querySelectorAll('.rt-nav a[data-view]').forEach(a => {
+      const on = a.dataset.view === name;
+      a.classList.toggle('on', on);
+      if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    });
+    $('rt-title').textContent = VIEWS[name][0];
+    $('rt-sub').textContent = VIEWS[name][1];
+    const navIcon = document.querySelector(`.rt-nav a[data-view="${name}"] svg`);
+    $('rt-head-ico').replaceChildren(navIcon ? navIcon.cloneNode(true) : '');
+    $('rt-search-wrap').hidden = !(name === 'providers' || name === 'models');
+    $('rt-search').value = '';
+    filterList('');
+    if (push && location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
+    const sec = document.querySelector(`.rt-view[data-view="${name}"]`);
+    if (sec && window.SquidPage) SquidPage.reveal([sec]);
+    if (name === 'usage') { loadRecent(); renderFlow(); }
+  }
+  document.querySelectorAll('.rt-nav a[data-view]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); showView(a.dataset.view, true); }));
+  window.addEventListener('hashchange', () => showView(location.hash.slice(1)));
+
+  function filterList(q) {
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const match = el => words.every(w => el.textContent.toLowerCase().includes(w));
+    document.querySelectorAll('#providers .provider').forEach(el => { el.hidden = !match(el); });
+    document.querySelectorAll('#model-groups .model-group').forEach(el => { el.hidden = !match(el); });
+  }
+  $('rt-search').addEventListener('input', e => filterList(e.target.value));
+
+  // Theme: the same setting the chat page keeps; inside the chat page its own switch drives this one.
+  $('rt-theme').onclick = () => {
+    const root = document.documentElement;
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('theme', root.dataset.theme); } catch { /* not remembered */ }
+  };
+
+  /* ── live: the flow from providers into the router, and the newest requests ── */
+  const hueOf = text => [...String(text || '')].reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 7);
+  function renderFlow() {
+    const box = $('flow');
+    if (!box || !S.usage) return;
+    const rows = (S.usage.group === 'provider' ? S.usage.rows : null) || S.flowRows || [];
+    if (S.usage.group === 'provider') S.flowRows = rows;
+    const names = new Map(S.providers.map(p => [p.id, p.name]));
+    const nodes = (rows.length ? rows : S.providers.map(p => ({ provider: p.id, total: 0, requests: 0 }))).slice(0, 6);
+    const w = Math.max(320, box.clientWidth || 600), hgt = Math.max(240, box.clientHeight || 300);
+    const max = Math.max(1, ...nodes.map(n => n.total || 0));
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const el = (tag, attrs, text) => {
+      const e = document.createElementNS(svgNS, tag);
+      for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+      if (text !== undefined) e.textContent = text;
+      return e;
+    };
+    const svg = el('svg', { viewBox: `0 0 ${w} ${hgt}`, width: w, height: hgt });
+    const hub = { x: w / 2, y: hgt - 46 };
+    if (!nodes.length) {
+      box.replaceChildren(h('p', { class: 'rt-empty' }, 'Belum ada provider. Tambahkan di halaman Provider.'));
+      return;
+    }
+    const gap = w / (nodes.length + 1);
+    nodes.forEach((n, i) => {
+      const x = gap * (i + 1), y = 44;
+      const share = (n.total || 0) / max;
+      const path = `M${x},${y + 22} C${x},${(y + hub.y) / 2} ${hub.x},${(y + hub.y) / 2} ${hub.x},${hub.y - 22}`;
+      svg.append(el('path', { d: path, class: `rt-wire${n.total ? ' live' : ''}`, style: `--w:${1.5 + share * 5}px` }));
+    });
+    nodes.forEach((n, i) => {
+      const x = gap * (i + 1), y = 44;
+      const name = n.provider_name || names.get(n.provider) || n.provider || '?';
+      const g = el('g', { class: 'rt-node', transform: `translate(${x},${y})`, style: `--h:${hueOf(name)}; --i:${i}` });
+      const label = name.length > 16 ? name.slice(0, 15) + '…' : name;
+      const wid = Math.min(gap - 10, 52 + label.length * 7.4);
+      g.append(el('rect', { x: -wid / 2, y: -20, width: wid, height: 40, rx: 11, class: 'rt-node-box' }),
+        el('rect', { x: -wid / 2 + 8, y: -11, width: 22, height: 22, rx: 6, class: 'rt-node-ico' }),
+        el('text', { x: -wid / 2 + 19, y: 4.5, 'text-anchor': 'middle', class: 'rt-node-initial' }, name.slice(0, 1).toUpperCase()),
+        el('text', { x: -wid / 2 + 38, y: 4.5, class: 'rt-node-name' }, label));
+      const t = el('title', {}, `${name}: ${fmt(n.total || 0)} token, ${full(n.requests || 0)} request`);
+      g.append(t);
+      svg.append(g);
+    });
+    const hubG = el('g', { class: 'rt-hub', transform: `translate(${hub.x},${hub.y})` });
+    hubG.append(el('rect', { x: -78, y: -24, width: 156, height: 48, rx: 14, class: 'rt-hub-box' }),
+      el('rect', { x: -66, y: -13, width: 26, height: 26, rx: 7, class: 'rt-hub-ico' }),
+      el('text', { x: -53, y: 5.5, 'text-anchor': 'middle', class: 'rt-hub-initial' }, 'R'),
+      el('text', { x: -32, y: 6, class: 'rt-hub-name' }, 'Router'));
+    svg.append(hubG);
+    box.replaceChildren(svg);
+    $('flow-cap').textContent = rows.length ? `· ${rows.length} provider aktif di periode ini` : '· belum ada request di periode ini';
+  }
+
+  // Today: the time; earlier: the day too, so an old list never reads as live traffic.
+  const stamp = d => {
+    const today = new Date().toDateString() === d.toDateString();
+    return today ? d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      : d.toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  };
+  async function loadRecent() {
+    clearTimeout(S.recentTimer);
+    if (S.view !== 'usage') return;
+    try {
+      const r = await api('/api/router/recent?limit=40');
+      const list = $('recent');
+      const seen = new Set(S.recentSeen || []);
+      const items = r.rows.map(row => {
+        const key = `${row.ts}|${row.model}`;
+        const when = new Date(row.ts * 1000);
+        const li = h('li', { class: `${row.ok ? '' : 'bad'}${S.recentSeen && !seen.has(key) ? ' fresh' : ''}` },
+          h('span', { class: `rt-status ${row.ok ? 'ok' : 'bad'}`, title: row.ok ? 'Berhasil' : (row.error || 'Gagal') }),
+          h('div', { class: 'rt-req' },
+            h('b', { title: row.model }, row.model),
+            h('small', null, `${row.provider_name}${row.account_label ? ' · ' + row.account_label : ''}`)),
+          h('div', { class: 'rt-req-num' },
+            h('b', null, row.ok ? (row.reported ? fmt(row.total) : '–') : 'gagal'),
+            h('small', null, `${stamp(when)} · ${row.latency_ms ? full(row.latency_ms) + ' ms' : '–'}`)));
+        return [key, li];
+      });
+      S.recentSeen = items.map(([k]) => k);
+      list.replaceChildren(...items.map(([, li]) => li));
+      if (!items.length) list.replaceChildren(h('li', { class: 'rt-empty-li' }, 'Belum ada request. Kirim pesan di chat, lalu lihat di sini.'));
+    } catch { /* the list is a live extra */ }
+    S.recentTimer = setTimeout(() => { if (!document.hidden) loadRecent(); else S.recentTimer = setTimeout(loadRecent, 5000); }, 5000);
+  }
+
+  function renderHealth() {
+    const ready = S.providers.filter(p => p.enabled && p.ready > 0).length;
+    const total = S.providers.length;
+    const el = $('rt-health');
+    el.className = `rt-side-foot ${!total ? '' : ready === total ? 'ok' : ready ? 'warn' : 'bad'}`;
+    el.replaceChildren(h('span', { class: 'rt-health-dot' }), h('span', null, total ? `${ready}/${total} provider siap` : 'Belum ada provider'));
+  }
+
+  let flowTimer = 0;
+  new ResizeObserver(() => { clearTimeout(flowTimer); flowTimer = setTimeout(renderFlow, 120); }).observe($('flow'));
+  showView(location.hash.slice(1) || 'usage');
 })();

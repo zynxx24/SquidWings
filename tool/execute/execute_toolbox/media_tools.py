@@ -46,6 +46,48 @@ _TEMPORARY = (".part", ".ytdl", ".temp", ".tmp")
 REMOTION_TEMPLATES = ("blank", "hello-world", "tiktok", "audiogram", "still", "music-visualization", "three",
                       "skia", "overlay", "code-hike", "stargazer")
 _COMPOSITION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*")
+# Ready-made Remotion parts copied into every new project as src/kit (captions synced to a voice, titles, ...),
+# so a model writes a scene instead of re-inventing springs and caption timing.
+REMOTION_KIT = Path(__file__).resolve().parent / "assets" / "remotion_kit"
+# A finished template (with node_modules) per name: later projects are copied from it in seconds instead of
+# running create-video and npm install (minutes) every time.
+REMOTION_CACHE = Path(os.getenv("REMOTION_TEMPLATE_CACHE", "") or Path.home() / ".cache" / "squidwings" / "remotion-templates")
+
+
+async def _copy_tree(src: Path, dest: Path) -> bool:
+    """dest = a copy of src. Only node_modules is hard-linked (instant, never edited by a project); every other
+    file is a real copy, so editing a project never changes the cached template, or the other way round."""
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in src.iterdir():
+        if item.name == ".git":
+            continue
+        if item.name == "node_modules":
+            code, _, _ = await _run(["cp", "-al", str(item), str(dest / item.name)], src, 10 * 60)
+            if code != 0:
+                shutil.rmtree(dest / item.name, ignore_errors=True)
+                code, _, _ = await _run(["cp", "-a", str(item), str(dest / item.name)], src, 15 * 60)
+        else:
+            code, _, _ = await _run(["cp", "-a", str(item), str(dest / item.name)], src, 5 * 60)
+        if code != 0:
+            return False
+    return True
+
+
+def _add_kit(folder: Path) -> None:
+    """src/kit with the ready parts, and JSON imports allowed (words.json from voice_speak)."""
+    kit = folder / "src" / "kit"
+    if REMOTION_KIT.is_dir() and (folder / "src").is_dir():
+        kit.mkdir(exist_ok=True)
+        for item in REMOTION_KIT.iterdir():
+            if item.is_file():
+                shutil.copyfile(item, kit / item.name)
+    (folder / "public").mkdir(exist_ok=True)
+    tsconfig = folder / "tsconfig.json"
+    with contextlib.suppress(OSError, ValueError):
+        text = tsconfig.read_text(encoding="utf-8")
+        if "resolveJsonModule" not in text and '"compilerOptions": {' in text:
+            tsconfig.write_text(text.replace('"compilerOptions": {', '"compilerOptions": {\n    "resolveJsonModule": true,', 1),
+                                encoding="utf-8")
 HF_RESOLUTIONS = ("landscape", "portrait", "square", "landscape-4k", "portrait-4k", "square-4k")
 
 
@@ -337,11 +379,23 @@ async def video_new(name: str, engine: str = "hyperframes", example: str = "", r
         template = example or "blank"
         if template not in REMOTION_TEMPLATES:
             raise MediaError(f"template Remotion harus salah satu dari {', '.join(REMOTION_TEMPLATES)}")
-        argv = ["npx", "--yes", "create-video@latest", "--yes", f"--{template}", folder.name]
-        code, output, timed_out = await _run(argv, folder.parent, 15 * 60, {"CI": "1"})
-        if code == 0 and folder.is_dir() and not (folder / "node_modules").exists():
-            code, more, timed_out = await _run(["npm", "install", "--no-fund", "--no-audit"], folder, 15 * 60)
-            output += more
+        cached = REMOTION_CACHE / template
+        output, timed_out = "", False
+        if (cached / "node_modules").is_dir() and await _copy_tree(cached, folder):
+            code, output = 0, f"disalin dari cache template {template}"
+        else:
+            argv = ["npx", "--yes", "create-video@latest", "--yes", f"--{template}", folder.name]
+            code, output, timed_out = await _run(argv, folder.parent, 15 * 60, {"CI": "1"})
+            if code == 0 and folder.is_dir() and not (folder / "node_modules").exists():
+                code, more, timed_out = await _run(["npm", "install", "--no-fund", "--no-audit"], folder, 15 * 60)
+                output += more
+            if code == 0 and (folder / "node_modules").is_dir():        # keep it for the next project
+                with contextlib.suppress(OSError):
+                    REMOTION_CACHE.mkdir(parents=True, exist_ok=True)
+                    shutil.rmtree(cached, ignore_errors=True)
+                    await _copy_tree(folder, cached)
+        if code == 0 and folder.is_dir():
+            _add_kit(folder)
     else:
         raise MediaError("engine harus hyperframes atau remotion")
     if code != 0 or timed_out or not folder.is_dir():
@@ -352,7 +406,8 @@ async def video_new(name: str, engine: str = "hyperframes", example: str = "", r
     if engine == "hyperframes":
         step = "baca video_docs('data-attributes') dan AGENTS.md proyek, edit index.html"
     else:
-        step = "edit src/Root.tsx (daftar komposisi) dan komponennya di src/"
+        step = ("pakai komponen siap di src/kit (baca src/kit/README.md: Captions, Voice, Title, KenBurns, Backdrop), "
+                "taruh MP3 dari voice_speak di public/, edit src/Root.tsx (komposisi + durasi) dan scene di src/")
     return {"ok": True, "engine": engine, "project": _files.relative(folder, workspace_path), "files": files,
             "next": f"{step}, lalu video_check(project) dan video_render(project)"}
 
@@ -419,7 +474,10 @@ async def video_render(project: str, output: str = "", composition: str = "", sh
                 return {"ok": False, "engine": engine, "compositions": ids,
                         "error": "proyek ini punya beberapa komposisi; panggil lagi dengan composition=<salah satu id>"}
             target = ids[0]
-        code, log, timed_out = await _run(["npx", "--yes", "remotion", "render", target, str(dest)], folder, limit)
+        argv = ["npx", "--yes", "remotion", "render", target, str(dest), "--codec=h264", "--crf=18"]
+        concurrency = os.getenv("VIDEO_RENDER_CONCURRENCY", "").strip()
+        argv.append(f"--concurrency={concurrency}" if concurrency else f"--concurrency={max(2, (os.cpu_count() or 4) - 2)}")
+        code, log, timed_out = await _run(argv, folder, limit)
     if code != 0 or timed_out or not dest.is_file():
         return {"ok": False, "engine": engine, "error": "render berhenti karena waktu habis" if timed_out else "render gagal",
                 "log_tail": _tail(log)}

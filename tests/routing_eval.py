@@ -64,7 +64,10 @@ def check_routing(case: dict[str, Any]) -> Verdict:
     _quiet()
     text = case["text"]
     task = IntentClassifier().classify(text).task_type
-    scaffold = scaffold_for("x-flash")
+    # Priority order is what is judged: with no cap a model gets every core tool, so judge a capped list.
+    from dataclasses import replace
+
+    scaffold = replace(scaffold_for("x-flash"), max_tools=16)
     offered = {s["function"]["name"] for s in select_tools(register_all_tools().get_all_schemas(), task, text, scaffold)}
     picked = {s.name for s in skills.select(text, task=task.value)}
 

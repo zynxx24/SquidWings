@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trading · SquidWings</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d7a6f'/%3E%3Cpath d='M16 6c-4 0-7 3-7 7 0 3 2 5 3 6l-3 7m7-20c4 0 7 3 7 7 0 3-2 5-3 6l3 7m-7-13v13' fill='none' stroke='%23fff' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/trading/trading.css">
+<link rel="stylesheet" href="/static/trading/lab.css">
+<link rel="stylesheet" href="/static/css/soft.css">
+<link rel="stylesheet" href="/static/css/page.css">
+<link rel="stylesheet" href="/static/trading/exchange.css">
+<script src="/static/js/page.js"></script>
+</head>
+<body class="page-trading">
+<header class="top">
+  <a id="to-chat" class="brand" href="/" title="Kembali ke chat" data-sq-view="chat" data-sq-standalone><span class="brand-mark" aria-hidden="true">S</span><span>SquidWings</span></a>
+  <div class="ticker">
+    <strong id="sym" class="ticker-sym">—</strong>
+    <span id="last" class="ticker-price">—</span>
+    <span id="chg" class="ticker-chg"></span>
+  </div>
+  <dl class="stats">
+    <div><dt>Bid</dt><dd id="s-bid">—</dd></div>
+    <div><dt>Ask</dt><dd id="s-ask">—</dd></div>
+    <div><dt>Spread</dt><dd id="s-spread">—</dd></div>
+    <div><dt>Ekuitas</dt><dd id="s-equity">—</dd></div>
+    <div><dt>P/L</dt><dd id="s-pnl">—</dd></div>
+    <div><dt>Margin bebas</dt><dd id="s-free">—</dd></div>
+  </dl>
+  <div class="grow"></div>
+  <span id="mode" class="pill off">Terputus</span>
+  <span id="ea" class="pill off" title="Status EA MT4">EA: belum dipasang</span>
+  <button id="labbtn" class="btn lab-open" type="button" title="Pantau dan atur latihan model candle AI">
+    <span class="lab-dot" id="labbtn-dot" aria-hidden="true"></span>Lab model</button>
+  <button id="connbtn" class="btn">Koneksi</button>
+  <button id="themebtn" class="btn" title="Ganti tema" data-sq-standalone>Tema</button>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+<div id="server-stale" class="banner live" hidden role="alert"></div>
+
+<main class="layout" id="layout">
+  <aside class="left">
+    <section class="pane grow-y">
+      <h3>Pasar</h3>
+      <input id="symq" type="search" placeholder="Cari simbol">
+      <ul id="symlist" class="symlist"></ul>
+    </section>
+  </aside>
+
+  <section class="center">
+    <div class="chartbar">
+      <div class="tfs" id="tfs">
+        <button data-tf="M1">1m</button><button data-tf="M5" class="on">5m</button><button data-tf="M15">15m</button>
+        <button data-tf="M30">30m</button><button data-tf="H1">1H</button><button data-tf="H4">4H</button><button data-tf="D1">1D</button>
+      </div>
+      <span id="ohlc" class="ohlc"></span>
+      <span class="grow"></span>
+      <button id="z-ema" class="tool on" title="Tampilkan EMA 20 dan 50">EMA</button>
+      <button id="z-levels" class="tool on" title="Tampilkan level (pivot, Fibonacci, zona confluence) dan pita sesi di atas chart">Level</button>
+      <button id="z-out" class="tool" title="Perkecil (-)" aria-label="Perkecil">−</button>
+      <button id="z-in" class="tool" title="Perbesar (+)" aria-label="Perbesar">+</button>
+      <button id="z-latest" class="tool" title="Kembali ke bar terbaru (0)" hidden>Terbaru</button>
+      <button id="z-focus" class="tool" title="Layar penuh chart (F)">Fokus</button>
+    </div>
+    <div class="chartwrap"><canvas id="chart"></canvas>
+      <div class="chart-empty" aria-live="polite">
+        <svg viewBox="0 0 120 64" aria-hidden="true" class="chart-empty-art"><path d="M4 52 L22 40 L34 46 L52 22 L66 30 L84 12 L100 20 L116 6"/><g><rect x="18" y="30" width="6" height="18" rx="1.5"/><rect x="48" y="16" width="6" height="22" rx="1.5"/><rect x="80" y="6" width="6" height="16" rx="1.5"/></g></svg>
+        <h2>Belum ada grafik</h2>
+        <p>Hubungkan akun (MT4 lewat EA, MT5, atau mode simulasi), lalu pilih simbol di kiri.</p>
+        <button id="chart-connect" class="btn primary" type="button">Hubungkan akun</button>
+      </div>
+      <div id="sim-chip" class="simchip" hidden role="status">
+        <span class="simchip-dot" aria-hidden="true"></span><span id="sim-chip-text">Simulasi live berjalan</span>
+        <button id="sim-chip-stop" class="btn mini danger" type="button">Hentikan</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="splitter" class="splitter" role="separator" aria-orientation="horizontal" title="Seret untuk mengubah tinggi"></div>
+
+  <section class="bottom">
+    <div class="tabs">
+      <button data-tab="positions" class="on">Posisi</button>
+      <button data-tab="orders">Order tertunda</button>
+      <button data-tab="history">Riwayat</button>
+      <button data-tab="recap">Rekap harian</button>
+      <span class="grow"></span>
+      <button id="share-portfolio" class="btn mini share-btn" title="Kartu portofolio untuk dibagikan">Bagikan portofolio</button>
+      <label class="inline">Hari <input id="days" type="number" min="1" max="365" value="7"></label>
+    </div>
+    <div class="tablewrap"><table id="table"></table><div id="recap" class="recap" hidden></div></div>
+  </section>
+
+  <aside class="right">
+    <section class="pane">
+      <div class="quote">
+        <button id="q-sell" class="quote-side sell"><small>Jual</small><b id="tk-bid">—</b></button>
+        <button id="q-buy" class="quote-side buy"><small>Beli</small><b id="tk-ask">—</b></button>
+      </div>
+      <div class="sides">
+        <button id="side-buy" class="side buy on" data-side="buy">BUY</button>
+        <button id="side-sell" class="side sell" data-side="sell">SELL</button>
+      </div>
+      <label>Volume (lot)
+        <span class="stepper">
+          <button class="step" data-step="-1" aria-label="Kurangi volume">−</button>
+          <input id="vol" type="number" step="0.01" min="0.01" value="0.01">
+          <button class="step" data-step="1" aria-label="Tambah volume">+</button>
+        </span>
+      </label>
+      <div class="chips" id="lots">
+        <button data-lot="0.01">0.01</button><button data-lot="0.05">0.05</button><button data-lot="0.1">0.10</button>
+      </div>
+      <div class="two">
+        <label>Stop loss <input id="sl" type="number" step="any" placeholder="wajib"></label>
+        <label>Take profit <input id="tp" type="number" step="any" placeholder="opsional"></label>
+      </div>
+      <label>Komentar <input id="comment" type="text" maxlength="31"></label>
+      <div id="riskline" class="riskline" hidden></div>
+      <button id="preview" class="btn action buy" disabled>Preview BUY</button>
+      <div id="previewbox" class="previewbox" hidden></div>
+    </section>
+    <details class="pane analyst" id="analyst-pane" open>
+      <summary>LLM Analyst Trade <span id="an-pill" class="pill off">–</span></summary>
+      <p class="hint">Rencana trade dengan SL dan TP dari LLM yang membaca otak neural, situasi mirip di masa lalu, sesi, dan berita. Tidak ada order yang dikirim: isi tiket kalau setuju.</p>
+      <div class="row antools">
+        <label>Timeframe <select id="an-tf"><option value="M15">M15</option><option value="H1" selected>H1</option><option value="H4">H4</option></select></label>
+        <button id="an-run" class="btn primary" type="button" disabled>Analisa sekarang</button>
+      </div>
+      <div id="an-card" class="ancard" hidden></div>
+      <div id="an-record" class="anrecord" hidden></div>
+      <details class="sub" id="an-brain-box">
+        <summary>Otak neural <span id="an-brain-pill" class="pill off">–</span></summary>
+        <div id="an-brain" class="anbrain"></div>
+        <div class="row"><button id="an-train" class="btn mini" type="button">Latih ulang sekarang</button><span id="an-train-note" class="hint"></span></div>
+      </details>
+      <details class="sub">
+        <summary>Riwayat rencana</summary>
+        <div id="an-plans" class="simtable"></div>
+      </details>
+    </details>
+    <details class="pane candle" id="candle-pane" open>
+      <summary>Model candle (AI) <span id="cl-pill" class="pill off">–</span></summary>
+      <p class="hint">Transformer yang belajar dari bar M5 menebak 12 candle ke depan (1 jam) dengan pita 10–90%. Dari situ lahir skenario: BUY kalau harga turun ke A, SELL kalau naik ke B. Simulasi dan LLM Analyst ikut membacanya. Tidak ada order yang dikirim dari sini.</p>
+      <div id="cl-train" class="cltrain"></div>
+      <div class="row cltools">
+        <label>Ukuran <select id="cl-size"><option value="fast">fast (cepat)</option><option value="base" selected>base</option><option value="large">large</option><option value="xl">xl</option></select></label>
+        <button id="cl-start" class="btn mini primary" type="button">Mulai latih</button>
+        <button id="cl-stop" class="btn mini danger" type="button" hidden>Hentikan</button>
+        <button id="cl-fresh" class="btn mini" type="button">Mulai dari nol</button>
+        <button id="cl-lab" class="btn mini" type="button">Buka lab</button>
+      </div>
+      <details class="sub"><summary>Ujian kedekatan per candle</summary><div id="cl-exam" class="simtable"></div></details>
+      <div class="row cltools">
+        <label class="check"><input id="cl-draw" type="checkbox" checked> Gambar tebakan di chart</label>
+        <button id="cl-refresh" class="btn mini" type="button">Tebak ulang</button>
+      </div>
+      <div id="cl-fc" class="clfc"></div>
+      <div id="cl-scen" class="clscen"></div>
+    </details>
+    <details class="pane checklist" id="checklist-pane">
+      <summary>Level, waktu &amp; siklus <span id="ck-pill" class="pill off">–</span></summary>
+      <p class="hint">Yang dibaca LLM sebelum memilih arah, dan yang digambar di chart: zona tempat pivot, Fibonacci, range kemarin, dan angka bulat bertemu; jam pasar tiap kota; kebiasaan tiap jam; dan siklus harga. Level adalah zona untuk bertindak, bukan ramalan. Arah per jam dan siklus hanya dipakai kalau lolos uji statistik.</p>
+      <div id="ck-clock" class="ckclock"></div>
+      <div id="ck-zones" class="simtable"></div>
+      <div id="ck-fib" class="ckline"></div>
+      <div id="ck-season" class="ckseason"></div>
+      <div id="ck-cycle" class="ckline"></div>
+      <details class="sub" id="ck-risk-box">
+        <summary>Kalkulator risiko</summary>
+        <div class="two">
+          <label>Win rate % <input id="rk-win" type="number" min="1" max="99" step="1" value="45"></label>
+          <label>R:R (1 : x) <input id="rk-rr" type="number" min="0.1" max="50" step="0.1" value="2"></label>
+        </div>
+        <div class="two">
+          <label>Risiko per trade % <input id="rk-risk" type="number" min="0.05" max="10" step="0.05" value="1"></label>
+          <label>Jumlah trade <input id="rk-n" type="number" min="1" max="10000" step="1" value="100"></label>
+        </div>
+        <div id="rk-out" class="kvgrid"></div>
+        <p id="rk-note" class="hint"></p>
+      </details>
+    </details>
+    <details class="pane auto" id="auto-pane">
+      <summary>Auto trade <span id="auto-pill" class="pill off">mati</span></summary>
+      <p class="hint">Otak neural (dan LLM) membuka order sungguhan di akun yang terhubung: SL asli di terminal, tanpa TP. Saat harga menyentuh level target, SL dikunci sedikit di bawahnya lalu mengikuti harga (trailing), jadi posisi ditutup oleh SL saat harga berbalik. Satu posisi sekaligus. Berhenti sendiri saat rugi harian menyentuh batas.</p>
+      <div class="two">
+        <label>Timeframe <select id="auto-tf"><option value="M15">M15</option><option value="H1" selected>H1</option><option value="H4">H4</option></select></label>
+        <label>Yang memutuskan <select id="auto-mode"><option value="brain">Otak neural</option><option value="llm">LLM Analyst</option><option value="agree">Otak &amp; LLM sepakat</option></select></label>
+      </div>
+      <div class="two">
+        <label>Lot <input id="auto-lots" type="number" min="0.01" max="1" step="0.01" value="0.01"></label>
+        <label>Rugi harian maks. % <input id="auto-loss" type="number" min="0.1" max="20" step="0.1" value="2"></label>
+      </div>
+      <div class="two">
+        <label title="Setelah level target tersentuh, SL mengikuti harga terbaik sejauh ini × ATR">Trailing × ATR <input id="auto-trail" type="number" min="0.2" max="5" step="0.1" value="1"></label>
+        <label title="Saat target tersentuh, SL dikunci sejauh ini × ATR di belakang target">Kunci di TP − × ATR <input id="auto-lock" type="number" min="0" max="2" step="0.1" value="0.3"></label>
+      </div>
+      <div class="two">
+        <label>Batas jam <input id="auto-hours" type="number" min="1" max="168" value="24"></label>
+        <label class="check" title="Tanpa ini auto trade hanya jalan di akun demo"><input id="auto-live" type="checkbox"> Izinkan akun live</label>
+      </div>
+      <div class="row">
+        <button id="auto-start" class="btn danger" type="button" disabled>Mulai auto trade</button>
+        <button id="auto-stop" class="btn" type="button" hidden>Hentikan</button>
+        <span id="auto-note" class="hint"></span>
+      </div>
+      <div id="auto-status" class="ancard" hidden></div>
+      <details class="sub"><summary>Log auto trade</summary><div id="auto-log" class="simtable"></div></details>
+    </details>
+    <details class="pane" open>
+      <summary>Usulan kuantitatif (M5)</summary>
+      <div class="row"><button id="propose" class="btn" disabled>Lihat usulan</button>
+        <button id="fill" class="btn" disabled>Isi tiket</button></div>
+      <div id="proposal" class="previewbox" hidden></div>
+      <p class="hint">Hanya usulan. Order tetap perlu Preview dan konfirmasi.</p>
+    </details>
+    <details class="pane" open>
+      <summary>Simulasi live <span id="sim-pill" class="pill off">siap</span></summary>
+      <p class="hint">Posisi virtual di harga live: buka, tahan, tutup, ulangi, sampai satu aturan menang di atas target. Tidak ada order yang dikirim.</p>
+      <div class="row"><button id="sim-start" class="btn primary" disabled>Mulai simulasi</button><button id="sim-stop" class="btn danger" hidden>Hentikan simulasi</button></div>
+      <label>Gaya <select id="sim-style">
+        <option value="">Scalping: tahan detik, bar 5 detik</option>
+        <option value="M15">Harian (intraday): bar M15</option>
+        <option value="H1">Harian (intraday): bar H1</option>
+        <option value="H4">Harian (intraday): bar H4</option>
+      </select></label>
+      <p id="sim-style-note" class="hint"></p>
+      <div class="two sim-scalp">
+        <label>Tahan (detik) <input id="sim-hold" type="number" min="5" max="600" value="30"></label>
+        <label>Batas menit <input id="sim-max" type="number" min="1" max="240" value="60"></label>
+      </div>
+      <div class="two sim-day" hidden>
+        <label>Tahan maks. (bar) <input id="sim-bars" type="number" min="1" max="48" value="4"></label>
+        <label>Batas jam <input id="sim-hours" type="number" min="1" max="168" value="24"></label>
+      </div>
+      <label class="check sim-day" hidden><input id="sim-brain" type="checkbox" checked> Otak neural ikut trade dan belajar dari setiap bar (LLM membaca otak dan menulis rencana ke kartu Analyst)</label>
+      <label class="check sim-day" hidden><input id="sim-candle" type="checkbox" checked> Model candle ikut trade: order limit di A dan B (yang satu batal kalau yang lain terisi), atau masuk langsung kalau model condong</label>
+      <div class="two sim-day" hidden>
+        <label>Stop × ATR <input id="sim-stop-atr" type="number" min="0" max="10" step="0.1" value="1.5"></label>
+        <label>Target × ATR <input id="sim-target-atr" type="number" min="0" max="10" step="0.1" value="2"></label>
+      </div>
+      <div class="two sim-day" hidden>
+        <label title="0 = TP tetap. Di atas 0: menyentuh TP tidak menutup posisi; SL dikunci sedikit di bawah TP lalu mengikuti harga terbaik sejauh ini × ATR">Trailing × ATR (otak &amp; LLM) <input id="sim-trail-atr" type="number" min="0" max="5" step="0.1" value="0"></label>
+        <label title="Saat TP tersentuh, SL dikunci sejauh ini × ATR di belakang TP">Kunci di TP − × ATR <input id="sim-lock-atr" type="number" min="0" max="2" step="0.1" value="0.3"></label>
+      </div>
+      <div class="two">
+        <label>Target menang % <input id="sim-target" type="number" min="51" max="95" value="60"></label>
+        <label>Minimal trade <input id="sim-min" type="number" min="5" max="1000" value="20"></label>
+      </div>
+      <fieldset class="llmbox">
+        <legend>LLM trading</legend>
+        <label class="check"><input id="llm-on" type="checkbox"> LLM ikut ambil posisi virtual</label>
+        <label>Model <select id="llm-model"><option value="">memuat daftar Router…</option></select></label>
+        <div class="row"><span id="llm-model-note" class="hint"></span><button id="llm-refresh" class="btn mini" type="button">Muat ulang daftar</button></div>
+        <div class="two">
+          <label>Maks. panggilan <input id="llm-max" type="number" min="1" max="2000" value="120"></label>
+          <label>Forward test <select id="llm-forward"><option value="off">tanpa LLM</option><option value="confirm">LLM menyetujui</option><option value="decide">LLM memutuskan</option></select></label>
+        </div>
+        <p class="hint">Satu panggilan per siklus, jadi memakai token. Model yang sama dipakai forward test (bot demo). Biayanya ikut tercatat di halaman Router.</p>
+      </fieldset>
+      <div id="sim-cycle" class="simcycle" hidden><div class="simbar"><i id="sim-bar"></i></div><span id="sim-left" class="hint"></span></div>
+      <div id="sim-found" class="previewbox ok" hidden></div>
+      <div id="sim-llm" class="previewbox" hidden></div>
+      <div id="sim-table" class="simtable"></div>
+      <p id="sim-note" class="hint"></p>
+      <p id="sim-significance" class="hint" hidden></p>
+      <div id="sim-math" class="simmath" hidden></div>
+      <div id="sim-sessions" class="simtable" hidden></div>
+      <div id="sim-conditions" class="simtable" hidden></div>
+      <div id="sim-cycles" class="simtable" hidden></div>
+    </details>
+    <details class="pane" id="news-pane">
+      <summary>Berita &amp; kondisi pasar <span id="news-pill" class="pill off">–</span></summary>
+      <div class="row"><button id="news-refresh" class="btn mini">Muat ulang</button><span id="news-age" class="hint"></span></div>
+      <div id="news-body" class="newsbody"><p class="hint">Buka bagian ini untuk memuat berita.</p></div>
+    </details>
+    <details class="pane">
+      <summary>Backtest</summary>
+      <label>Bar M5 <select id="bt-count"><option value="2000">2.000</option><option value="5000" selected>5.000</option><option value="10000">10.000</option></select></label>
+      <div class="row"><button id="backtest" class="btn" disabled>Jalankan backtest</button></div>
+      <div id="btresult" class="previewbox" hidden></div>
+      <div class="row">
+        <button id="scalp" class="btn" disabled>Scalp 30 detik · 5 posisi</button>
+        <label class="check"><input id="scalp-llm" type="checkbox"> Atur oleh LLM</label>
+      </div>
+      <div id="scalpresult" class="previewbox" hidden></div>
+    </details>
+    <details class="pane">
+      <summary>Akun</summary>
+      <p id="acct" class="hint"></p>
+      <dl id="acctdl" class="kv"></dl>
+    </details>
+  </aside>
+</main>
+
+<div id="connmodal" class="modal" hidden>
+  <div class="dialog">
+    <h3>Koneksi</h3>
+    <label>Backend
+      <select id="backend">
+        <option value="mt4">MT4 (EA bridge)</option>
+        <option value="sim">Simulasi (tanpa broker)</option>
+        <option value="mt5">MT5 terminal (Windows)</option>
+      </select>
+    </label>
+    <div id="mt5-fields" hidden>
+      <label>Login <input id="login" type="number" min="0" placeholder="12345678"></label>
+      <label>Password <input id="password" type="password" autocomplete="off"></label>
+      <label>Server <input id="server" type="text" placeholder="Broker-Demo"></label>
+      <label>Path terminal (opsional) <input id="path" type="text" placeholder="C:\Program Files\MetaTrader 5\terminal64.exe"></label>
+    </div>
+    <label id="token-row" hidden>Token <input id="token" type="password" autocomplete="off" placeholder="Hanya untuk kirim order dari luar mesin ini"></label>
+    <p class="hint">Password tidak disimpan di browser. Akun riil butuh <code>MT5_ALLOW_LIVE=1</code>.</p>
+    <div class="row">
+      <button id="connect" class="btn primary">Hubungkan</button>
+      <button id="disconnect" class="btn" disabled>Putuskan</button>
+      <button id="pairbtn" class="btn">Pasang EA</button>
+      <span class="grow"></span>
+      <button id="conn-close" class="btn">Tutup</button>
+    </div>
+  </div>
+</div>
+
+<div id="pairmodal" class="modal" hidden>
+  <div class="dialog wide">
+    <h3>Pasang EA MT4</h3>
+    <p class="hint">Ikuti langkah ini sekali saja.</p>
+    <ol id="pair-steps" class="steps"></ol>
+    <p class="hint">Preset untuk tab Inputs EA:</p>
+    <div class="row"><button id="pair-download" class="btn primary">Unduh Mt4Bridge.set</button>
+      <button id="pair-copy" class="btn">Salin secret</button>
+      <button id="pair-rotate" class="btn">Buat secret baru</button></div>
+    <p id="pair-msg" class="hint"></p>
+    <div class="row end"><button id="pair-close" class="btn">Tutup</button></div>
+  </div>
+</div>
+
+<div id="modifymodal" class="modal" hidden>
+  <div class="dialog">
+    <h3>Ubah SL / TP</h3>
+    <p id="mod-info" class="hint"></p>
+    <label>Stop loss <input id="mod-sl" type="number" step="any" placeholder="kosong = hapus SL"></label>
+    <label>Take profit <input id="mod-tp" type="number" step="any" placeholder="kosong = hapus TP"></label>
+    <div id="mod-problems" class="previewbox bad" hidden></div>
+    <div class="row end">
+      <button id="mod-cancel" class="btn">Batal</button>
+      <button id="mod-ok" class="btn primary">Pratinjau</button>
+    </div>
+  </div>
+</div>
+
+<div id="share-modal" class="modal" hidden>
+  <div id="share-dialog" class="dialog share-dialog">
+    <h3>Bagikan</h3>
+    <img id="share-img" class="share-img" alt="Kartu untuk dibagikan">
+    <div class="row share-styles">
+      <button class="btn mini" data-style="gelap">Gelap</button>
+      <button class="btn mini" data-style="neon">Neon</button>
+      <button class="btn mini" data-style="terang">Terang</button>
+      <button class="btn mini" data-style="bursa">Bursa</button>
+      <button class="btn mini" data-style="biru">Biru</button>
+      <label class="check"><input id="share-hide" type="checkbox"> Sembunyikan nominal</label>
+    </div>
+    <p id="share-msg" class="hint"></p>
+    <div class="row end">
+      <button id="share-close" class="btn">Tutup</button>
+      <button id="share-copy" class="btn">Salin</button>
+      <button id="share-send" class="btn">Bagikan</button>
+      <button id="share-download" class="btn primary">Unduh PNG</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal" class="modal" hidden>
+  <div class="dialog">
+    <h3 id="m-title">Konfirmasi</h3>
+    <div id="m-body" class="m-body"></div>
+    <p id="m-timer" class="hint"></p>
+    <div class="row end">
+      <button id="m-cancel" class="btn">Batal</button>
+      <button id="m-ok" class="btn primary">Kirim</button>
+    </div>
+  </div>
+</div>
+
+<section id="lab" class="lab" hidden aria-labelledby="lab-title">
+  <header class="lab-head">
+    <button id="lab-back" class="btn" type="button" title="Kembali ke trading (Esc)">← Trading</button>
+    <div class="lab-name">
+      <h1 id="lab-title">Lab model candle</h1>
+      <p id="lab-sub" class="lab-sub">–</p>
+    </div>
+    <span id="lab-pill" class="pill off" role="status">–</span>
+    <span class="grow"></span>
+    <div class="lab-actions">
+      <button id="lab-reset" class="btn" type="button" title="Learning rate kembali penuh setelah epoch ini; membangunkan run yang menunggu data">Segarkan LR</button>
+      <button id="lab-save" class="btn" type="button" title="Tulis best.pt setelah epoch ini">Simpan sekarang</button>
+      <button id="lab-fresh" class="btn" type="button" title="Hapus model ukuran ini dan belajar dari awal">Mulai dari nol</button>
+      <button id="lab-toggle" class="btn primary" type="button">Mulai latih</button>
+    </div>
+  </header>
+
+  <div class="lab-body">
+    <div class="lab-sizes" id="lab-sizes" role="tablist" aria-label="Ukuran model"></div>
+    <p id="lab-note" class="lab-note" hidden></p>
+    <div class="lab-kpis" id="lab-kpis"></div>
+
+    <div class="lab-grid">
+      <article class="lab-card lab-score">
+        <header class="lab-card-head">
+          <div><h2>Error dibanding tebakan tanpa otak</h2>
+            <p>Per epoch. 100% = sama dengan tidak berpikir; makin rendah makin dekat ke harga asli.</p></div>
+          <div class="lab-legend" id="lab-legend-score"></div>
+        </header>
+        <div class="lab-chart" id="lab-chart-score"></div>
+        <details class="lab-table"><summary>Tabel epoch terakhir</summary><div id="lab-table-score" class="simtable"></div></details>
+      </article>
+
+      <article class="lab-card lab-candles">
+        <header class="lab-card-head">
+          <div><h2>Ujian per candle ke depan</h2>
+            <p>Selisih kedekatan dengan tebakan tanpa otak, dalam poin. Di atas nol = model lebih dekat.</p></div>
+          <div class="lab-seg" id="lab-exam-pick" role="group" aria-label="Versi">
+            <button type="button" data-v="best" class="on">Terbaik</button><button type="button" data-v="last">Terakhir</button>
+          </div>
+        </header>
+        <div class="lab-chart short" id="lab-chart-candle"></div>
+        <details class="lab-table"><summary>Tabel lengkap</summary><div id="lab-table-candle" class="simtable"></div></details>
+      </article>
+
+      <article class="lab-card lab-settings">
+        <header class="lab-card-head">
+          <div><h2>Setelan latihan</h2>
+            <p>Yang hijau berlaku langsung di run yang jalan (setelah epoch ini). Sisanya saat mulai lagi.</p></div>
+        </header>
+        <form id="lab-form" class="lab-form" novalidate></form>
+        <div class="lab-form-foot">
+          <button id="lab-defaults" class="btn" type="button">Isi default</button>
+          <span id="lab-form-msg" class="lab-form-msg" role="status"></span>
+          <span class="grow"></span>
+          <button id="lab-apply" class="btn primary" type="button">Simpan setelan</button>
+        </div>
+      </article>
+
+      <article class="lab-card lab-small">
+        <header class="lab-card-head"><div><h2>Learning rate</h2><p>Turun setengah tiap kali mentok.</p></div></header>
+        <div class="lab-chart mini" id="lab-chart-lr"></div>
+        <header class="lab-card-head"><div><h2>Detik per epoch</h2><p>Lebih lambat saat laptop dipakai: trainer jalan di prioritas terendah.</p></div></header>
+        <div class="lab-chart mini" id="lab-chart-sec"></div>
+      </article>
+
+      <article class="lab-card lab-logcard">
+        <header class="lab-card-head">
+          <div><h2>Log trainer</h2><p>candle_lm.log, diperbarui tiap beberapa detik.</p></div>
+          <label class="lab-check"><input id="lab-log-key" type="checkbox"> Baris penting saja</label>
+        </header>
+        <pre id="lab-log" class="lab-log" tabindex="0" aria-label="Log trainer"></pre>
+      </article>
+    </div>
+  </div>
+  <div id="lab-tip" class="lab-tip" hidden></div>
+</section>
+
+<script src="/static/trading/chart.js"></script>
+<script src="/static/trading/panel-core.js"></script>
+<script src="/static/trading/panel-tables.js"></script>
+<script src="/static/trading/panel-ticket.js"></script>
+<script src="/static/trading/panel-sim.js"></script>
+<script src="/static/trading/panel-news.js"></script>
+<script src="/static/trading/panel-brain.js"></script>
+<script src="/static/trading/panel-candle.js"></script>
+<script src="/static/trading/lab.js"></script>
+<script src="/static/trading/panel-levels.js"></script>
+<script src="/static/trading/panel-auto.js"></script>
+<script src="/static/trading/panel-share.js"></script>
+<script src="/static/trading/panel-recap.js"></script>
+<script src="/static/trading/trading.js"></script>
+</body>
+</html>

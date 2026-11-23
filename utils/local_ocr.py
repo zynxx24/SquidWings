@@ -31,9 +31,18 @@ How an image is read, so that nearly every image with text gives its text
 3. Upside down: the clearest lines are read again both ways up without the line classifier. When
    most read better turned over, the page is turned 180 degrees and read again, so the lines come
    out in reading order instead of last line first.
-4. Unsure (average confidence below ``GOOD_ENOUGH``) or nothing found: read again from cleaned-up
+4. Small text (lines under ``SMALL_TEXT_PX`` tall, a phone screenshot or the fine print of a
+   receipt): read again at twice the size even when the first reading looked sure, since tiny
+   glyphs are often read wrong with confidence.
+5. Unsure (average confidence below ``GOOD_ENOUGH``) or nothing found: read again from cleaned-up
    copies (contrast-equalised grey, twice the size, inverted when the page is dark, sharpened),
    and the reading with the most confident text wins.
+6. Missed lines: where the gap between two lines is about one line tall or more and that band
+   holds ink, the band is detected again from a sharpened, enlarged copy, so a blurred line the
+   detector skipped is still read.
+7. Line by line: each line still read with less than ``LINE_RETRY_BELOW`` confidence is cut out
+   with a margin and read again on its own, enlarged, contrast-equalised and as black on white,
+   and the surest of those readings replaces it. One smudged line no longer costs the page.
 
 It reads text only. It cannot describe a photo or a chart.
 """
@@ -62,6 +71,13 @@ MIN_SIDE = 48             # a smaller image is scaled up first
 UPRIGHT_SHARE = 0.6       # this share of boxes standing upright means the page lies on its side
 FLIP_SHARE = 0.6          # this share of probed lines reading better turned over means upside down
 PROBE_LINES = 6
+SMALL_TEXT_PX = 14        # median line height below this: also read at twice the size
+LINE_RETRY_BELOW = 0.8    # a line read less surely than this is read again on its own
+LINE_PAD = 4              # pixels of margin around a line cut out for a second look
+MAX_LINE_RETRIES = 60
+GAP_LINES = 0.9           # a gap this many line heights tall between two lines may hide a missed one
+GAP_INK_STD = 12.0        # a band with less pixel spread than this is empty paper
+MAX_GAPS = 12
 BLANK_STD = 4.0           # pixel spread below this with no text found: a blank page, not retried
 TIERS = ("max", "best", "latin", "fast")
 
@@ -290,6 +306,98 @@ def _variants(image: np.ndarray) -> list[tuple[str, np.ndarray]]:
     return out
 
 
+def _median_height(boxes: list[Box]) -> float:
+    heights = sorted(
+        min(abs(c[3][1] - c[0][1]), abs(c[2][1] - c[1][1])) or (max(p[1] for p in c) - min(p[1] for p in c))
+        for c, _, _ in boxes if len(c) == 4
+    )
+    return float(heights[len(heights) // 2]) if heights else 0.0
+
+
+def _twice(engine: Any, image: np.ndarray) -> Reading:
+    import cv2
+
+    big = cv2.resize(image, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    trial = Reading(_kept(engine.run(big)), "2x")
+    trial.boxes = [([[x / 2, y / 2] for x, y in c], t, s) for c, t, s in trial.boxes]
+    return trial
+
+
+def _line_variants(crop: np.ndarray) -> list[np.ndarray]:
+    """One line, enlarged, as it is, contrast-equalised, and as black on white (Otsu)."""
+    import cv2
+
+    scale = 2 if crop.shape[0] < 64 else 1
+    big = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC) if scale > 1 else crop
+    grey = cv2.cvtColor(big, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(4, 4)).apply(grey)
+    _, otsu = cv2.threshold(clahe, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if float(otsu.mean()) < 127:      # light text on dark: make it dark on light
+        otsu = 255 - otsu
+    return [big, cv2.cvtColor(clahe, cv2.COLOR_GRAY2BGR), cv2.cvtColor(otsu, cv2.COLOR_GRAY2BGR)]
+
+
+def _refine_lines(engine: Any, image: np.ndarray, reading: Reading, deadline: float) -> int:
+    """Read each unsure line again on its own; keep a clearly surer reading. Returns lines improved."""
+    h, w = image.shape[:2]
+    improved = 0
+    unsure = sorted((i for i, b in enumerate(reading.boxes) if b[2] < LINE_RETRY_BELOW), key=lambda i: reading.boxes[i][2])
+    for i in unsure[:MAX_LINE_RETRIES]:
+        if time.monotonic() > deadline:
+            break
+        corners, text, score = reading.boxes[i]
+        xs, ys = [p[0] for p in corners], [p[1] for p in corners]
+        x0, x1 = max(0, int(min(xs)) - LINE_PAD), min(w, int(math.ceil(max(xs))) + LINE_PAD)
+        y0, y1 = max(0, int(min(ys)) - LINE_PAD), min(h, int(math.ceil(max(ys))) + LINE_PAD)
+        crop = np.ascontiguousarray(image[y0:y1, x0:x1])
+        if crop.size == 0 or min(crop.shape[:2]) < 6:
+            continue
+        best_text, best_score = text, score
+        for variant in _line_variants(crop):
+            for _, found, found_score in engine.run(variant, det=False, cls=False):
+                if found.strip() and found_score > best_score:
+                    best_text, best_score = found, found_score
+        # A clear gain only: a near tie keeps what the whole-page reading saw in context.
+        if best_score >= score + 0.05 and best_text.strip():
+            reading.boxes[i] = (corners, best_text, best_score)
+            improved += 1
+    return improved
+
+
+def _fill_gaps(engine: Any, image: np.ndarray, reading: Reading, deadline: float) -> int:
+    """Detect again inside suspicious gaps between lines. Returns the lines added."""
+    import cv2
+
+    spans = sorted(
+        (min(p[1] for p in c), max(p[1] for p in c), min(p[0] for p in c), max(p[0] for p in c))
+        for c, _, _ in reading.boxes
+    )
+    if len(spans) < 2:
+        return 0
+    height = _median_height(reading.boxes) or 1.0
+    h, w = image.shape[:2]
+    left, right = max(0, int(min(s[2] for s in spans)) - 8), min(w, int(max(s[3] for s in spans)) + 8)
+    added: list[Box] = []
+    gaps = 0
+    bottom = spans[0][1]
+    for top, low, _, _ in spans[1:]:
+        if top - bottom >= GAP_LINES * height + 0.5 * height and gaps < MAX_GAPS and time.monotonic() < deadline:
+            gaps += 1
+            y0, y1 = max(0, int(bottom) + 1), min(h, int(top) - 1)
+            band = image[y0:y1, left:right]
+            if band.size and float(cv2.cvtColor(band, cv2.COLOR_BGR2GRAY).std()) >= GAP_INK_STD:
+                grey = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY)
+                sharp = cv2.addWeighted(grey, 1.8, cv2.GaussianBlur(grey, (0, 0), 1.2), -0.8, 0)
+                big = cv2.resize(cv2.cvtColor(sharp, cv2.COLOR_GRAY2BGR), None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+                pad = cv2.copyMakeBorder(big, 16, 16, 16, 16, cv2.BORDER_REPLICATE)
+                for corners, text, score in _kept(engine.run(pad)):
+                    page = [[(x - 16) / 2 + left, (y - 16) / 2 + y0] for x, y in corners]
+                    added.append((page, text, score))
+        bottom = max(bottom, low)
+    reading.boxes.extend(added)
+    return len(added)
+
+
 def _read(engine: Any, image: np.ndarray, deadline: float) -> tuple[Reading, list[str]]:
     passes = ["asli"]
     best = Reading(_kept(engine.run(image)), "asli")
@@ -308,8 +416,18 @@ def _read(engine: Any, image: np.ndarray, deadline: float) -> tuple[Reading, lis
             best = turned
 
     blank = not best.chars and float(image.std()) < BLANK_STD          # an empty page: nothing to clean up
+    tried_twice = False
+    if (best.chars and 0 < _median_height(best.boxes) < SMALL_TEXT_PX and max(image.shape[:2]) * 2 <= MAX_SIDE
+            and time.monotonic() < deadline):
+        trial = _twice(engine, image)
+        passes.append("2x (teks kecil)")
+        tried_twice = True
+        if trial.weight > best.weight:
+            best = trial
     if (best.confidence < GOOD_ENOUGH or not best.chars) and not blank:
         for name, variant in _variants(image):
+            if name == "2x" and tried_twice:
+                continue
             if time.monotonic() > deadline:
                 passes.append("waktu habis")
                 break
@@ -321,6 +439,15 @@ def _read(engine: Any, image: np.ndarray, deadline: float) -> tuple[Reading, lis
                 best = trial
             if best.confidence >= GOOD_ENOUGH and best.chars:
                 break
+    if best.boxes and time.monotonic() < deadline:
+        found = _fill_gaps(engine, image, best, deadline)
+        if found:
+            passes.append(f"celah ({found})")
+    if best.boxes and time.monotonic() < deadline:
+        # Line boxes are in page coordinates; a reading from a turned copy matches the turned image.
+        fixed = _refine_lines(engine, image, best, deadline)
+        if fixed:
+            passes.append(f"baris ulang ({fixed})")
     return best, passes
 
 

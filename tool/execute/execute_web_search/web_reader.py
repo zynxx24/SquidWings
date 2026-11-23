@@ -52,8 +52,8 @@ _MAX_RENDERS = 2
 _THIN_TEXT_CHARS = 500
 _CACHE_SECONDS = 1800.0
 _CACHE_ENTRIES = 100
-_DEFAULT_PAGE_CHARS = 8_000
-_RESEARCH_TOTAL_CHARS = 12_000
+_DEFAULT_PAGE_CHARS = 60_000
+_RESEARCH_TOTAL_CHARS = 120_000
 _RESEARCH_SEARCH_RESULTS = 8
 _RESEARCH_DEADLINE = 40.0
 _RESEARCH_EXTRA_PAGES = 2
@@ -308,13 +308,27 @@ async def fetch_page(url: str) -> Page:
 
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
+_BARE_DOMAIN = re.compile(r"^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:[/?#]\S*)?$", re.IGNORECASE)
+
+
 async def web_read(url: str, query: str = "", max_chars: int = _DEFAULT_PAGE_CHARS) -> dict[str, Any]:
-    """Open one page and return its main content."""
+    """Open one page and return its main content.
+
+    Small models often pass a search phrase or a bare domain here. A domain gets https://,
+    and a phrase is searched with web_research instead of failing.
+    """
+    url = url.strip().strip("<>\"'")
+    if not urlparse(url).scheme:
+        if _BARE_DOMAIN.match(url):
+            url = f"https://{url}"
+        elif " " in url or not url:
+            found = await web_research(f"{url} {query}".strip())
+            return {**found, "note": f"'{url}' is not an address, so it was searched instead. " + str(found.get("note", ""))}
     try:
-        page = await fetch_page(url.strip())
+        page = await fetch_page(url)
     except PageUnavailableError as exc:
         return {"ok": False, "url": url, "error": str(exc), "note": "Try another source."}
-    content, cut = passages(page.text, query, max(500, min(max_chars, 20_000)))
+    content, cut = passages(page.text, query, max(500, min(max_chars, 400_000)))
     return {
         "ok": True,
         "url": page.url,

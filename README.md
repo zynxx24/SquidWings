@@ -11,9 +11,9 @@ mengubah file, menjalankan perintah di sandbox, dan memeriksa hasilnya sendiri.
 ![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-555)
 ![API](https://img.shields.io/badge/API-OpenAI--compatible-10a37f)
 ![Sandbox](https://img.shields.io/badge/sandbox-bubblewrap%20%7C%20Docker-orange)
-![License](https://img.shields.io/badge/license-Commercial-critical)
+![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 
-[Mulai cepat](#-mulai-cepat) · [Edisi](#-edisi) · [Fitur](#-fitur) · [Struktur file](#-struktur-file) · [Pengaturan](#%EF%B8%8F-pengaturan) · [Pengembangan](#-pengembangan) · [Lisensi](#-lisensi-dan-pembelian)
+[Mulai cepat](#-mulai-cepat) · [Modul](#-modul-trading-dan-studio) · [Fitur](#-fitur) · [Struktur file](#-struktur-file) · [Pengaturan](#%EF%B8%8F-pengaturan) · [Pengembangan](#-pengembangan) · [Lisensi](#-lisensi)
 
 </div>
 
@@ -50,23 +50,17 @@ Tidak perlu mengunduh ulang. Setiap kali dijalankan, SquidWings mengambil versi 
 > [!IMPORTANT]
 > **Tidak ada login.** Web UI hanya menerima akses dari mesin ini secara bawaan. Dengan `--tunnel`, siapa pun yang punya URL-nya bisa memakai agent dan membaca semua chat.
 
-## 🧩 Edisi
+## 🧩 Modul trading dan Studio
 
-Repositori ini berisi **SquidWings Community**: harness, chat, tim agent, toolbox, router model, dan keamanan, lengkap. Modul trading adalah bagian **SquidWings Enterprise** dan tidak ada di repositori ini, termasuk di riwayat commit-nya.
+Semua fitur ada di repositori ini dan gratis, tanpa edisi berbayar:
 
-| | Community (repo ini) | Enterprise |
-|---|:---:|:---:|
-| Chat terminal dan web, tim agent, toolbox 144 tool | ✅ | ✅ |
-| Execution harness, router model, sandbox, keamanan | ✅ | ✅ |
-| Panel trading `/trading`, chart, dan tiket order | — | ✅ |
-| Jembatan EA MT4 dan adapter MT5 | — | ✅ |
-| Model kuant, otak neural, LLM analyst, simulasi live | — | ✅ |
-| Auto trade dengan stop loss dan trailing stop | — | ✅ |
-| Tool `trading_snapshot` dan skill `analis-trading` | — | ✅ |
+- **Trading:** panel `/trading` dengan chart dan tiket order, jembatan EA MT4 dan adapter MT5, model kuant, otak neural, LLM analyst, simulasi live, auto trade dengan stop loss dan trailing stop, tool `trading_snapshot`, dan skill `analis-trading`. Pengaturannya ada di `trading/env.enterprise.example`.
+- **Studio video:** editor motion dengan keyframe, catatan, dan chat revisi.
 
-Cara kerjanya ada di `config/edition.py`. Bila file modul Enterprise terpasang di tempatnya, server, CLI, registry tool, dan skill menyalakannya sendiri. Bila tidak ada, menu Trading tersembunyi, `/trading` menjelaskan edisinya, dan `python main.py trading` berhenti dengan pesan yang jelas, bukan error import. `ENTERPRISE_TRADING=0` mematikan modul itu walau terpasang.
+Kedua modul opsional. `config/edition.py` menyalakannya bila filenya ada; bila dihapus, sisanya tetap berjalan dan menu itu tersembunyi. `ENTERPRISE_TRADING=0` atau `ENTERPRISE_STUDIO=0` mematikannya walau terpasang. Data trading (`trading/data/`: jurnal, histori candle, bobot model) tidak ikut di repo.
 
-Lisensi Enterprise: lihat [Lisensi dan pembelian](#-lisensi-dan-pembelian).
+> [!WARNING]
+> Fitur trading tidak menjamin keuntungan. Uji di akun demo dulu; seluruh keputusan dan risiko trading ada pada pemakainya.
 
 ## ✨ Fitur
 
@@ -170,7 +164,7 @@ Pengaturan ada di tiga tempat. Yang di web langsung berlaku tanpa restart.
 | Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `UPLOAD_INLINE_CHARS`, `DOCUMENT_OCR`, `OCR_MAX_IMAGES`, `OCR_TIER`, `OCR_IMAGE_S`, `OCR_TOTAL_S`, `SEND_IMAGES` |
 | Alat lokal | `GRAPHIFY_AUTO`, `AISLOP_AUTO`, `TOOLS_AUTO_UPDATE` |
 | Suara dan brief | `VOICE_LANG`, `VOICE_STT_MODEL`, `ELEVENLABS_API_KEY`, `DAILY_BRIEF`, `BRIEF_TIME` |
-| Edisi | `ENTERPRISE_TRADING` (`0` mematikan modul Enterprise) |
+| Modul | `ENTERPRISE_TRADING`, `ENTERPRISE_STUDIO` (`0` mematikan modul trading atau Studio) |
 
 </details>
 
@@ -314,7 +308,7 @@ python -m tests.routing_eval     # akurasi routing: jenis tugas, skill, dan tool
 
 Kasus routing ada di `tests/eval_data/*.json`; menambah prompt tidak perlu menyentuh kode. Kasus bertanda `"gap": true` adalah kekurangan yang sudah diketahui: tesnya gagal-yang-diharapkan, jadi saat diperbaiki tes memintamu menghapus tandanya.
 
-Tes bertanda `enterprise` dilewati sendiri bila modul Enterprise tidak terpasang. Jangan pernah meng-commit `.env`: key disimpan di sana, dan `.env.example` hanya berisi contoh.
+Tes bertanda `enterprise` dilewati sendiri bila modul trading tidak terpasang. Jangan pernah meng-commit `.env`: key disimpan di sana, dan `.env.example` hanya berisi contoh.
 
 ## 🩺 Troubleshooting
 
@@ -326,17 +320,18 @@ Tes bertanda `enterprise` dilewati sendiri bila modul Enterprise tidak terpasang
 | Gambar atau PDF scan tidak terbaca | Periksa `DOCUMENT_OCR=true` dan `pip install -r requirements.txt` (rapidocr). `OCR_TIER=max` untuk scan sangat sulit |
 | Nilai env tidak terbaca | Pindahkan komentar ke baris sendiri |
 | Menu tim tidak muncul | Atur `WEB_TEAMS_ENABLED=true` |
-| Menu Trading tidak ada | Itu fitur Enterprise. Edisi Community memang tidak memuatnya |
+| Menu Trading tidak ada | File modul trading tidak lengkap, atau `ENTERPRISE_TRADING=0` |
 | Port 8080 sudah terpakai | `web` pindah sendiri ke port kosong berikutnya. Untuk SquidWings lama, pakai `--replace` |
 
-## 📜 Lisensi dan pembelian
+## 📜 Lisensi
 
-SquidWings adalah perangkat lunak **berbayar (proprietary)** di bawah SquidWings Commercial License. Kode yang terlihat di repositori ini tidak otomatis boleh dipakai, disalin, atau dijual: hak pakai Enterprise diperoleh dengan membeli lisensi. Syarat lengkap ada di [LICENSE](LICENSE), dan komponen pihak ketiga di [NOTICE](NOTICE).
+SquidWings gratis dan untuk dibagikan, dirilis di bawah **GNU Affero General Public License v3.0** (AGPL-3.0-only), termasuk modul trading dan Studio. Teks lengkapnya ada di [LICENSE](LICENSE), dan atribusi serta komponen pihak ketiga di [NOTICE](NOTICE).
 
-- **Pakai** sesuai jumlah pengguna, instalasi, dan jangka waktu yang dibeli.
-- **Jual beli** lisensi hanya oleh pemilik hak cipta atau penjual resmi yang ditunjuk tertulis.
-- **Tidak boleh** membagikan kode sumber, menghapus pemberitahuan hak cipta, atau menawarkan SquidWings sebagai layanan tanpa izin.
-- **Enterprise** (modul trading) dilisensikan terpisah. Fitur trading tidak menjamin keuntungan.
-- Disediakan **tanpa garansi**. Komponen pihak ketiga (antara lain `animate` dan `humanizer-indonesia`, MIT) memakai lisensinya sendiri.
+Ringkasan singkat (bukan pengganti teks lisensi):
 
-Pembelian lisensi Enterprise, perpanjangan, dan izin khusus: **aguswiraw60@gmail.com**.
+- **Bebas dipakai, diubah, dibagikan, dan di-fork**, termasuk untuk keperluan komersial.
+- **Kode sumber tetap terbuka.** Jika kamu membagikan SquidWings atau turunannya, atau menjalankannya sebagai layanan yang diakses orang lain lewat jaringan (misalnya Web UI atau tunnel), kamu wajib menyediakan seluruh kode sumber versimu dengan lisensi yang sama.
+- **Atribusi dipertahankan.** Pemberitahuan hak cipta, LICENSE, NOTICE, dan tautan ke repositori asli tidak boleh dihapus.
+- Disediakan **tanpa jaminan apa pun**. Fitur trading tidak menjamin keuntungan. Komponen pihak ketiga (antara lain `animate` dan `humanizer-indonesia`, MIT) memakai lisensinya sendiri.
+
+Dengan mengirim pull request, kamu setuju kontribusimu dilisensikan di bawah AGPL-3.0-only yang sama. Kalau membuat fork, kabari lewat issue di repositori ini; itu hanya permintaan, bukan syarat lisensi.

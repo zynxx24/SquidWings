@@ -268,3 +268,17 @@
 @media (prefers-reduced-motion: reduce) {
   #view-team .edge.active, #view-team .node[data-status="running"], #view-team .creator, #view-team .ndv, #view-team .ndv-box { animation: none; }
 }
+#view-team .wf-menu-list .wf-mode { display: grid; gap: 4px; padding: 6px 10px; font-size: 13px; }
+#view-team .wf-menu-list .wf-mode select { width: 100%; }
+
+/* ══ 2026-11 refresh: motion and type (tokens.css palettes) ══ */
+#view-team .edge.auto { animation: wf-flow 1.6s linear infinite; }
+@keyframes wf-flow { to { stroke-dashoffset: -20; } }
+#view-team .node-icon { transition: transform 340ms var(--spring); }
+#view-team .node:hover .node-icon { transform: rotate(-8deg) scale(1.1); }
+#view-team .node-name { letter-spacing: -0.01em; }
+#view-team .wf-tabs button { transition: background-color var(--dur), color var(--dur), box-shadow var(--dur); }
+#view-team .wf-plus { transition: transform 320ms var(--spring), box-shadow var(--dur); }
+#view-team .wf-plus:hover { transform: rotate(90deg) scale(1.06); box-shadow: 0 8px 22px color-mix(in srgb, var(--accent) 35%, transparent); }
+#view-team:not(.hidden) .wf-top { animation: hero-in 520ms var(--out) both; }
+@media (prefers-reduced-motion: reduce) { #view-team .edge.auto { animation: none; } }

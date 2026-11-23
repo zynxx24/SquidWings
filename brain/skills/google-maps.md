@@ -1,9 +1,9 @@
 ---
 name: google-maps
 description: Mengolah data tempat dari Google Maps (hasil scraper atau ekspor) dan pertanyaan lokasi - impor, saring, rangking, jarak, tempat terdekat, link peta, dan daftar leads - dengan kontak pribadi dibuang kecuali diminta.
-triggers: google maps, gmaps, peta, scrape maps, scraper maps, google-maps-scraper, gosom, hasil scrape, hasil scraping, data tempat, daftar tempat, tempat terdekat, terdekat, lokasi, koordinat, jarak, rute, leads, nearby, near me, dekat sini, sekitar sini
+triggers: google maps, gmaps, peta, scrape maps, scraper maps, google-maps-scraper, gosom, hasil scrape, hasil scraping, data tempat, daftar tempat, tempat terdekat, terdekat, lokasi, koordinat, jarak, rute, leads, nearby, near me, dekat sini, sekitar sini, tempat makan, rekomendasi tempat, kuliner, restoran terbaik, kafe terbaik, cafe terbaik, seafood, warung makan, tempat nongkrong, tempat wisata, penginapan murah, hotel murah
 scope: contextual
-context: google maps, gmaps, maps, peta, map, scrape, scraper, scraping, tempat, alamat, address, koordinat, latitude, longitude, km, kilometer, sekitar, dekat, rute, route, kota, kecamatan, bisnis, usaha, umkm, toko, klinik, dokter, restoran, rumah makan, kafe, cafe, hotel, apotek, bengkel, salon, laundry, sekolah, kampus, masjid, gereja, spbu, atm, rumah sakit, rating, ulasan, leads, kompetitor, competitor
+context: google maps, seafood, kuliner, makan, nongkrong, wisata, penginapan, jimbaran, kuta, ubud, seminyak, canggu, denpasar, bandung, jakarta, jogja, yogyakarta, surabaya, malang, semarang, medan, makassar, bali, di daerah, di sekitar, area, gmaps, maps, peta, map, scrape, scraper, scraping, tempat, alamat, address, koordinat, latitude, longitude, km, kilometer, sekitar, dekat, rute, route, kota, kecamatan, bisnis, usaha, umkm, toko, klinik, dokter, restoran, rumah makan, kafe, cafe, hotel, apotek, bengkel, salon, laundry, sekolah, kampus, masjid, gereja, spbu, atm, rumah sakit, rating, ulasan, leads, kompetitor, competitor
 tools: gmaps_import, places_search, places_stats, places_export, osm_nearby, geocode, maps_link, geo_distance
 ---
 # Google Maps dan lokasi
@@ -15,7 +15,8 @@ Kamu membantu orang memakai data tempat: daftar bisnis hasil scrape Google Maps,
 1. **Ada file hasil scrape** (CSV/JSON dari gosom/google-maps-scraper atau ekspor lain) di workspace atau baru diunggah: panggil `gmaps_import(path, query)` sekali. `query` adalah apa yang dicari, mis. "klinik gigi bandung". Setelah itu pakai `places_search`, `places_stats`, `places_export`. Jangan membaca CSV besar dengan `read_file` lalu menghitung sendiri.
 2. **Sudah pernah diimpor di chat ini**: langsung `places_search` / `places_stats`. `places_datasets` menunjukkan dataset yang ada.
 3. **Belum ada data dan pengguna ingin scrape**: `gmaps_scrape(queries)` hanya kalau scraper terpasang. Itu butuh beberapa menit, jadi bilang dulu ke pengguna. Kalau belum terpasang, sampaikan cara pasang dari hasil tool, atau minta mereka mengunggah ekspor.
-4. **Pertanyaan "terdekat" tanpa data scrape** (apotek, ATM, SPBU, masjid, rumah sakit terdekat): `osm_nearby(kind, near)`. Kalau lokasi pengguna belum jelas, tanya alamat atau titiknya. Jangan mengarang lokasi pengguna.
+4. **Pertanyaan "terdekat" tanpa data scrape** (apotek, ATM, SPBU, masjid, rumah sakit terdekat): `osm_nearby(kind, near)`. Kalau lokasi pengguna belum jelas, tanya alamat atau titiknya. Jangan mengarang lokasi pengguna. Kalau hasilnya membawa `note` "none within", bilang bahwa tidak ada dalam radius itu lalu sebut yang terdekat beserta jaraknya.
+4b. **Cari tempat menurut nama atau jenis tanpa data scrape** ("seafood di Jimbaran", "kafe di Dago"): `places_search(text, near=area)` langsung mencari live di OpenStreetMap. Hasilnya tanpa rating; sertakan `google_maps_search` supaya pengguna bisa membuka pencarian yang sama di Google Maps. Untuk "terbaik" atau rating, tambah `web_search` ulasan (mis. "seafood Jimbaran ulasan terbaik") dan sebut sumbernya; jangan mengarang rating.
 5. **Alamat ke koordinat**: `geocode`. Koordinat ke alamat: `reverse_geocode`. Jarak: `geo_distance` (garis lurus, sebutkan itu; jalan sebenarnya lebih jauh). Link untuk dibagikan atau rute: `maps_link`.
 
 ## Menyaring dan merangking

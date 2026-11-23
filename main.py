@@ -2006,7 +2006,7 @@ Examples:
   python main.py web                      Local Web GUI at http://127.0.0.1:8080
   python main.py web --tunnel             Web GUI with optional public tunnel
   python main.py web --replace            Stop the SquidWings already on the port, then start
-  python main.py trading --tunnel         Trading panel + MT4 bridge (Enterprise edition)
+  python main.py trading --tunnel         Trading panel + MT4 bridge
   python main.py --no-update web          Start without pulling the newest code from GitHub
   python main.py update                   Get the newest version now (a ZIP download too)
   python main.py tools                    Which media programs are installed (tools install: add the rest)
@@ -2077,7 +2077,7 @@ Examples:
     )
 
     # trading command
-    trading_parser = subparsers.add_parser("trading", help="Start the trading backend and MT4 bridge on their own (Enterprise)")
+    trading_parser = subparsers.add_parser("trading", help="Start the trading backend and MT4 bridge on their own")
     trading_parser.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
     trading_parser.add_argument("--port", "-p", type=int, default=80, help="Port (default: 80, what MT4 reaches)")
     trading_parser.add_argument(

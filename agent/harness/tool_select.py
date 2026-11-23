@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from brain import skills
 from config.constants import TaskType
+from config.edition import studio_module
 from tool.execute import execute_toolbox
 from tool.registry.tool_registry import WORKSPACE_TOOLS
 from utils import session_settings
@@ -72,6 +73,12 @@ _ON_DEMAND: dict[tuple[str, ...], list[str]] = {
     ("trading", "trade", "trader", "mt4", "mt5", "metatrader", "forex", "xauusd", "eurusd", "gbpusd", "usdjpy",
      "stop loss", "take profit", "sinyal trading", "trading signal", "scalp", "scalping", "backtest",
      "akun trading", "ekuitas", "open posisi", "posisi trading", "floating"): ["trading_snapshot"],
+    ("sudo", "apt", "apt-get", "systemctl", "service ", "root", "permission denied", "artisan", "laravel", "composer",
+     "mysql", "mariadb", "postgres", "redis", "nginx", "apache", "php", "npm run dev", "serve", "server lokal",
+     "localhost", "port", "terminal", "install paket", "pasang paket"): ["terminal_run", "preview_url"],
+    ("preview", "pratinjau", "lihat hasil", "liat hasil", "lihat hasilnya", "liat hasilnya", "link", "jalankan web",
+     "jalanin web", "run web", "website", "web app", "flask", "django", "fastapi", "vite", "react", "next",
+     "http.server", "html"): ["preview_url", "terminal_run"],
     ("json",): ["json_query"],
     ("pdf", "dokumen", "ekstrak", "extract", "docx", "word", "excel", "pptx", "gambar", "file", "folder"): ["extract_files"],
     ("kirim file", "kirimkan file", "kirim ke chat", "kirimkan", "lampirkan", "attach", "send file", "bagikan", "share",
@@ -160,6 +167,9 @@ def select_tools(
         # A run held to a short list gets exactly that list: no skills, no toolbox search, nothing it asks for.
         return [_for_model(by_name[n]) for n in sorted(limits.only_tools) if n in by_name]
     extra = list(limits.extra_tools) if limits is not None else []
+    studio_context = studio_module("utils.studio_context")   # optional module: the video Studio
+    if studio_context and studio_context.current():
+        extra += list(studio_context.STUDIO_TOOLS)   # a turn from the video editor always gets its tools
 
     lowered = user_input.lower()
     deferred = execute_toolbox.deferred_names()

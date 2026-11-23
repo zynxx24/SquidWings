@@ -87,7 +87,9 @@ def test_command_timeouts_are_capped(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_an_awake_skill_brings_its_tools_on_a_small_model(session: Path) -> None:
     names = [f"t{i}" for i in range(40)] + ["share_file", "load_skill", "read_file"]
     schemas = [{"type": "function", "function": {"name": n, "parameters": {"properties": {}}}} for n in names]
-    lite = _SCAFFOLDS[Tier.LITE]
+    from dataclasses import replace
+
+    lite = replace(_SCAFFOLDS[Tier.LITE], max_tools=16)     # a capped run: the priority order is what is pinned
 
     def offered(text: str, extra: tuple[str, ...] = ()) -> list[str]:
         more = [{"type": "function", "function": {"name": n, "parameters": {"properties": {}}}} for n in extra]
