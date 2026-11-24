@@ -84,6 +84,7 @@ Tidak perlu mengunduh ulang. Setiap kali dijalankan, SquidWings mengambil versi 
 | 🗂️ Satu chat, satu set | Folder, memori, vault Obsidian, graph kode, skor aislop, dan mode Ponytail sendiri |
 | 🛡️ Sandbox dan keamanan | Perintah agent terisolasi, policy engine, path jail, audit log, prompt shield, penyamaran rahasia |
 | 🔀 Router model | Provider, URL, dan API key dari web; rotasi pintar, model default, dan pemakaian token |
+| 📚 Skill dari GitHub | Repo skill (superpowers, anthropics/skills, GSAP, Remotion, humanizer, dan lainnya) di-clone dan diperbarui otomatis. Hanya skill penting yang aktif, sisanya tersimpan, dan skill pilihan ikut tersedia di Claude Code |
 
 ## 🧩 Modul trading dan Studio
 
@@ -117,7 +118,7 @@ SquidWings/
 │   ├── classifier/          jenis tugas dan lanjutan percakapan
 │   ├── memory/              riwayat chat, memori proyek, ringkasan, recall antar chat
 │   ├── system_prompt/       prompt sistem per jenis tugas
-│   └── skills/              panduan kerja (fix-bug, build-web, google-maps, studio, …)
+│   └── skills/              panduan kerja (fix-bug, build-web, google-maps, studio, …); sources.json = skill dari GitHub
 │
 ├── model/                   koneksi ke model
 │   ├── connection/          API client dan retry
@@ -251,6 +252,7 @@ python main.py doctor                   # uji isolasi sandbox
 python main.py tools                    # program media yang terpasang (ffmpeg, yt-dlp, Node, ...)
 python main.py tools install            # pasang yang belum ada, tanpa sudo
 python main.py update                   # ambil versi terbaru dari GitHub sekarang
+python main.py skills                   # skill dari GitHub: status (sync, update, link)
 ```
 
 Perintah di dalam `chat`: `/model`, `/stack`, `/ponytail`, `/memory`, `/chats`, `/brief`, `/voice`, `/sandbox`, `/status`, dan `/help`.

@@ -32,6 +32,46 @@ Skill punya dua jenis:
 
 Skill tambahan bisa ditaruh di folder `SKILLS_DIR`, dan skill yang tidak dipakai bisa dimatikan dengan `SKILLS_DISABLED=animate,build-web`.
 
+### Skill dari GitHub
+
+`brain/skills/sources.json` berisi daftar repo skill di GitHub. Saat `chat` atau `web` dijalankan, repo yang belum ada di-clone otomatis ke `brain/skills/.sources/` di background. Clone-nya dangkal (`--depth 1`), dan sparse bila entri punya `paths`, jadi repo 100 MB hanya memakan beberapa MB. Sekali sehari semua clone ditarik ke commit terbaru. Folder itu di-gitignore: skill diambil, tidak ikut di-commit.
+
+Tiap repo memilih skill mana yang penting:
+
+| Status | Artinya |
+|---|---|
+| Aktif (`active` di manifest) | Masuk harness seperti skill bawaan, dengan header dari manifest (`triggers`, `scope`, `context`, `tasks`, `companion`). Semuanya kontekstual: tidur sampai permintaan cocok. Bila namanya sama dengan skill bawaan, yang bawaan dipakai |
+| Tersimpan (sisanya) | Ada di disk dan bisa dicari, tetapi tidak masuk daftar skill dan tidak pernah masuk prompt. `load_skill` membukanya dengan nama persis, dan nama yang tidak dikenal mendapat saran skill tersimpan yang mirip |
+
+Saat ini ada sembilan repo, dengan 27 skill aktif dan sisanya tersimpan:
+
+| Repo | Aktif |
+|---|---|
+| [blader/humanizer](https://github.com/blader/humanizer) | `humanizer` (wajib; ikut bersama `buat-dokumen`, `jawab-tugas`, dan `humanizer-indonesia`) |
+| [obra/superpowers](https://github.com/obra/superpowers) | `systematic-debugging` (ikut `fix-bug`), `verification-before-completion` (ikut `fix-bug`, `add-feature`, `build-web`, `build-backend`), `test-driven-development`, `writing-plans`, `executing-plans`, `brainstorming` |
+| [anthropics/skills](https://github.com/anthropics/skills) | `pdf`, `docx`, `pptx`, `xlsx` (menyunting file yang sudah ada), `webapp-testing`, `mcp-builder`, `skill-creator` |
+| [remotion-dev/skills](https://github.com/remotion-dev/skills) | `remotion-best-practices`, `remotion-create`, `remotion-render` |
+| [greensock/gsap-skills](https://github.com/greensock/gsap-skills) | `gsap-core`, `gsap-timeline`, `gsap-scrolltrigger`, `gsap-react` |
+| [nextlevelbuilder/ui-ux-pro-max-skill](https://github.com/nextlevelbuilder/ui-ux-pro-max-skill) | `ui-ux-pro-max` |
+| [pbakaus/impeccable](https://github.com/pbakaus/impeccable) | `impeccable` |
+| [addyosmani/web-quality-skills](https://github.com/addyosmani/web-quality-skills) | `web-quality-audit`, `seo`, `accessibility`, `performance` |
+| [thedotmack/claude-mem](https://github.com/thedotmack/claude-mem) | tidak ada; semua skill-nya tersimpan, karena SquidWings sudah punya memorinya sendiri |
+
+Skill yang baru dibangunkan oleh permintaan itu sendiri ("animasi scroll pakai gsap") didahulukan daripada skill umum yang kebetulan berbagi kata ("landing page" untuk `build-web`).
+
+**Claude Code.** Skill aktif bertanda `"claude_code": true`, ditambah skill bawaan di `claude_code_builtin` (`aislop`, `redhat`, `humanizer-indonesia`, `design-ui`, `clean-code`, `laravel`), ditautkan ke `~/.claude/skills`. Claude Code jadi bisa memakainya langsung tanpa lewat API harness ini. Tiap tautan berupa folder kecil berisi `SKILL.md` yang path-nya sudah dibuat absolut, plus symlink ke file lain skill itu. Folder ini ditandai `.squidwings`, jadi folder lain di sana tidak pernah disentuh. Skill yang sudah dimiliki Claude Code lewat plugin (`docx`, `pdf`, `pptx`, `xlsx`, `skill-creator` dari anthropic-skills) tidak ditautkan dua kali.
+
+**Menambah repo.** Tambahkan entri ke `sources.json` (`repo`, opsional `paths`, `ref`, `url`), daftarkan skill penting di `active`, lalu jalankan `python main.py skills sync`. Mengeluarkan skill dari `active` memindahkannya ke penyimpanan dan melepas tautannya dari Claude Code.
+
+| Perintah | Fungsi |
+|---|---|
+| `python main.py skills` | Status: commit tiap repo, daftar skill aktif, jumlah yang tersimpan |
+| `python main.py skills sync` | Clone repo yang belum ada, lalu perbarui tautan Claude Code |
+| `python main.py skills update` | Tarik commit terbaru semua repo sekarang |
+| `python main.py skills link` | Perbarui tautan Claude Code saja |
+
+Pengaturan: `SKILL_SOURCES=0` mematikan semuanya, `SKILL_SOURCES_UPDATE_HOURS` mengatur jarak pull (bawaan 24, 0 = tidak pernah), `SKILL_SOURCES_CLAUDE=0` tidak menautkan apa pun ke Claude Code, dan `CLAUDE_SKILLS_DIR` mengganti folder tujuannya.
+
 ## Toolbox: tool tepat yang tersembunyi
 
 Model murah sering salah kalau menghitung atau mengonversi di kepala. `tool/execute/execute_toolbox/` berisi 127 tool kecil yang jawabannya pasti, dalam 16 grup:

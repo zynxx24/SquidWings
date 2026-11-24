@@ -36,6 +36,11 @@ models rarely ask for help on their own. The rest stay available through the
 ``load_skill`` tool, so they cost one line of prompt until needed. Set SKILLS_DIR
 to add a folder of your own; a skill there replaces a built-in of the same name.
 SKILLS_DISABLED takes a comma-separated list of skills to leave out.
+
+Skills from GitHub are listed in ``sources.json`` and handled by ``sources.py``:
+cloned automatically, the important ones active here like any other skill, the
+rest stored (out of the index, loadable by exact name), and the chosen ones also
+linked into Claude Code's ``~/.claude/skills``.
 """
 
 from __future__ import annotations
@@ -145,7 +150,26 @@ def load_all() -> dict[str, Skill]:
                     logger.warning(f"[skills] {skill.name} is scope: always but {len(skill.body)} chars; kept as core")
                     skill = replace(skill, scope="core")
                 skills[skill.name] = skill
+    # Active skills cloned from GitHub. Built-ins and SKILLS_DIR win on a name clash.
+    try:
+        from brain.skills import sources
+
+        for name, skill in sources.active().items():
+            if name not in skills and name.lower() not in disabled:
+                skills[name] = skill
+    except Exception as exc:  # noqa: BLE001 - a broken clone must not take the built-ins down
+        logger.warning(f"[skills] GitHub skills unavailable: {exc}")
     return skills
+
+
+def stored(name: str) -> Skill | None:
+    """A stored GitHub skill by exact name: kept out of the index, opened only when asked for."""
+    try:
+        from brain.skills import sources
+
+        return sources.stored().get(name)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def always(task: str = "") -> list[Skill]:
@@ -188,7 +212,8 @@ def select(user_input: str, limit: int = 2, active: tuple[str, ...] | list[str] 
     request wakes it.
     """
     text = user_input.lower()
-    awake = set(active) | set(woken(user_input, task))
+    now = set(woken(user_input, task))
+    awake = set(active) | now
     scored: list[tuple[int, Skill]] = []
     for skill in load_all().values():
         if skill.scope == "always":
@@ -199,6 +224,10 @@ def select(user_input: str, limit: int = 2, active: tuple[str, ...] | list[str] 
             continue
         score = _score(skill, text)
         if score:
+            # A specialised skill this very request woke ("gsap", "remotion") beats a general one
+            # that merely shares a few words with it ("landing page" for build-web).
+            if skill.name in now:
+                score += 2
             scored.append((score, skill))
     scored.sort(key=lambda item: item[0], reverse=True)
     chosen = [skill for _, skill in scored if not skill.companion][:limit]
@@ -269,4 +298,4 @@ def install(skill: Skill, workspace: Path, session_id: str) -> Path:
     return target
 
 
-__all__ = ["Skill", "always", "always_text", "index_text", "install", "load_all", "select", "tools_for", "visible", "woken"]
+__all__ = ["Skill", "always", "always_text", "index_text", "install", "load_all", "select", "stored", "tools_for", "visible", "woken"]

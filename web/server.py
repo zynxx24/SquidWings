@@ -115,6 +115,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from tool.execute.execute_code_intel import tool_updates
 
     tool_updates.start_background(get_settings().project_root / ".agent_memory" / "tool_updates.json")
+    # Skills from GitHub: clone what is missing, pull daily, link the chosen ones into Claude Code.
+    from brain.skills import sources as skill_sources
+
+    skill_sources.start_background()
     # Teams validate models against the registry, which is empty until the first
     # sync. In the background: a slow provider must not delay startup.
     sync_task = asyncio.create_task(_startup_sync())

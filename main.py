@@ -1991,6 +1991,32 @@ def _choose_web_port(host: str, port: int, strict: bool = False, replace: bool =
     return alternative
 
 
+def _skills_cmd(action: str) -> int:
+    """GitHub skill sources: show them, clone what is missing, pull the newest, or relink Claude Code."""
+    from brain.skills import sources as skill_sources
+
+    if action in ("sync", "update"):
+        for item in skill_sources.sync(update=action == "update"):
+            detail = f" ({item['detail']})" if item.get("detail") else ""
+            console.print(f"  {item['repo']}: {item['action']}{detail}")
+    if action in ("sync", "update", "link"):
+        linked = skill_sources.link_claude_code()
+        console.print(f"  Claude Code ({skill_sources.claude_skills_dir()}): {len(linked)} skill(s) checked")
+        for name, what in sorted(linked.items()):
+            if what != "linked":
+                console.print(f"    {name}: {what}")
+    info = skill_sources.status()
+    for src in info["sources"]:
+        mark = src["commit"] or "not cloned"
+        console.print(f"  {src['repo']:42} {mark}")
+    console.print(f"  Active: {len(info['active'])}  ({', '.join(info['active'])})")
+    console.print(f"  Stored: {len(info['stored'])}  (load one with load_skill by exact name)")
+    if info["required_missing"]:
+        console.print(f"  [red]Required skill missing: {', '.join(info['required_missing'])}[/red]")
+        return 1
+    return 0
+
+
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -2053,6 +2079,12 @@ Examples:
     tools_parser.add_argument("action", nargs="?", choices=["status", "install"], default="status")
     tools_parser.add_argument("names", nargs="*", help="What to install (default: everything that is missing)")
 
+    # skills command: GitHub skill sources (brain/skills/sources.json)
+    skills_parser = subparsers.add_parser(
+        "skills", help="Skills from GitHub: status, clone missing (sync), pull newest (update), link into Claude Code",
+    )
+    skills_parser.add_argument("action", nargs="?", choices=["status", "sync", "update", "link"], default="status")
+
     # web command
     web_parser = subparsers.add_parser("web", help="Start the Web GUI server")
     web_parser.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
@@ -2094,6 +2126,12 @@ Examples:
             notify = console.print if args.command == "web" else _update_notices.append
             repo_update.start_background(notify)
 
+    if args.command in ("chat", "web", None):
+        # Clone missing GitHub skills, pull them once a day, link the chosen ones into Claude Code.
+        from brain.skills import sources as skill_sources
+
+        skill_sources.start_background()
+
     if args.command == "chat" or args.command is None:
         _run_async(chat_mode, getattr(args, "project", None))
     elif args.command == "ask":
@@ -2110,6 +2148,8 @@ Examples:
         sys.exit(_update_cmd())
     elif args.command == "tools":
         sys.exit(_tools_cmd(args.action, args.names))
+    elif args.command == "skills":
+        sys.exit(_skills_cmd(args.action))
     elif args.command == "trading":
         from config.edition import ENTERPRISE_NOTE, trading_enabled
 

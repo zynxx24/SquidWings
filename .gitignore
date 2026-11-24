@@ -84,6 +84,7 @@ htmlcov/
 *.json
 !pyrightconfig.json
 !brain/skills/*/**/*.json
+!brain/skills/sources.json
 !tests/eval_data/*.json
 
 # === Backups, archives, media ===
@@ -106,3 +107,6 @@ trading/data/
 
 # Per-port tunnel logs (tunnel.sh, main.py trading --tunnel)
 tunnel-*.log
+
+# Skills cloned from GitHub (brain/skills/sources.json); fetched at start-up, never committed
+brain/skills/.sources/

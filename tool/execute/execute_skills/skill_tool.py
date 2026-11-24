@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from brain.skills import install, load_all, visible
+from brain.skills import install, load_all, stored, visible
 from utils import session_settings
 from utils.workspace_context import get_active_session, get_active_workspace
 
@@ -14,14 +14,23 @@ async def load_skill(name: str, file: str = "", install_files: bool = False) -> 
     """Return a skill's guide, one of its companion guides, or install its files into the project."""
     skills = load_all()
     key = (name or "").strip().lower().removesuffix(".md").replace("_", "-").replace(" ", "-")
-    skill = skills.get(key)
+    skill = skills.get(key) or stored(key)
     if skill is None:
         # Name only what the model may see: dormant skills stay out until their context wakes them.
         workspace = get_active_workspace()
         active = session_settings.load(workspace).skills if workspace else []
         shown = sorted(s.name for s in visible(active))
-        return {"ok": False, "error": f"Unknown skill '{name}'. Available: {', '.join(shown)}"}
+        error = f"Unknown skill '{name}'. Available: {', '.join(shown)}"
+        # Stored skills (cloned from GitHub, kept out of the index) are offered when the name is close.
+        from brain.skills import sources
+
+        if similar := sources.search_stored(name.replace("-", " ")):
+            error += ". Stored skills that may fit (load one by its exact name): " + "; ".join(
+                f"{n}: {d}" for n, d in similar)
+        return {"ok": False, "error": error}
     result: dict[str, Any] = {"ok": True, "name": skill.name}
+    if skill.scope == "stored":
+        result["note"] = "Stored skill from GitHub: opened on request only, it stays out of the index."
     # Asking for a dormant skill by name wakes it, for this session only.
     if skill.scope == "contextual" and (workspace := get_active_workspace()):
         session_settings.activate_skills(workspace, [skill.name])
