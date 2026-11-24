@@ -52,6 +52,8 @@ the pose in which its change is first visible.
 - `pitch` varies a repeated sound (a run of clicks climbing from 0.9 to 1.3), `lp` and `hp` soften it, `dur` cuts a long
   tail, `pan` places it left or right.
 - Beds (`"type": "bed"`) are long layers: looped if short, faded in and out, with an `env` of level changes over time.
+  The default fades are 0.5 s in and 1 s out. When they do not fit, both are shortened in proportion so the bed
+  still reaches its level where they meet.
 
 ### 4. Mix
 
@@ -97,7 +99,8 @@ Save the WAV in `<video>/audio/` and list it in `project.json`. The viewer plays
 [earshot](https://github.com/Leonxlnx/earshot) (MIT, CPU only) turns sound into words and numbers an agent can read.
 motlab does not depend on it, so check once at the start of the sound work:
 
-- `earshot --help` runs: the CLI is there. If the session lists earshot MCP tools, use those instead of the CLI.
+- `motlab doctor` has an earshot line: `ok` means the CLI and its models are there, `warn` says which is missing.
+  `earshot --help` running is enough for the CLI. If the session lists earshot MCP tools, use those instead.
 - Neither: carry on with the steps above. Mention earshot once only if the user asks how to pick sounds better.
 - The analysis commands need about 1.1 GB of models (`earshot doctor --fetch`). Ask before fetching them.
 

@@ -1,6 +1,7 @@
-// A transition as a layer over the cut: shapes that cover the frame at the cut and uncover the next scene. It works
-// with motlab's hard cut between scenes, so no engine support is needed: the scene before draws the first half on top
-// of its last frames, and the scene after draws the second half on top of its first frames.
+// A transition as a layer over the cut: shapes that cover the frame at the cut and uncover the next scene. In a video,
+// name it in project.json on the scene it leads into, and motlab draws it over the cut:
+//   { "file": "scenes/02.html", "transition": { "layer": "assets/kits/acme/transitions/swish/transition.js", "duration": 0.6 } }
+// A scene that has to draw it itself (one page holding both shots) can use atEnd and atStart:
 //
 //   import * as swish from '../assets/kits/acme/transitions/swish/transition.js';
 //   // last scene's renderAt, after everything else:  const p = swish.atEnd(t, TOTAL); if (p !== null) swish.draw(ctx, p, W, H);

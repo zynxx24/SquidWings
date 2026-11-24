@@ -61,6 +61,9 @@ def main():
     frames = sorted(glob.glob(os.path.join(o.frames, '*.png')))
     if len(frames) < 2:
         raise SystemExit(f'need at least two PNG frames in {o.frames}')
+    count = round(o.end * o.fps)
+    if count < 1:
+        raise SystemExit('--end must be at least one frame long')
     held = grab_frame(o.clip, o.start, o.w, o.h)
 
     graph = (f'[0:v]format=yuv420p,setsar=1[ad];'
@@ -84,9 +87,13 @@ def main():
                             '-c:v', 'libx264', '-preset', 'medium', '-crf', '15', '-pix_fmt', 'yuv420p', o.out],
                            stdin=subprocess.PIPE)
     last = len(frames) - 1
-    for n, path in enumerate(frames):
-        t = n / last * o.end
-        rgba = np.asarray(Image.open(path).convert('RGBA').resize((o.w, o.h), Image.LANCZOS), dtype=np.float32)
+    shown, rgba = None, None
+    for n in range(count):
+        t = n / o.fps
+        path = frames[round(n * last / max(count - 1, 1))]
+        if path != shown:
+            rgba = np.asarray(Image.open(path).convert('RGBA').resize((o.w, o.h), Image.LANCZOS), dtype=np.float32)
+            shown = path
         cover = rgba[..., 3:] / 255 * (1 - window(t, o.melt))
         under = held * window(t, o.fade)
         frame = rgba[..., :3] * cover + under * (1 - cover)
@@ -94,7 +101,7 @@ def main():
     enc.stdin.close()
     if enc.wait():
         raise SystemExit('ffmpeg failed')
-    print(f'{o.out}: {len(frames)} rendered frames, then the clip from {o.start:g} s')
+    print(f'{o.out}: {len(frames)} rendered frames over {count} frames to {o.end:g} s, then the clip from {o.start:g} s')
 
 
 if __name__ == '__main__':

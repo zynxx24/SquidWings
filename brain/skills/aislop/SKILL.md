@@ -40,7 +40,7 @@ Before making anything, ask: what would the obvious AI version of this look like
 * **The swap test:** replace the brand name with a competitor's. If nothing else would need to change, it is still generic. Add what only this subject has: its place, its product, its numbers, its people.
 * **Look at it as the user will:** open the page at 360px and desktop, render the slides or the SVG to an image and view it, watch the video once through. Name the one tell you found and fixed, and say what you checked.
 
-## 5. The full antislop rules (miqdadbadjuber/anti-slop 3.2.31, MIT)
+## 5. The full antislop rules (miqdadbadjuber/anti-slop 3.2.32, MIT)
 
 This page is the short gate. The full filter lives in guides; load the one the work needs with `load_skill("aislop", file=...)`, and for a whole website or app load `antislop/core.md` too (rules R-01 to R-40 and the Delivery Gate):
 

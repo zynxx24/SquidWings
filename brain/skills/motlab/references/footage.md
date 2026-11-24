@@ -65,7 +65,7 @@ audio track. Pull a contact sheet to see what is in it: `ffmpeg -i demo.mp4 -vf 
 ## Talking heads: cut the pauses
 
 One scene per jump cut makes dozens of pages, each with its own decoder. Cut the pauses into a list instead and play
-it in one scene (or one scene per section, each with its part of the list):
+it in one scene, or in one scene per section (below):
 
 ```bash
 python3 scripts/cut_pauses.py footage/talk.mp4 cuts.json --start 1.4 --audio-out audio/voice-cut.wav
@@ -89,6 +89,35 @@ window.renderAt = async t => { await window.ready; await edit.draw(ctx, t, 0, 0,
   of the recording to the edit. Whisper word times were about 0.23 s early in one take, so check captions by ear.
 - Listen to the cut voice before building on it. Raise `--min-pause` if a deliberate pause was cut, and raise
   `--keep-tail` or `--keep-lead` if a cut clips the end or start of a word.
+
+### One take, several scenes, captions
+
+For a take longer than about 30 s, make one scene per section (hook, each point, the close), so the user's notes and
+`--only` point at a section. Read the transcript, pick where each section starts, and pass the times in seconds of the
+recording; each moves to the nearest cut and the script prints where every section lands:
+
+```bash
+python3 scripts/cut_pauses.py footage/talk.mp4 cuts.json --audio-out audio/voice-cut.wav --sections hook=0,tip1=18.2,tip2=47.9,close=81
+```
+
+```js
+const cuts = await (await fetch('../cuts.json')).json();
+const edit = cutList(cuts, clip, { section: 'tip1', punch: [1, 1.12], glide: 0.25 });
+window.TOTAL = edit.duration;   // inside window.ready, before it resolves
+const lines = edit.captions(await (await fetch('../transcript.json')).json(), { maxChars: 28 });
+```
+
+- List the section scenes in order with hard cuts and put `audio/voice-cut.wav` once at `start: 0`; the scenes add up
+  to the cut voice. No scene transitions between sections: they shorten the video and the voice drifts.
+- `edit.captions(transcript)` takes Whisper's JSON with word times (`whisper talk.mp4 --word_timestamps True
+  --output_format json`) or a list of `{ text, start, end }`, in seconds of the recording, and returns lines
+  `{ text, start, end, words }` in the scene's time. Draw the line where `start <= t < end` with the style's caption
+  rules, and use `words` for a word-by-word highlight. `maxChars` 24 to 32 suits a phone; `shift` moves every word
+  if the captions run early (0.23 s in one take). With a dissolve, words starting in the outgoing part's faded
+  tail are dropped like cut words; crossing words end where the incoming part starts. `edit.toOut()` maps
+  tail times to that start too. The last part keeps its full span, up to the section's end.
+- motlab does not transcribe. If there is no transcript, ask the user for one; they can make it with Whisper, which
+  they install themselves. Without one, ask the user where each section starts.
 
 ## Footage sound
 

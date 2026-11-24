@@ -55,6 +55,50 @@ transitions in `craft.md` that carry a shape across the cut; these are for edits
 a designed morph is not worth building for every cut. A shader transition between two scenes that already morph into
 each other only blurs the morph.
 
+### A layer over the cut (only when asked)
+
+The default for every transition is still the one you design and draw frame by frame in the scene pages: a shape
+that carries across the cut (`craft.md` §9), checked with stills inside it. Do not reach for a layer to save that
+work. Use one only when the user asks for a ready-made sweep or wipe over the cut, or wants a kit's transition used
+the same way at many cuts:
+`"transition": { "layer": "assets/kits/<kit>/transitions/swish/transition.js", "duration": 0.6 }`. The module exports
+`draw(ctx, p, W, H)` in page pixels, `p` runs 0 to 1 and the frame must be fully covered at 0.5, where the cut is.
+The scenes keep their full length (nothing overlaps), so audio times do not move. The module comes from the asset
+skill (`templates/transition.js`); motlab then draws it over the cut, so neither scene page draws it.
+
+### A transition of your own, or one from a reference
+
+When none of the 11 fits, write the shader into the project, for example `transitions/swipe.glsl`, and set
+`"type": "transitions/swipe.glsl"`. It is a gl-transitions shader: define `vec4 transition(vec2 uv)`, read the scenes
+with `getFromColor(uv)` and `getToColor(uv)`, use `progress` (0 to 1, eased) and `ratio` (width / height), and give
+each uniform its default in a comment so `params` can change it:
+
+```glsl
+uniform float softness; // = 0.05
+vec4 transition(vec2 uv) {
+  float edge = progress * (1.0 + softness);
+  return mix(getToColor(uv), getFromColor(uv), smoothstep(edge - softness, edge, uv.x));
+}
+```
+
+Uniforms can be float, int, bool, vec2 to vec4 or ivec2 to ivec4, not textures; do not declare `progress` or
+`ratio`. A shader from gl-transitions (github.com/gl-transitions/gl-transitions, all MIT) that uses no texture can be
+copied in unchanged: keep its author and licence lines. The viewer shows a compile error with the line in the file when the project opens.
+
+When the user shows a transition they like in another video, do not guess it from a description. Take frames across
+it, about ten over the transition, named by their time so `contact_sheet.py` can lay them out:
+
+```bash
+for t in 3.20 3.25 3.30 3.35 3.40 3.45 3.50 3.55 3.60 3.65; do ffmpeg -v error -y -ss $t -i reference.mp4 -frames:v 1 ref/$t.png; done
+python3 scripts/contact_sheet.py ref ref-sheet.jpg
+```
+
+Look at the sheet and write down what happens frame by frame: where the new scene first appears, the shape and
+softness of the edge, its direction and speed (constant, or fast in the middle, which is the `ease`), and anything on
+top such as blur, zoom, a colour flash or light. Build the shader from that, render the project, take frames from the
+same stretch of your MP4 the same way, and compare the two sheets side by side. Change the shader or `ease` until the
+moments match, then tell the user what still differs. Copy the movement, not the other video's pictures.
+
 ## Animation libraries
 
 These were each checked with a box moving from x 100 to 1700 over 2 s: stills at 0.5, 1 and 1.5 s were identical

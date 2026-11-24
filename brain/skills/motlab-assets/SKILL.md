@@ -9,7 +9,7 @@ tools: execute_command, load_skill, share_file, read_file, file_write, file_patc
 ---
 # motlab-assets (aset sebagai kode)
 
-Diadaptasi dari staryone/motlab 0.3.0 (MIT, lihat LICENSE; commit aabf482). Panduan, referensi, template dan skripnya milik penulis asli dan tidak diubah.
+Diadaptasi dari staryone/motlab 0.4.1 (MIT OR Apache-2.0, dipakai di bawah MIT, lihat LICENSE; commit fd2bfda). Panduan, referensi, template dan skripnya milik penulis asli dan tidak diubah.
 
 Aset dibangun sebagai kode (SVG, canvas, three.js, Blender) dan disimpan dalam **kit**: satu folder dengan aturan gaya, sumber setiap aset, dan file hasil render. Sumber adalah asetnya; PNG/GLB adalah output yang dirender ulang, tidak diedit tangan.
 

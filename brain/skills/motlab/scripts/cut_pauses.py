@@ -8,6 +8,8 @@
 #       [--keep-tail 0.12] [--keep-lead 0.08] seconds kept after speech stops and before it starts again
 #       [--drop 61.2-63.0,90-91.5]           more parts of the file to leave out (a fluffed line)
 #       [--dissolve 0.12]                    parts overlap and fade by this long instead of cutting hard
+#       [--sections hook=0,demo=41.5,end=96] one scene per section: names and where each starts (seconds in the
+#                                            file, moved to the nearest cut), for cutList(..., { section: 'demo' })
 #
 # Run it from the project folder; the paths in cuts.json are relative to it. Listen to the result: a pause that was a
 # deliberate beat may need --min-pause raised, and a cut that clips a word needs more --keep-tail or --keep-lead.
@@ -16,9 +18,12 @@ import json, os, re, subprocess, sys, tempfile
 def opt(name, default, cast=float):
     return cast(sys.argv[sys.argv.index(name) + 1]) if name in sys.argv else default
 
-def duration(path):   # the shortest stream: a recording's sound often ends a few frames before its picture
-    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=duration:format=duration', '-of', 'csv=p=0', path], capture_output=True, text=True)
-    return min(float(x) for x in out.stdout.split() if re.fullmatch(r'[\d.]+', x.strip(',')))
+def duration(path):   # the shorter of picture and sound, never subtitles or data
+    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_type,duration:format=duration', '-of', 'json', path], capture_output=True, text=True, check=True)
+    data = json.loads(out.stdout)
+    lengths = [float(s['duration']) for s in data['streams']
+               if s.get('codec_type') in ('audio', 'video') and s.get('duration') not in (None, 'N/A')]
+    return min(lengths) if lengths else float(data['format']['duration'])
 
 def pauses(path, noise, min_pause):
     err = subprocess.run(['ffmpeg', '-hide_banner', '-i', path, '-map', '0:a:0', '-af', f'highpass=f=80,silencedetect=noise={noise}dB:d={min_pause}',
@@ -27,6 +32,13 @@ def pauses(path, noise, min_pause):
     starts = [float(x) for x in re.findall(r'silence_start: (-?[\d.]+)', err)]
     ends = [float(x) for x in re.findall(r'silence_end: ([\d.]+)', err)]
     return list(zip(starts, ends + [float('inf')] * (len(starts) - len(ends))))
+
+def filter_file_option():
+    with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False, encoding='utf-8') as g: g.write('anullsrc,atrim=end=0.01[out]')
+    try:
+        probe = subprocess.run(['ffmpeg', '-hide_banner', '-v', 'error', '-/filter_complex', g.name, '-map', '[out]', '-f', 'null', '-'], capture_output=True)
+        return '-/filter_complex' if probe.returncode == 0 else '-filter_complex_script'
+    finally: os.unlink(g.name)
 
 def main():
     if len(sys.argv) < 3 or sys.argv[1].startswith('-'): sys.exit(__doc__ or open(__file__, encoding='utf-8').read().split('\nimport')[0])
@@ -48,9 +60,20 @@ def main():
     segs = [{'from': round(a, 3), 'to': round(b, 3)} for a, b in keep]
     length = sum(s['to'] - s['from'] for s in segs) - D * (len(segs) - 1)
     data = {'source': src.replace('\\', '/'), 'dissolve': D, 'duration': round(length, 3), 'segments': segs}
+    sections = [(n.strip(), float(v)) for n, v in (x.split('=') for x in opt('--sections', '', str).split(',') if x)]
+    # The same rule as cutList in cuts.js: a section starts at the cut nearest its time and runs to the next section.
+    at = [sum(s['to'] - s['from'] - D for s in segs[:k]) for k in range(len(segs))]
+    first = [min(range(len(segs)), key=lambda k: abs(segs[k]['from'] - v)) for _, v in sections] + [len(segs)]
+    for i, (n, _) in enumerate(sections):
+        if first[i + 1] <= first[i]: sys.exit(f'section {n} starts at the same cut as the next one: move one of them')
+    if sections: data['sections'] = [{'name': n, 'from': v} for n, v in sections]
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     with open(out, 'w', encoding='utf-8') as f: json.dump(data, f, indent=1)
     print(f'{len(segs)} parts kept, {end - start:.2f} s of the take became {length:.2f} s -> {out}')
+    for i, (n, _) in enumerate(sections):
+        a, b = first[i], first[i + 1]
+        print(f'  section {n}: from {segs[a]["from"]:.2f} s in the file, {at[a]:.2f} s into the edit, '
+              f'{(at[b] if b < len(segs) else length) - at[a]:.2f} s long ({b - a} part{"s" if b - a > 1 else ""})')
 
     audio = opt('--audio-out', None, str)
     if audio:   # the same cuts on the sound: 5 ms fades at each cut so it does not click, or crossfades for a dissolve
@@ -65,7 +88,7 @@ def main():
         with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False, encoding='utf-8') as g: g.write(graph)
         try:
             os.makedirs(os.path.dirname(os.path.abspath(audio)), exist_ok=True)
-            subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', src, '-/filter_complex', g.name, '-map', '[out]', '-ar', '48000', '-ac', '2', audio], check=True)
+            subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', src, filter_file_option(), g.name, '-map', '[out]', '-ar', '48000', '-ac', '2', audio], check=True)
         finally: os.unlink(g.name)
         print(f'voice with the same cuts -> {audio} ({duration(audio):.2f} s)')
 

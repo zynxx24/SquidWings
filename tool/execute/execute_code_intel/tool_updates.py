@@ -1,4 +1,4 @@
-"""Keeps the local tools current: graphify, aislop, yt-dlp and (when installed globally) HyperFrames.
+"""Keeps the local tools current: graphify, aislop, yt-dlp and (when installed globally) HyperFrames and motlab.
 
 Once a day, in a background thread, this compares the installed version of each program with
 the newest release and upgrades it when there is a newer one. It never blocks a request.
@@ -8,6 +8,8 @@ the newest release and upgrades it when there is a newer one. It never blocks a 
 * yt-dlp lives in this app's own Python and is upgraded there: sites like YouTube change often,
   and a yt-dlp a few months old stops downloading from them.
 * HyperFrames, only when installed with ``npm install -g hyperframes`` (``npx`` always fetches the newest).
+* motlab (``@motlab/cli``), when installed: the motlab skills follow its releases, so an old engine
+  would miss commands they use (``motlab working``). Its version is read from package.json.
 
 Set ``TOOLS_AUTO_UPDATE=false`` to turn it off. Tests turn it off too, because they must not
 touch the network or the global installs. The last check and its result go to
@@ -42,6 +44,7 @@ GRAPHIFY_PACKAGE = "graphifyy"
 AISLOP_PACKAGE = "aislop"
 YTDLP_PACKAGE = "yt-dlp"
 HYPERFRAMES_PACKAGE = "hyperframes"
+MOTLAB_PACKAGE = "@motlab/cli"
 
 _started = threading.Lock()
 _started_once = False
@@ -117,6 +120,22 @@ def _ytdlp_version() -> str | None:
         return None
 
 
+def _motlab_version() -> str | None:
+    """The installed @motlab/cli, read from its package.json: engines before 0.4 do not know --version."""
+    binary = shutil.which("motlab")
+    if binary is None:
+        return None
+    for parent in Path(binary).resolve().parents:
+        package = parent / "package.json"
+        if package.is_file():
+            with contextlib.suppress(OSError, ValueError):
+                data = json.loads(package.read_text(encoding="utf-8"))
+                if data.get("name") == MOTLAB_PACKAGE:
+                    return str(data.get("version") or "") or None
+            break
+    return installed_version("motlab")
+
+
 def _update_one(name: str, command: str | Callable[[], str | None], latest: str | None,
                 upgrade: list[str]) -> dict[str, Any]:
     installed = command() if callable(command) else installed_version(command)
@@ -161,6 +180,9 @@ def run_check(state_path: Path, *, force: bool = False, now: float | None = None
         _update_one("yt-dlp", _ytdlp_version, latest_pypi(YTDLP_PACKAGE), _pip_upgrade("yt-dlp[default]")),
         _update_one("hyperframes", "hyperframes", latest_npm(HYPERFRAMES_PACKAGE),
                     ["npm", "install", "-g", f"{HYPERFRAMES_PACKAGE}@latest"]),
+        # The motlab skills in brain/skills follow upstream releases; the engine has to keep up with them.
+        _update_one("motlab", _motlab_version, latest_npm(MOTLAB_PACKAGE),
+                    ["npm", "install", "-g", f"{MOTLAB_PACKAGE}@latest"]),
     ]
     out = {"checked_at": now, "results": results}
     try:

@@ -48,6 +48,7 @@ def test_upgrades_only_the_tool_that_is_behind(tmp_path, monkeypatch):
     versions = {"graphify": "0.9.91", "aislop": "0.19.1", "hyperframes": "0.19.1"}
     monkeypatch.setattr(tool_updates, "installed_version", lambda cmd: versions[cmd])
     monkeypatch.setattr(tool_updates, "_ytdlp_version", lambda: "0.9.99")
+    monkeypatch.setattr(tool_updates, "_motlab_version", lambda: "0.19.1")
     monkeypatch.setattr(tool_updates.shutil, "which", lambda name: f"/usr/bin/{name}")
     ran = []
 
@@ -59,7 +60,7 @@ def test_upgrades_only_the_tool_that_is_behind(tmp_path, monkeypatch):
     monkeypatch.setattr(tool_updates, "_run_upgrade", fake_upgrade)
     out = tool_updates.run_check(state, force=True, now=5.0)
     actions = {r["tool"]: r["action"] for r in out["results"]}
-    assert actions == {"graphify": "upgraded", "aislop": "none", "yt-dlp": "none", "hyperframes": "none"}
+    assert actions == {"graphify": "upgraded", "aislop": "none", "yt-dlp": "none", "hyperframes": "none", "motlab": "none"}
     assert ran == [["uv", "tool", "upgrade", "graphifyy"]]
     assert json.loads(state.read_text(encoding="utf-8"))["checked_at"] == 5.0
 
@@ -92,3 +93,18 @@ def test_ytdlp_is_upgraded_inside_this_apps_python(tmp_path, monkeypatch):
     ytdlp = next(r for r in out["results"] if r["tool"] == "yt-dlp")
     assert ytdlp["action"] == "upgraded" and ytdlp["installed_after"] == "2026.11.1"
     assert ran and ran[0][0] in (sys.executable, "uv") and ran[0][-1] == "yt-dlp[default]"
+
+
+def test_motlab_version_comes_from_its_package_json(tmp_path, monkeypatch):
+    """Engines before 0.4 answer --version with an error, so the version is read from the npm package."""
+    package = tmp_path / "lib" / "node_modules" / "@motlab" / "cli"
+    (package / "bin").mkdir(parents=True)
+    (package / "package.json").write_text(json.dumps({"name": "@motlab/cli", "version": "0.3.0"}), encoding="utf-8")
+    script = package / "bin" / "motlab.js"
+    script.write_text("", encoding="utf-8")
+    link = tmp_path / "bin" / "motlab"
+    link.parent.mkdir()
+    link.symlink_to(script)
+    monkeypatch.setattr(tool_updates.shutil, "which", lambda name: str(link) if name == "motlab" else None)
+    assert tool_updates._motlab_version() == "0.3.0"
+    assert tool_updates.is_newer("0.4.1", tool_updates._motlab_version())

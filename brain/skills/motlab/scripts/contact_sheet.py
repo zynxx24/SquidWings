@@ -1,6 +1,6 @@
 """Put a folder of stills on one labelled sheet, in time order, for reviewing a video frame by frame.
 
-The stills are the files `motlab stills` writes: <seconds>.png or <seconds>.jpg.
+The stills are the files `motlab stills` writes: <seconds>[-<occurrence>].png or .jpg.
 
     python3 contact_sheet.py <stills dir> <out.jpg> [--cols 4] [--width 640]
 """
@@ -11,7 +11,7 @@ import re
 
 from PIL import Image, ImageDraw
 
-NAME = re.compile(r'^(\d+(?:\.\d+)?)\.(png|jpe?g)$', re.I)
+NAME = re.compile(r'^(\d+(?:\.\d+)?)(?:-(\d+))?\.(png|jpe?g)$', re.I)
 
 
 def main():
@@ -26,12 +26,12 @@ def main():
     for name in os.listdir(args.folder):
         m = NAME.match(name)
         if m:
-            stills.append((float(m.group(1)), m.group(1), os.path.join(args.folder, name)))
+            stills.append((float(m.group(1)), int(m.group(2) or 1), m.group(1), os.path.join(args.folder, name)))
     if not stills:
         raise SystemExit(f'no stills named <seconds>.png or <seconds>.jpg in {args.folder}')
     stills.sort()
 
-    first = Image.open(stills[0][2])
+    first = Image.open(stills[0][3])
     tw = args.width
     th = round(tw * first.height / first.width)
     rows = math.ceil(len(stills) / args.cols)
@@ -39,7 +39,7 @@ def main():
     sheet = Image.new('RGB', (args.cols * (tw + gap) + gap, rows * (th + gap) + gap), (24, 24, 24))
     pen = ImageDraw.Draw(sheet)
 
-    for n, (_, label, path) in enumerate(stills):
+    for n, (_, _, label, path) in enumerate(stills):
         x = gap + (n % args.cols) * (tw + gap)
         y = gap + (n // args.cols) * (th + gap)
         sheet.paste(Image.open(path).convert('RGB').resize((tw, th), Image.LANCZOS), (x, y))
