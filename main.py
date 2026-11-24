@@ -1991,9 +1991,18 @@ def _choose_web_port(host: str, port: int, strict: bool = False, replace: bool =
     return alternative
 
 
-def _skills_cmd(action: str) -> int:
-    """GitHub skill sources: show them, clone what is missing, pull the newest, or relink Claude Code."""
+def _skills_cmd(action: str, query: str = "") -> int:
+    """GitHub skill sources: show them, clone what is missing, pull the newest, relink Claude Code, or search."""
     from brain.skills import sources as skill_sources
+
+    if action == "search":
+        # Plain output on purpose: Claude Code sessions in other folders read it to find stored skills.
+        found = skill_sources.find(query) if query.strip() else []
+        for item in found:
+            print(f"{item['name']} [{item['status']}] {item['path']}\n    {item['description']}")
+        if not found:
+            print(f"No skill matches '{query}'." if query.strip() else "Usage: python main.py skills search <what you need>")
+        return 0 if found else 1
 
     if action in ("sync", "update"):
         for item in skill_sources.sync(update=action == "update"):
@@ -2083,7 +2092,8 @@ Examples:
     skills_parser = subparsers.add_parser(
         "skills", help="Skills from GitHub: status, clone missing (sync), pull newest (update), link into Claude Code",
     )
-    skills_parser.add_argument("action", nargs="?", choices=["status", "sync", "update", "link"], default="status")
+    skills_parser.add_argument("action", nargs="?", choices=["status", "sync", "update", "link", "search"], default="status")
+    skills_parser.add_argument("query", nargs="*", help="For search: what you need, e.g. gsap plugins")
 
     # web command
     web_parser = subparsers.add_parser("web", help="Start the Web GUI server")
@@ -2149,7 +2159,7 @@ Examples:
     elif args.command == "tools":
         sys.exit(_tools_cmd(args.action, args.names))
     elif args.command == "skills":
-        sys.exit(_skills_cmd(args.action))
+        sys.exit(_skills_cmd(args.action, " ".join(args.query)))
     elif args.command == "trading":
         from config.edition import ENTERPRISE_NOTE, trading_enabled
 

@@ -11,23 +11,13 @@ from utils.workspace_context import get_active_session, get_active_workspace
 
 
 def _search(query: str) -> dict[str, Any]:
-    """Skills for a need, active and stored in one ranking. A word in the name counts most."""
+    """Skills for a need, active and stored in one ranking."""
     from brain.skills import sources
 
-    words = [w for w in query.lower().replace("-", " ").replace(":", " ").split() if len(w) > 2]
-    pool = [(s, "active") for s in load_all().values()] + [(s, "stored") for s in sources.stored().values()]
-    found = []
-    for skill, status in pool:
-        name_words = skill.name.lower().replace("-", " ").split()
-        hay = f"{skill.description} {' '.join(skill.triggers)}".lower()
-        score = sum(5 if w in name_words else 3 if w in skill.name else 1 if w in hay else 0 for w in words)
-        if score:
-            found.append((score, status == "active", {"name": skill.name, "status": status,
-                                                      "description": skill.description[:200]}))
-    found.sort(key=lambda item: (-item[0], not item[1]))
+    found = [{k: v for k, v in item.items() if k != "path"} for item in sources.find(query)]
     if not found:
         return {"ok": False, "error": f"No skill matches '{query}'."}
-    return {"ok": True, "query": query, "skills": [item for *_, item in found[:10]],
+    return {"ok": True, "query": query, "skills": found,
             "note": "Load one with load_skill(name=...). Stored skills open the same way."}
 
 

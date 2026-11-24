@@ -76,6 +76,7 @@ Skill yang baru dibangunkan oleh permintaan itu sendiri ("animasi scroll pakai g
 | `python main.py skills sync` | Clone repo yang belum ada, lalu perbarui tautan Claude Code |
 | `python main.py skills update` | Tarik commit terbaru semua repo sekarang |
 | `python main.py skills link` | Perbarui tautan Claude Code saja |
+| `python main.py skills search gsap plugins` | Cari skill aktif dan tersimpan, lengkap dengan path `SKILL.md`. Dipakai `~/.claude/CLAUDE.md` supaya sesi Claude Code di folder mana pun bisa membuka skill tersimpan tanpa memuat semuanya |
 
 Pengaturan: `SKILL_SOURCES=0` mematikan semuanya, `SKILL_SOURCES_UPDATE_HOURS` mengatur jarak pull (bawaan 24, 0 = tidak pernah), `SKILL_SOURCES_CLAUDE=0` tidak menautkan apa pun ke Claude Code, dan `CLAUDE_SKILLS_DIR` mengganti folder tujuannya.
 

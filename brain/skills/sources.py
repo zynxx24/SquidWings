@@ -402,6 +402,25 @@ def search_stored(query: str, limit: int = 8) -> list[tuple[str, str]]:
     return [(name, desc[:160]) for _, name, desc in scored[:limit]]
 
 
+def find(query: str, limit: int = 10) -> list[dict[str, str]]:
+    """Skills for a need, active and stored in one ranking; a word in the skill name counts most."""
+    from brain.skills import load_all
+
+    words = [w for w in query.lower().replace("-", " ").replace(":", " ").split() if len(w) > 2]
+    pool = [(s, "active") for s in load_all().values()] + [(s, "stored") for s in stored().values()]
+    found = []
+    for skill, status in pool:
+        name_words = skill.name.lower().replace("-", " ").split()
+        hay = f"{skill.description} {' '.join(skill.triggers)}".lower()
+        score = sum(5 if w in name_words else 3 if w in skill.name else 1 if w in hay else 0 for w in words)
+        if score:
+            path = str(skill.root / "SKILL.md") if skill.root else str(SKILLS_DIR / f"{skill.name}.md")
+            found.append((score, status == "active", {"name": skill.name, "status": status,
+                                                      "description": skill.description[:200], "path": path}))
+    found.sort(key=lambda item: (-item[0], not item[1]))
+    return [item for *_, item in found[:limit]]
+
+
 # ─── Claude Code ──────────────────────────────────────────────────────
 
 
@@ -503,6 +522,6 @@ def status() -> dict[str, Any]:
 
 
 __all__ = [
-    "active", "enabled", "link_claude_code", "manifest", "reload", "run_startup", "search_stored",
+    "active", "enabled", "find", "link_claude_code", "manifest", "reload", "run_startup", "search_stored",
     "sources", "start_background", "status", "stored", "sync",
 ]
