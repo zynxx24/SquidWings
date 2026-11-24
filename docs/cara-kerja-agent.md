@@ -34,7 +34,7 @@ Skill tambahan bisa ditaruh di folder `SKILLS_DIR`, dan skill yang tidak dipakai
 
 ### Skill dari GitHub
 
-`brain/skills/sources.json` berisi daftar repo skill di GitHub. Saat `chat` atau `web` dijalankan, repo yang belum ada di-clone otomatis ke `brain/skills/.sources/` di background. Clone-nya dangkal (`--depth 1`), dan sparse bila entri punya `paths`, jadi repo 100 MB hanya memakan beberapa MB. Sekali sehari semua clone ditarik ke commit terbaru. Folder itu di-gitignore: skill diambil, tidak ikut di-commit.
+`brain/skills/sources.json` berisi daftar repo skill di GitHub. Begitu skill dimuat dari pintu mana pun (`chat`, `web`, `ask`, atau run tim), repo yang belum ada di-clone otomatis ke `brain/skills/.sources/` di background. Setiap 10 menit loop yang sama memeriksa lagi, jadi repo yang baru ditambahkan ke `sources.json` ikut ter-download tanpa restart. Clone-nya dangkal (`--depth 1`), dan sparse bila entri punya `paths`, jadi repo 100 MB hanya memakan beberapa MB. Sekali sehari semua clone ditarik ke commit terbaru. Folder itu di-gitignore: skill diambil, tidak ikut di-commit.
 
 Tiap repo memilih skill mana yang penting:
 
@@ -56,6 +56,13 @@ Saat ini ada sembilan repo, dengan 27 skill aktif dan sisanya tersimpan:
 | [pbakaus/impeccable](https://github.com/pbakaus/impeccable) | `impeccable` |
 | [addyosmani/web-quality-skills](https://github.com/addyosmani/web-quality-skills) | `web-quality-audit`, `seo`, `accessibility`, `performance` |
 | [thedotmack/claude-mem](https://github.com/thedotmack/claude-mem) | tidak ada; semua skill-nya tersimpan, karena SquidWings sudah punya memorinya sendiri |
+
+**Handler pendukung.** Isi skill dari GitHub tidak pernah diubah. Yang menyesuaikan adalah harness saat menyerahkannya ke model:
+
+- **Peta tool.** Skill itu ditulis untuk Claude Code, jadi di depannya ditambahkan satu catatan: `Read` = `read_file`, `Write` = `file_write`, `Edit` = `file_patch`, `Bash` = `execute_command`, `Grep` = `file_search`, `Glob` = `file_find`, `WebFetch` = `web_read`. `AskUserQuestion` berarti bertanya di jawaban, `TodoWrite` berarti checklist di jawaban, dan subagent berarti mengerjakan langkahnya sendiri. Nama seperti `superpowers:writing-plans` langsung diterima `load_skill`.
+- **Skrip langsung jalan.** Sandbox hanya melihat folder proyek. Skill yang membawa kode (misalnya `ui-ux-pro-max` dengan `scripts/search.py`, atau `pdf`) otomatis dipasang ke `.skills/<sesi>/<nama>` saat dimuat, dan semua path di panduannya ditulis ulang ke salinan itu.
+- **Tool ikut.** Skill GitHub yang bangun membawa `load_skill`, `read_file`, `file_write`, `file_patch`, `file_search`, dan `web_read`, plus `execute_command` bila membawa kode. Model kecil yang daftar tool-nya pendek pun bisa memakainya.
+- **Cari skill.** `load_skill(search="gsap plugins")` mengurutkan skill aktif dan tersimpan sekaligus, dengan kata di nama skill berbobot paling besar. Daftar skill di prompt menyebut jumlah skill tersimpan dan cara mencarinya, jadi model tahu skill itu ada walau tidak terdaftar.
 
 Skill yang baru dibangunkan oleh permintaan itu sendiri ("animasi scroll pakai gsap") didahulukan daripada skill umum yang kebetulan berbagi kata ("landing page" untuk `build-web`).
 

@@ -5,15 +5,44 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from brain.skills import install, load_all, stored, visible
+from brain.skills import install, load_all, runnable, stored, visible
 from utils import session_settings
 from utils.workspace_context import get_active_session, get_active_workspace
 
 
-async def load_skill(name: str, file: str = "", install_files: bool = False) -> dict[str, Any]:
-    """Return a skill's guide, one of its companion guides, or install its files into the project."""
+def _search(query: str) -> dict[str, Any]:
+    """Skills for a need, active and stored in one ranking. A word in the name counts most."""
+    from brain.skills import sources
+
+    words = [w for w in query.lower().replace("-", " ").replace(":", " ").split() if len(w) > 2]
+    pool = [(s, "active") for s in load_all().values()] + [(s, "stored") for s in sources.stored().values()]
+    found = []
+    for skill, status in pool:
+        name_words = skill.name.lower().replace("-", " ").split()
+        hay = f"{skill.description} {' '.join(skill.triggers)}".lower()
+        score = sum(5 if w in name_words else 3 if w in skill.name else 1 if w in hay else 0 for w in words)
+        if score:
+            found.append((score, status == "active", {"name": skill.name, "status": status,
+                                                      "description": skill.description[:200]}))
+    found.sort(key=lambda item: (-item[0], not item[1]))
+    if not found:
+        return {"ok": False, "error": f"No skill matches '{query}'."}
+    return {"ok": True, "query": query, "skills": [item for *_, item in found[:10]],
+            "note": "Load one with load_skill(name=...). Stored skills open the same way."}
+
+
+async def load_skill(name: str = "", file: str = "", install_files: bool = False, search: str = "") -> dict[str, Any]:
+    """Return a skill's guide, one of its companion guides, or install its files into the project.
+
+    ``search`` lists the skills that fit a need, stored ones included. A name written the way
+    Claude Code skills refer to each other (``superpowers:writing-plans``) is accepted as is.
+    """
+    if search.strip() or not name.strip():
+        return _search(search or name) if (search or name).strip() else {
+            "ok": False, "error": "Give a skill name, or search=\"what you need\"."}
     skills = load_all()
     key = (name or "").strip().lower().removesuffix(".md").replace("_", "-").replace(" ", "-")
+    key = key.rsplit(":", 1)[-1].lstrip("/")
     skill = skills.get(key) or stored(key)
     if skill is None:
         # Name only what the model may see: dormant skills stay out until their context wakes them.
@@ -47,13 +76,20 @@ async def load_skill(name: str, file: str = "", install_files: bool = False) -> 
         result["installed_at"] = str(target.relative_to(workspace))
         result["note"] = "This copy belongs to this session only. Run its tools from installed_at."
         return result
+    workspace = get_active_workspace()
     if file:
         text = skill.guide(file.strip())
         if text is None:
             return {"ok": False, "error": f"'{file}' is not a guide of {skill.name}. Guides: {', '.join(skill.guides) or 'none'}"}
+        text, installed_at = runnable(skill, text, workspace, get_active_session())
         result.update(file=file.strip(), guide=text)
+        if installed_at:
+            result["installed_at"] = installed_at
         return result
-    result["guide"] = skill.body
+    guide, installed_at = runnable(skill, None, workspace, get_active_session())
+    result["guide"] = guide
+    if installed_at:
+        result["installed_at"] = installed_at
     if skill.guides:
         result["more_guides"] = list(skill.guides)
     return result

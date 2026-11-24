@@ -78,6 +78,8 @@ class Skill:
     # Set for folder skills: where the companion files live, and which guides there are.
     root: Path | None = None
     guides: tuple[str, ...] = field(default=())
+    # "owner/repo" for skills cloned from GitHub (sources.py); empty for our own.
+    origin: str = ""
 
     def missing(self) -> list[str]:
         """Programs the skill needs that are not on PATH."""
@@ -151,8 +153,11 @@ def load_all() -> dict[str, Skill]:
                     skill = replace(skill, scope="core")
                 skills[skill.name] = skill
     # Active skills cloned from GitHub. Built-ins and SKILLS_DIR win on a name clash.
+    # Loading skills from any entry point (chat, web, ask, a team run) starts the downloader.
     try:
         from brain.skills import sources
+
+        sources.start_background()
 
         for name, skill in sources.active().items():
             if name not in skills and name.lower() not in disabled:
@@ -277,7 +282,63 @@ def index_text(active: tuple[str, ...] | list[str] = (), task: str = "") -> str:
         missing = skill.missing()
         note = f" (belum terpasang: {', '.join(missing)})" if missing else ""
         lines.append(f"- {skill.name}: {skill.description}{note}")
-    return "[SKILLS: call load_skill(name) for the full guide]\n" + "\n".join(lines)
+    header = "[SKILLS: call load_skill(name) for the full guide]"
+    if _stored_count():
+        header += f"\n(Plus {_stored_count()} stored skills not listed here: load_skill(search=\"what you need\") finds them.)"
+    return header + "\n" + "\n".join(lines)
+
+
+def _stored_count() -> int:
+    try:
+        from brain.skills import sources
+
+        return len(sources.stored())
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+# Skills from GitHub were written for Claude Code. Their text stays as the authors wrote it;
+# this note, put in front when the harness hands one out, maps their words to our tools.
+GITHUB_SKILL_NOTE = (
+    "[This guide comes from {origin} and was written for Claude Code. In this harness: "
+    "Read = read_file, Write = file_write, Edit = file_patch, Bash = execute_command, Grep = file_search, "
+    "Glob = file_find, WebFetch = web_read, WebSearch = web_research. The Skill tool and names like "
+    "`superpowers:writing-plans` mean load_skill(name=\"writing-plans\"). AskUserQuestion: ask the user in "
+    "your reply and wait. TodoWrite: keep a short numbered checklist in your reply. Task tool or subagents: "
+    "not available here, do the steps yourself in order.{files}]\n\n"
+)
+
+
+def _has_code(root: Path) -> bool:
+    return any(p.suffix in {".py", ".js", ".mjs", ".cjs", ".ts", ".sh"} and "node_modules" not in p.parts
+               for p in root.rglob("*") if p.is_file())
+
+
+def runnable(skill: Skill, text: str | None = None, workspace: str | Path | None = None,
+             session_id: str = "") -> tuple[str, str | None]:
+    """A guide ready for this harness: ``(text, installed_at)``.
+
+    Our own skills come back unchanged. A GitHub skill gets the tool-mapping note in front,
+    and when it ships code and a project folder is open, its files are installed into this
+    session's own copy (``install``) and every path into the clone is rewritten to that copy:
+    sandboxed commands only see the project folder, never ``brain/skills/.sources``.
+    """
+    body = skill.body if text is None else text
+    if not skill.origin or skill.root is None:
+        return body, None
+    installed_at = None
+    files = f" This skill's files are in {skill.root}."
+    if workspace and _has_code(skill.root):
+        try:
+            target = install(skill, Path(workspace), session_id)
+            installed_at = str(target.relative_to(workspace))
+            body = body.replace(str(skill.root), installed_at)
+            files = (f" Its files are installed in {installed_at} (inside the project), and the paths below "
+                     "already point there: run its scripts from that folder.")
+        except (OSError, ValueError) as exc:
+            logger.debug(f"[skills] could not install {skill.name}: {exc}")
+    note = GITHUB_SKILL_NOTE.format(origin=skill.origin, files=files) if text is None else ""
+    return note + body, installed_at
 
 
 def install(skill: Skill, workspace: Path, session_id: str) -> Path:
@@ -298,4 +359,4 @@ def install(skill: Skill, workspace: Path, session_id: str) -> Path:
     return target
 
 
-__all__ = ["Skill", "always", "always_text", "index_text", "install", "load_all", "select", "stored", "tools_for", "visible", "woken"]
+__all__ = ["Skill", "always", "always_text", "index_text", "install", "load_all", "runnable", "select", "stored", "tools_for", "visible", "woken"]

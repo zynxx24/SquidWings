@@ -41,6 +41,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -60,9 +61,11 @@ MARKER = ".squidwings"
 
 _GIT_TIMEOUT = 180
 _SKIP_DIRS = {".git", "node_modules", "tests", "test", "__pycache__", "dist", "build"}
-_HEADER_KEYS = ("triggers", "scope", "context", "tasks", "tools", "companion", "requires")
+_DEFAULT_TOOLS = ("load_skill", "read_file", "file_write", "file_patch", "file_search", "web_read")
+_CHECK_EVERY_S = 600   # how often the background loop looks for new repos in sources.json
 _started = threading.Lock()
 _started_once = False
+_linked_once = False
 
 
 # ─── manifest ─────────────────────────────────────────────────────────
@@ -209,14 +212,29 @@ def run_startup(now: float | None = None) -> dict[str, Any]:
     if update and not any(r["action"] == "failed" for r in results):
         with contextlib.suppress(OSError):
             _state_file().write_text(json.dumps({"pulled_at": now, "results": results}, indent=1), encoding="utf-8")
+    global _linked_once
     linked = link_claude_code()
+    _linked_once = True
     return {"results": results, "linked": linked}
 
 
+def _missing() -> bool:
+    return any(not (s.folder / ".git").is_dir() for s in sources())
+
+
+def _testing() -> bool:
+    return "pytest" in sys.modules or bool(os.getenv("PYTEST_CURRENT_TEST"))
+
+
 def start_background() -> bool:
-    """Run ``run_startup`` in a daemon thread once per process. False when disabled or already started."""
+    """Keep GitHub skills in step, in a daemon thread started once per process.
+
+    First pass: clone what is missing, pull if a day has passed, link Claude Code. Then every
+    ten minutes: a repo newly added to sources.json is cloned, and the daily pull happens on
+    time, without a restart. False when disabled, under tests, or already started.
+    """
     global _started_once
-    if not enabled():
+    if not enabled() or _testing():
         return False
     with _started:
         if _started_once:
@@ -224,10 +242,13 @@ def start_background() -> bool:
         _started_once = True
 
     def worker() -> None:
-        try:
-            run_startup()
-        except Exception as exc:  # noqa: BLE001 - skills from GitHub must never stop the app
-            logger.warning(f"[skills] GitHub skill sync failed: {exc}")
+        while True:
+            try:
+                if _missing() or _due_for_update(time.time()) or not _linked_once:
+                    run_startup()
+            except Exception as exc:  # noqa: BLE001 - skills from GitHub must never stop the app
+                logger.warning(f"[skills] GitHub skill sync failed: {exc}")
+            time.sleep(_CHECK_EVERY_S)
 
     threading.Thread(target=worker, name="skill-sources", daemon=True).start()
     return True
@@ -296,6 +317,12 @@ def _build(path: Path, source: Source, header: dict[str, Any] | None):
         part.strip().lower() if key in {"triggers", "context", "tasks"} else part.strip()
         for part in str((header or {}).get(key, "")).split(",") if part.strip()
     )
+    tools = split("tools")
+    if header and not tools:
+        # A woken skill must be usable even on a small model's short tool list.
+        from brain.skills import _has_code
+
+        tools = _DEFAULT_TOOLS + (("execute_command",) if _has_code(root) else ())
     return Skill(
         name=str(name).strip(),
         description=str((header or {}).get("description") or fields.get("description", "")).strip(),
@@ -305,10 +332,11 @@ def _build(path: Path, source: Source, header: dict[str, Any] | None):
         scope=str((header or {}).get("scope", "core")).lower() if header else "stored",
         context=split("context"),
         tasks=split("tasks"),
-        tools=split("tools"),
+        tools=tools,
         companion=split("companion"),
         root=root,
         guides=_guides(root),
+        origin=source.repo,
     )
 
 

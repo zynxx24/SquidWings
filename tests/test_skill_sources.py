@@ -101,7 +101,7 @@ def test_load_skill_opens_stored_skills_and_suggests_close_ones(setup: Path):
 
     sources.sync()
     opened = asyncio.run(load_skill("beta"))
-    assert opened["ok"] and opened["guide"] == "Beta body" and "Stored" in opened["note"]
+    assert opened["ok"] and opened["guide"].endswith("Beta body") and "Stored" in opened["note"]
     missing = asyncio.run(load_skill("beta-thing-that-does-not-exist"))
     assert not missing["ok"] and "beta" in missing["error"].split("Stored skills")[1]
 
@@ -144,3 +144,36 @@ def test_disabled_means_no_github_skills(setup: Path, monkeypatch: pytest.Monkey
     monkeypatch.setenv("SKILL_SOURCES", "0")
     sources.reload()
     assert "alpha" not in skills.load_all() and not sources.start_background()
+
+
+def test_runnable_installs_code_skills_and_rewrites_paths(setup: Path, monkeypatch: pytest.MonkeyPatch):
+    sources.sync()
+    alpha = sources.active()["alpha"]
+    (alpha.root / "run.py").write_text("print('ok')\n", encoding="utf-8")   # a skill that ships code
+    workspace = setup / "ws"
+    workspace.mkdir()
+    text, installed_at = skills.runnable(alpha, workspace=workspace, session_id="s1")
+    assert installed_at == ".skills/s1/alpha"
+    assert (workspace / installed_at / "run.py").exists()
+    assert str(alpha.root) not in text and ".skills/s1/alpha/run.py" in text
+    assert text.startswith("[This guide comes from someone/skills") and "load_skill(name=" in text
+    assert "execute_command" in alpha.tools or "execute_command" in sources._build(
+        alpha.root / "SKILL.md", sources.sources()[0], {"name": "alpha"}).tools
+    fix_bug = skills.load_all()["fix-bug"]
+    assert skills.runnable(fix_bug) == (fix_bug.body, None)          # our own skills are handed out unchanged
+
+
+def test_load_skill_search_and_claude_style_names(setup: Path):
+    from tool.execute.execute_skills.skill_tool import load_skill
+
+    sources.sync()
+    found = asyncio.run(load_skill(search="beta things"))
+    top = found["skills"][0]
+    assert found["ok"] and (top["name"], top["status"]) == ("beta", "stored")
+    named = asyncio.run(load_skill("someone:alpha"))
+    assert named["ok"] and named["name"] == "alpha"
+    assert "stored skills not listed here" in skills.index_text([], "code")
+
+
+def test_background_keeper_never_runs_under_tests(setup: Path):
+    assert sources._testing() and not sources.start_background()

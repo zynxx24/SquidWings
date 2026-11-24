@@ -16,7 +16,7 @@ from tool.execute.execute_local_memory import project_memory_tool, vault_tool
 from tool.execute.execute_local_memory.vault import constants as C
 from utils import session_settings
 from utils.logger import get_logger
-from utils.workspace_context import get_active_workspace
+from utils.workspace_context import get_active_session, get_active_workspace
 
 from . import playbooks
 
@@ -83,10 +83,13 @@ def skill_guidance(user_input: str, task_type: TaskType, max_chars: int) -> tupl
             room = sum(len(s.body) for s in selected)
         # Built-in companions (aislop) go first, so the size limit never drops them.
         selected = sorted(selected, key=lambda skill: not skill.companion)
+        workspace = get_active_workspace()
         for skill in selected:
             if len(skill.body) > room:
                 continue
-            parts.append(skill.body)
+            # A GitHub skill gets its tool map, and its scripts installed where the sandbox can run them.
+            body, _ = skills.runnable(skill, workspace=workspace, session_id=get_active_session())
+            parts.append(body)
             chosen.append(skill.name)
             room -= len(skill.body)
         return "\n\n" + "\n\n".join(parts), chosen
