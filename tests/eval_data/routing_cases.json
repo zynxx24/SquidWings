@@ -16,5 +16,10 @@
   {"text": "pakai tool calc untuk 12 x 12", "tools": ["calc"]},
   {"text": "buat laporan praktikum fisika tentang pendulum", "skills": ["jawab-tugas"]},
   {"text": "baca file ini dan perbaiki bug di auth.py", "task": "code", "no_skills": ["baca-dokumen"]},
-  {"text": "tolong baca dokumen ini lalu rangkum", "skills": ["baca-dokumen"]}
+  {"text": "tolong baca dokumen ini lalu rangkum", "skills": ["baca-dokumen"]},
+  {"text": "halo apa kabar hari ini", "task": "activity", "no_skills": ["web-research"]},
+  {"text": "saya terlalu lelah hari ini, rasanya mau nyerah", "task": "activity", "no_skills": ["web-research"]},
+  {"text": "harga emas hari ini berapa", "task": "activity", "skills": ["web-research"]},
+  {"text": "pasang seo dan sitemap di website saya", "skills": ["seo"]},
+  {"text": "bikin animasi scroll pakai gsap di landing page", "skills": ["gsap-core"], "tools": ["load_skill", "read_file"]}
 ]

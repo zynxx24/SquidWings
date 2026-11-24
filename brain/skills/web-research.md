@@ -1,7 +1,7 @@
 ---
 name: web-research
 description: Find out something from the web and answer completely, with sources.
-triggers: cari, carikan, riset, research, terbaru, latest, berita, news, harga, price, bandingkan, compare, rekomendasi, review, sumber, internet, web, browsing, hari ini, today
+triggers: cari, carikan, riset, research, terbaru, latest, berita, news, harga, price, bandingkan, compare, rekomendasi, review, sumber, internet, web, browsing
 ---
 # Researching on the web
 
