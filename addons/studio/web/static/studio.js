@@ -12,13 +12,30 @@
 
   // Where a property's static value lives: transform-like ones in layer.props, the rest on the layer.
   const IN_PROPS = new Set(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity', 'blur', 'draw',
-    'brightness', 'contrast', 'saturation', 'hue', 'temperature']);
+    'brightness', 'contrast', 'saturation', 'hue', 'temperature', 'fade']);
   const ANIMATABLE = new Set(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity', 'w', 'h', 'radius', 'size',
-    'strokeWidth', 'draw', 'blur', 'fill', 'stroke', 'volume', 'brightness', 'contrast', 'saturation', 'hue', 'temperature']);
+    'strokeWidth', 'draw', 'blur', 'fill', 'stroke', 'volume', 'brightness', 'contrast', 'saturation', 'hue', 'temperature', 'fade']);
   const DEFAULTS = { scale: 1, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1, blur: 0, draw: 1,
-    brightness: 0, contrast: 0, saturation: 0, hue: 0, temperature: 0 };
+    brightness: 0, contrast: 0, saturation: 0, hue: 0, temperature: 0, fade: 0 };
   const COLOR_FIELDS = [['brightness', 'Kecerahan', 0.01], ['contrast', 'Kontras', 0.01], ['saturation', 'Saturasi', 0.01],
-    ['hue', 'Rona °', 1], ['temperature', 'Suhu warna', 0.01]];
+    ['hue', 'Rona °', 1], ['temperature', 'Suhu warna', 0.01], ['fade', 'Pudar', 0.01]];
+  // Filters: one tap sets the colour values (scaled by "Kekuatan"); every value stays editable after.
+  // vignette only applies to the whole video (doc.grade).
+  const FILTERS = {
+    Hangat: { temperature: 0.35, saturation: 0.1, contrast: 0.05 },
+    Dingin: { temperature: -0.35, saturation: -0.05, contrast: 0.05 },
+    Sinematik: { contrast: 0.2, saturation: -0.15, temperature: 0.1, fade: 0.1, vignette: 0.45 },
+    Vintage: { fade: 0.45, saturation: -0.3, temperature: 0.25, contrast: -0.1, vignette: 0.35 },
+    Senja: { temperature: 0.5, hue: -8, saturation: 0.15, vignette: 0.3 },
+    Cerah: { brightness: 0.1, saturation: 0.25, contrast: 0.1 },
+    Pastel: { fade: 0.3, saturation: -0.1, brightness: 0.08, contrast: -0.15 },
+    Pudar: { fade: 0.5, contrast: -0.15, saturation: -0.15 },
+    Dramatis: { contrast: 0.35, saturation: 0.1, brightness: -0.05, vignette: 0.5 },
+    'Hitam putih': { saturation: -1, contrast: 0.2 },
+    Noir: { saturation: -1, contrast: 0.45, brightness: -0.05, vignette: 0.6 },
+  };
+  const GRADE_KEYS = ['brightness', 'contrast', 'saturation', 'hue', 'temperature', 'fade', 'vignette'];
+  const filterValues = (name, amount) => Object.fromEntries(GRADE_KEYS.map(k => [k, +(((FILTERS[name] || {})[k] || 0) * amount).toFixed(3)]));
   const FONTS = ['Fraunces', 'Plus Jakarta Sans', 'DM Serif Display', 'DM Sans', 'Anton', 'Barlow', 'Bricolage Grotesque',
     'Space Grotesk', 'Playfair Display', 'Poppins', 'Montserrat', 'Bebas Neue', 'Caveat', 'Lexend', 'Syne', 'Unbounded',
     'Archivo Black', 'JetBrains Mono', 'Cormorant Garamond', 'Shrikhand', 'Abril Fatface', 'Baloo 2', 'Fredoka'];
@@ -46,7 +63,7 @@
     key: null,              // {layer, prop, index} for a selected keyframe
     past: [], future: [], images: {}, videos: {}, buffers: {}, peaks: {}, luts: {}, assetList: [],
     proxies: {}, useProxy: localStorage.getItem('studio-proxy') !== 'off', live: false, pendingStamp: null,
-    secs: {}, renders: [],
+    secs: {}, renders: [], rev: 0, thumbs: { key: '', urls: {} },
     audioCtx: null, stopAudio: null, playStart: 0, playFrom: 0, draft: null, conflict: null,
   };
 
@@ -310,6 +327,7 @@
     if (!S.doc) return;
     if (record) checkpoint();
     fn(S.doc);
+    S.rev++;
     S.dirty = true;
     setSave('Belum disimpan…');
     scheduleSave();
@@ -489,6 +507,7 @@
       ctx.strokeStyle = '#e07a00'; ctx.lineWidth = 2 * px; ctx.setLineDash([6 * px, 4 * px]);
       ctx.strokeRect(S.draft.x, S.draft.y, S.draft.w, S.draft.h); ctx.setLineDash([]);
     }
+    drawMotionPath(ctx, px);
     const layer = selLayer();
     if (layer && R.visible(layer, S.t)) {
       const s = R.layerState(layer, S.t);
@@ -509,6 +528,49 @@
       ctx.restore();
     }
   }
+  /** The selected layer's path (its x/y over its time on screen) with a dot per position keyframe.
+   *  Dots can be dragged: that changes the position keys at that moment. */
+  function pathKeys(layer) {
+    const kx = (layer.keys && layer.keys.x) || [], ky = (layer.keys && layer.keys.y) || [];
+    if (kx.length + ky.length < 2) return [];
+    const times = [...new Set([...kx, ...ky].map(k => +k.t.toFixed(4)))].sort((a, b) => a - b);
+    return times.map(t => { const s = R.layerState(layer, t); return { t, x: s.x, y: s.y }; });
+  }
+  function drawMotionPath(ctx, px) {
+    const layer = selLayer();
+    S.pathDots = [];
+    if (!layer) return;
+    const dots = pathKeys(layer);
+    if (!dots.length) return;
+    const t0 = layer.start || 0, t1 = layer.end ?? S.doc.duration;
+    ctx.save();
+    ctx.strokeStyle = '#2f80ed'; ctx.lineWidth = 2 * px; ctx.setLineDash([6 * px, 5 * px]);
+    ctx.beginPath();
+    for (let i = 0; i <= 120; i++) { const s = R.layerState(layer, t0 + (t1 - t0) * i / 120); if (i) ctx.lineTo(s.x, s.y); else ctx.moveTo(s.x, s.y); }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const d of dots) {
+      const here = Math.abs(d.t - S.t) < frameEps();
+      ctx.beginPath(); ctx.arc(d.x, d.y, (here ? 8 : 6) * px, 0, Math.PI * 2);
+      ctx.fillStyle = here ? '#2f80ed' : '#ffffff'; ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+    S.pathDots = dots;
+  }
+  function pathDotAt(p) {
+    const r = 12 / viewScale;
+    return (S.pathDots || []).find(d => Math.hypot(d.x - p.x, d.y - p.y) < r) || null;
+  }
+  /** Move the position keys at time t to (x, y): x and y keys there change; a missing one is added when that axis is animated. */
+  function setPathKey(layer, t, x, y) {
+    for (const [prop, v] of [['x', x], ['y', y]]) {
+      const frames = layer.keys && layer.keys[prop];
+      if (!frames || !frames.length) { layer.props = layer.props || {}; layer.props[prop] = v; continue; }
+      const i = keyIndexAt(frames, t);
+      if (i >= 0) frames[i].v = v; else { frames.push({ t, v, ease: frames[0].ease || 'smooth' }); frames.sort((a, b) => a.t - b.t); }
+    }
+  }
+
   function label(ctx, n, x, y, px) {
     ctx.save();
     ctx.font = `600 ${13 * px}px system-ui`;
@@ -543,6 +605,15 @@
     const p = toDoc(e);
     overlay.setPointerCapture(e.pointerId);
     if (S.mode === 'note') { S.draft = { x: p.x, y: p.y, w: 0, h: 0, x0: p.x, y0: p.y }; return; }
+    const dot = selLayer() ? pathDotAt(p) : null;
+    if (dot) {
+      const tr = selLayer().track && trackById(selLayer().track);
+      if (tr && tr.locked) { setSave('Track ini dikunci', 'warn'); return; }
+      checkpoint();
+      seek(dot.t);
+      drag = { action: 'path', layer: selLayer(), t: dot.t, start: p, x0: dot.x, y0: dot.y };
+      return;
+    }
     let layer = selLayer();
     let action = layer && R.visible(layer, S.t) ? handleAt(layer, p) : null;
     if (!action) {
@@ -568,7 +639,13 @@
     if (!drag) {
       const layer = selLayer();
       const over = layer && R.visible(layer, S.t) ? handleAt(layer, p) : null;
-      overlay.style.cursor = S.mode === 'note' ? 'crosshair' : over === 'rotate' ? 'grab' : over === 'scale' ? 'nwse-resize' : 'default';
+      overlay.style.cursor = S.mode === 'note' ? 'crosshair' : layer && pathDotAt(p) ? 'move' : over === 'rotate' ? 'grab' : over === 'scale' ? 'nwse-resize' : 'default';
+      return;
+    }
+    if (drag.action === 'path') {
+      setPathKey(drag.layer, drag.t, Math.round(drag.x0 + p.x - drag.start.x), Math.round(drag.y0 + p.y - drag.start.y));
+      S.dirty = true; scheduleSave(); setSave('Belum disimpan…');
+      renderView(); renderTimeline();
       return;
     }
     const { layer, s } = drag;
@@ -594,6 +671,7 @@
       addNote(point ? { point: [Math.round(d.x0), Math.round(d.y0)] } : { box: [d.x, d.y, d.w, d.h].map(Math.round) }, e.clientX, e.clientY);
       return;
     }
+    if (drag && drag.action === 'path') { S.rev++; renderInspector(); }
     drag = null;
     if (overlay.hasPointerCapture(e.pointerId)) overlay.releasePointerCapture(e.pointerId);
   });
@@ -976,6 +1054,103 @@
       + (!busy && !(p && p.ready) ? '<div class="st-row"><button type="button" class="st-btn" data-act="make-proxy">Buat proxy</button></div>' : '');
   }
 
+  /* ── templates: ready-made moves and filters ───── */
+  // Each move writes ordinary keyframes or transitions from the layer's own values, so it can be
+  // changed key by key afterwards (Keyframe section, the curve editor, the path on the canvas).
+  const MOTIONS = [
+    ['rise', 'Muncul naik'], ['pop', 'Pop'], ['slide', 'Geser dari kiri'], ['drop', 'Jatuh memantul'], ['type', 'Ketik / gambar garis'],
+    ['kenburns', 'Zoom pelan'], ['float', 'Melayang'], ['pulse', 'Denyut'], ['wiggle', 'Goyang'], ['out', 'Keluar pudar'], ['clear', 'Hapus semua gerak'],
+  ];
+  function applyMotion(l, id) {
+    const W = S.doc.width, H = S.doc.height, t0 = l.start || 0, t1 = l.end ?? S.doc.duration, span = Math.max(0.05, t1 - t0);
+    const at = d => +Math.min(t1, t0 + d).toFixed(3);
+    const base = prop => staticValue(l, prop) ?? DEFAULTS[prop] ?? 0;
+    const keys = (prop, list) => { l.keys = l.keys || {}; l.keys[prop] = list.map(([t, v, ease]) => ({ t, v: +(+v).toFixed(3), ease: ease || 'linear' })); };
+    const repeat = (prop, every, values) => {
+      const list = [];
+      for (let i = 0, t = t0; t <= t1 + 1e-6; i++, t = t0 + i * every) list.push([+t.toFixed(3), values[i % values.length], 'smooth']);
+      keys(prop, list);
+    };
+    const x = base('x'), y = base('y'), sc = base('scale'), op = base('opacity');
+    switch (id) {
+      case 'rise': keys('y', [[t0, y + H * 0.04, 'out'], [at(0.6), y]]); keys('opacity', [[t0, 0, 'out'], [at(0.45), op]]); break;
+      case 'pop': keys('scale', [[t0, 0, 'outBack'], [at(0.45), sc]]); keys('opacity', [[t0, 0, 'out'], [at(0.2), op]]); break;
+      case 'slide': keys('x', [[t0, x - W * 0.25, 'out'], [at(0.6), x]]); keys('opacity', [[t0, 0, 'out'], [at(0.3), op]]); break;
+      case 'drop': keys('y', [[t0, y - H * 0.25, 'outBounce'], [at(0.9), y]]); break;
+      case 'type': keys('draw', [[t0, 0, 'linear'], [at(Math.min(1.2, span * 0.5)), 1]]); break;
+      case 'kenburns': keys('scale', [[t0, sc, 'smooth'], [+t1.toFixed(3), sc * 1.12]]); break;
+      case 'float': repeat('y', 1, [y, y - H * 0.012]); break;
+      case 'pulse': repeat('scale', 0.4, [sc, sc * 1.06]); break;
+      case 'wiggle': keys('rotation', [0, -4, 4, -3, 2, 0].map((v, i) => [at(i * 0.15), base('rotation') + v, 'smooth'])); break;
+      case 'out': l.transOut = { type: 'fade', duration: Math.min(0.4, span / 2), ease: 'in' }; break;
+      case 'clear': l.keys = {}; delete l.transIn; delete l.transOut; break;
+      default: break;
+    }
+  }
+
+  /** Small previews of the current frame with each filter, cached until the video or the time changes. */
+  function filterThumbs() {
+    const key = `${S.rev}|${snap(S.t)}|${S.name}`;
+    if (S.thumbs.key === key) return S.thumbs.urls;
+    const w = 64, h = Math.max(16, Math.round(64 * S.doc.height / S.doc.width));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.setTransform(w / S.doc.width, 0, 0, h / S.doc.height, 0, 0);
+    R.drawFrame(ctx, { ...S.doc, grade: null }, S.t, { images: S.images, videos: S.videos, luts: S.luts });
+    const plain = ctx.getImageData(0, 0, w, h);
+    const urls = { '': c.toDataURL('image/png') };
+    const out = document.createElement('canvas'); out.width = w; out.height = h;
+    const octx = out.getContext('2d');
+    for (const name of Object.keys(FILTERS)) {
+      const v = filterValues(name, 1), grade = GRADE_KEYS.map(k => v[k]);
+      const img = new ImageData(new Uint8ClampedArray(plain.data), w, h), d = img.data, rgb = [0, 0, 0];
+      for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i += 4) {
+        rgb[0] = d[i] / 255; rgb[1] = d[i + 1] / 255; rgb[2] = d[i + 2] / 255;
+        R.colorOps(grade, rgb);
+        const k = grade[6] ? R.vignetteAt(grade[6], x, y, w, h) : 1;
+        d[i] = rgb[0] * k * 255; d[i + 1] = rgb[1] * k * 255; d[i + 2] = rgb[2] * k * 255;
+      }
+      octx.putImageData(img, 0, 0);
+      urls[name] = out.toDataURL('image/png');
+    }
+    S.thumbs = { key, urls };
+    return urls;
+  }
+
+  // Previews are drawn only while their section is open (they cost a small render of the frame).
+  function filterChips(target, current, section) {
+    const urls = S.secs[section] ? filterThumbs() : {};
+    return `<div class="st-filters" role="group" aria-label="Filter">${['', ...Object.keys(FILTERS)].map(name => `<button type="button" class="st-filter ${(current || '') === name ? 'on' : ''}" data-filter="${esc(name)}" data-target="${target}" aria-pressed="${(current || '') === name}">
+      ${urls[name] || urls[''] ? `<img src="${urls[name] || urls['']}" alt="">` : '<i aria-hidden="true"></i>'}<span>${esc(name || 'Asli')}</span></button>`).join('')}</div>`;
+  }
+
+  function sectionTemplates(l) {
+    const f = l.filter || {};
+    return details('tpl', 'Template: gerak dan filter',
+      `<p class="st-hint">Gerak siap pakai, dihitung dari posisi dan waktu lapisan ini. Setelah dipasang, setiap keyframe tetap bisa diatur.</p>
+      <div class="st-motions">${MOTIONS.map(([id, name]) => `<button type="button" class="st-btn" data-motion="${id}">${esc(name)}</button>`).join('')}</div>
+      <p class="st-sub">Filter lapisan</p>${filterChips('layer', f.preset, 'tpl')}
+      ${f.preset ? field('Kekuatan', `<input type="range" min="0" max="1" step="0.05" data-filter-amount="layer" value="${f.amount ?? 1}" aria-label="Kekuatan filter lapisan">`) : ''}`,
+      false);
+  }
+
+  /** Every keyframe of the layer as rows: time, value, ease. The place to set keys by hand. */
+  function sectionKeys(l) {
+    const entries = Object.entries(l.keys || {});
+    if (!entries.length) return details('keys', 'Keyframe', '<p class="st-hint">Belum ada keyframe. Tekan ◇ di samping properti, pakai Template, atau tekan K untuk posisi.</p>', false);
+    const ease = (prop, i, value) => `<select data-ke="${esc(prop)}|${i}" aria-label="Gerak ${esc(prop)} keyframe ${i + 1}">${easeOptions(value)}</select>`;
+    const rows = entries.map(([prop, frames]) => `<p class="st-sub st-key-prop">${esc(prop)}</p>${frames.map((k, i) => `<div class="st-keyrow ${Math.abs(k.t - S.t) < frameEps() ? 'here' : ''}">
+        <input type="number" step="${(1 / S.doc.fps).toFixed(3)}" min="0" data-kt="${esc(prop)}|${i}" value="${+k.t.toFixed(3)}" aria-label="Waktu ${esc(prop)} keyframe ${i + 1}">
+        ${typeof k.v === 'string' ? `<input type="color" data-kv="${esc(prop)}|${i}" value="${esc(String(k.v).slice(0, 7))}" aria-label="Nilai ${esc(prop)}">`
+          : `<input type="number" step="${['opacity', 'scale', 'draw', 'scaleX', 'scaleY', 'brightness', 'contrast', 'saturation', 'temperature', 'fade', 'volume'].includes(prop) ? 0.01 : 1}" data-kv="${esc(prop)}|${i}" value="${+(+k.v).toFixed(3)}" aria-label="Nilai ${esc(prop)} keyframe ${i + 1}">`}
+        ${i < frames.length - 1 ? ease(prop, i, k.ease) : '<span class="st-hint">akhir</span>'}
+        <button type="button" class="st-tbtn" data-kdel="${esc(prop)}|${i}" aria-label="Hapus keyframe ${esc(prop)} ${i + 1}" title="Hapus">×</button></div>`).join('')}`).join('');
+    const count = entries.reduce((n, [, f]) => n + f.length, 0);
+    return details('keys', `Keyframe (${count})`,
+      `<div class="st-row"><button type="button" class="st-btn" data-act="keys-smooth" title="Gerak mengalir melewati semua keyframe tanpa berhenti">Haluskan semua</button>
+      <button type="button" class="st-btn" data-act="keys-inout">Pelan awal-akhir</button><button type="button" class="st-btn" data-act="keys-linear">Linear</button></div>${rows}`, count <= 16);
+  }
+
   /* The curve editor: the selected keyframe's ease as a graph, with two handles for cubic-bezier. */
   const CURVE = { w: 220, h: 220, pad: 18, ymin: -0.4, ymax: 1.4 };
   const curveX = x => CURVE.pad + x * (CURVE.w - 2 * CURVE.pad);
@@ -1038,7 +1213,14 @@
     mutate(() => { frame.ease = `cubic-bezier(${b.join(',')})`; });
   });
   // Open and closed sections stay as they were while the inspector redraws.
-  $('inspector').addEventListener('toggle', e => { const d = e.target.closest && e.target.closest('details[data-sec]'); if (d) S.secs[d.dataset.sec] = d.open; }, true);
+  $('inspector').addEventListener('toggle', e => {
+    const d = e.target.closest && e.target.closest('details[data-sec]');
+    if (!d) return;
+    const was = S.secs[d.dataset.sec];
+    S.secs[d.dataset.sec] = d.open;
+    // A section with filter previews draws them once it is opened (only on a real change, so no loop).
+    if (d.open && !was && (d.dataset.sec === 'tpl' || d.dataset.sec === 'grade')) renderInspector();
+  }, true);
 
   /** Change a transition, chroma key, LUT or mask setting (data-fx="group.key"). */
   function setFx(layer, path, value) {
@@ -1089,6 +1271,8 @@
           ${curveEditor(keyInfo.ease)}
           <div class="st-row"><button type="button" class="st-btn" data-act="del-key">Hapus keyframe</button></div>` : ''}
         ${trackField(l, 'video')}
+        ${sectionTemplates(l)}
+        ${sectionKeys(l)}
         ${sectionTransitions(l)}
         ${sectionColor(l)}
         ${sectionEffects(l)}
@@ -1150,6 +1334,10 @@
         ${field('Durasi (dtk)', `<input type="number" step="0.1" data-dmeta="duration" value="${d.duration}">`)}
         ${field('Latar', `<input type="color" data-dmeta="background" value="${esc(String(d.background || '#000000').slice(0, 7))}">`)}
         ${field('Font', `<input type="text" data-dmeta="fonts" value="${esc((d.fonts || []).join(', '))}" placeholder="Fraunces, Plus Jakarta Sans">`)}
+        ${details('grade', 'Filter video', `<p class="st-hint">Berlaku untuk seluruh video, di atas semua lapisan. Pilih filter lalu atur kekuatannya, atau setel angkanya sendiri.</p>
+          ${filterChips('video', d.grade && d.grade.preset, 'grade')}
+          ${d.grade ? field('Kekuatan', `<input type="range" min="0" max="1" step="0.05" data-filter-amount="video" value="${d.grade.amount ?? 1}" aria-label="Kekuatan filter video">`)
+            + [...COLOR_FIELDS, ['vignette', 'Vinyet', 0.01]].map(([k, label, step]) => field(label, `<input type="number" step="${step}" data-grade="${k}" value="${+(+(d.grade[k] || 0)).toFixed(3)}">`)).join('') : ''}`, !!d.grade)}
         <p class="st-hint">Klik objek di video atau di daftar untuk mengeditnya. Spasi putar, ← → per frame, K keyframe posisi, Delete hapus, Ctrl+Z urungkan.</p>`;
     }
   }
@@ -1174,6 +1362,26 @@
       return;
     }
     if (el.dataset.fx && l) { mutate(() => setFx(l, el.dataset.fx, readInput(el))); return; }
+    for (const attr of ['kt', 'kv', 'ke']) {
+      if (el.dataset[attr] && l) {
+        const [prop, i] = el.dataset[attr].split('|');
+        const frames = l.keys[prop], frame = frames && frames[+i];
+        if (!frame) return;
+        mutate(() => {
+          if (attr === 'kt') { frame.t = Math.max(0, Math.min(S.doc.duration, +el.value || 0)); frames.sort((a, b) => a.t - b.t); }
+          else if (attr === 'kv') frame.v = el.type === 'color' ? el.value : +el.value;
+          else frame.ease = el.value;
+        });
+        return;
+      }
+    }
+    if (el.dataset.filterAmount) {
+      const amount = Math.max(0, Math.min(1, +el.value));
+      if (el.dataset.filterAmount === 'video' && S.doc.grade) mutate(doc => { doc.grade = { ...doc.grade, ...filterValues(doc.grade.preset, amount), amount }; });
+      else if (l && l.filter) mutate(() => setLayerFilter(l, l.filter.preset, amount));
+      return;
+    }
+    if (el.dataset.grade && S.doc.grade) { mutate(doc => { doc.grade[el.dataset.grade] = +el.value || 0; }); return; }
     if (el.dataset.fxToggle === 'chroma' && l) {
       mutate(() => { if (el.checked) l.chroma = { color: '#00FF00', similarity: 0.25, smoothness: 0.08, spill: 0.5 }; else delete l.chroma; });
       return;
@@ -1228,7 +1436,34 @@
       fitCanvas(); fitZoom();
     }
   });
+  function setLayerFilter(l, preset, amount) {
+    const values = filterValues(preset, amount);
+    l.props = l.props || {};
+    COLOR_FIELDS.forEach(([p]) => { l.props[p] = values[p]; if (l.keys) delete l.keys[p]; });
+    if (preset) l.filter = { preset, amount }; else delete l.filter;
+  }
+
   $('inspector').addEventListener('click', e => {
+    const chip = e.target.closest('[data-filter]');
+    if (chip) {
+      const name = chip.dataset.filter, l = selLayer();
+      if (chip.dataset.target === 'video') mutate(doc => { if (name) doc.grade = { ...filterValues(name, doc.grade?.amount ?? 1), preset: name, amount: doc.grade?.amount ?? 1 }; else delete doc.grade; });
+      else if (l) mutate(() => setLayerFilter(l, name, l.filter?.amount ?? 1));
+      return;
+    }
+    const motion = e.target.closest('[data-motion]');
+    if (motion && selLayer()) { mutate(() => applyMotion(selLayer(), motion.dataset.motion)); setSave(`Gerak "${motion.textContent}" dipasang`); return; }
+    const kdel = e.target.closest('[data-kdel]');
+    if (kdel && selLayer()) {
+      const l = selLayer(), [prop, i] = kdel.dataset.kdel.split('|');
+      mutate(() => {
+        const frames = l.keys[prop], v = frames[+i].v;
+        frames.splice(+i, 1);
+        if (!frames.length) { delete l.keys[prop]; if (IN_PROPS.has(prop)) { l.props = l.props || {}; l.props[prop] = v; } else l[prop] = v; }
+        S.key = null;
+      });
+      return;
+    }
     const key = e.target.closest('[data-key]');
     if (key && selLayer()) { toggleKey(selLayer(), key.dataset.key); return; }
     const akey = e.target.closest('[data-akey]');
@@ -1258,7 +1493,10 @@
       case 'del-audio': mutate(doc => { doc.audio = doc.audio.filter(a => a.id !== S.sel.id); S.sel = { kind: 'doc' }; }); break;
       case 'note-toggle': mutate(() => { const n = noteByN(S.sel.id); n.status = n.status === 'done' ? 'open' : 'done'; }); break;
       case 'note-del': mutate(doc => { doc.notes = doc.notes.filter(n => n.n !== S.sel.id); S.sel = { kind: 'doc' }; }); break;
-      case 'color-reset': if (l) mutate(() => { COLOR_FIELDS.forEach(([p]) => { if (l.props) delete l.props[p]; if (l.keys) delete l.keys[p]; }); }); break;
+      case 'color-reset': if (l) mutate(() => { COLOR_FIELDS.forEach(([p]) => { if (l.props) delete l.props[p]; if (l.keys) delete l.keys[p]; }); delete l.filter; }); break;
+      case 'keys-smooth': case 'keys-inout': case 'keys-linear':
+        if (l) mutate(() => { const ease = { 'keys-smooth': 'smooth', 'keys-inout': 'inOut', 'keys-linear': 'linear' }[act.dataset.act]; Object.values(l.keys || {}).forEach(f => f.forEach(k => { k.ease = ease; })); });
+        break;
       case 'lut-upload': $('lut-input').click(); break;
       case 'make-proxy': if (l && l.src) startProxy(l.src); break;
       case 'track-del': mutate(doc => {

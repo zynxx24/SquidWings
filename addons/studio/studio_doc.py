@@ -26,7 +26,11 @@ A key's ``ease`` shapes the move from that key to the next: a name (``EASES``) o
 Effects, per layer (all optional):
 
 * ``props`` colour: ``brightness``, ``contrast``, ``saturation`` (-1..1, 0 = as is), ``hue`` (degrees),
-  ``temperature`` (-1 cool .. 1 warm). All can have keys.
+  ``temperature`` (-1 cool .. 1 warm), ``fade`` (0..1, lifted blacks). All can have keys. ``filter``
+  ``{"preset": "Vintage", "amount": 0.8}`` only names the preset the editor filled them from.
+* ``grade`` on the document: a filter over the whole finished frame, the same colour values plus
+  ``vignette`` (0..1), and the ``preset``/``amount`` it came from.
+* ``ease: "smooth"`` on a key: the move to the next key follows a curve through all the keys (no stop).
 * ``transIn`` / ``transOut``: ``{"type": "fade", "duration": 0.5, "ease": "out"}``; types in ``TRANSITIONS``.
   A cross-dissolve is one clip's ``transOut`` fade over the next clip's ``transIn`` fade.
 * ``chroma``: ``{"color": "#00FF00", "similarity": 0.25, "smoothness": 0.08, "spill": 0.5}`` (green screen).
@@ -61,11 +65,12 @@ COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 SRC_RE = re.compile(r"^assets/[A-Za-z0-9 ._()-]{1,120}$")
 
 LAYER_TYPES = ("text", "rect", "ellipse", "polygon", "path", "image", "video")
-EASES = ("linear", "in", "out", "inOut", "outBack", "inBack", "outElastic", "outBounce", "hold")
+EASES = ("linear", "in", "out", "inOut", "outBack", "inBack", "outElastic", "outBounce", "smooth", "hold")
 BEZIER_RE = re.compile(r"^cubic-bezier\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)$")
 TRANSITIONS = ("none", "fade", "slide-left", "slide-right", "slide-up", "slide-down", "zoom", "blur",
                "wipe-left", "wipe-right", "wipe-up", "wipe-down", "iris")
-COLOR_ADJUST = ("brightness", "contrast", "saturation", "hue", "temperature")
+COLOR_ADJUST = ("brightness", "contrast", "saturation", "hue", "temperature", "fade")
+GRADE_KEYS = (*COLOR_ADJUST, "vignette")
 LUT_RE = re.compile(r"^assets/[A-Za-z0-9 ._()-]{1,120}\.cube$", re.IGNORECASE)
 TRACK_KINDS = ("video", "audio")
 # Properties a key can animate, and the kind of value each takes.
@@ -74,6 +79,7 @@ ANIMATABLE: dict[str, str] = {
     "opacity": "unit", "w": "num", "h": "num", "radius": "num", "size": "num", "strokeWidth": "num",
     "draw": "unit", "blur": "num", "fill": "color", "stroke": "color", "volume": "gain",
     "brightness": "adjust", "contrast": "adjust", "saturation": "adjust", "hue": "num", "temperature": "adjust",
+    "fade": "unit",
 }
 # Properties kept in ``props`` (the rest sit on the layer itself).
 IN_PROPS = ("x", "y", "scale", "scaleX", "scaleY", "rotation", "opacity", "blur", "draw", *COLOR_ADJUST)
@@ -261,6 +267,32 @@ def _mask(value: Any, where: str, errors: list[str]) -> dict[str, Any] | None:
     return out
 
 
+def _filter(value: Any, where: str, errors: list[str]) -> dict[str, Any] | None:
+    """Which preset a layer's colour came from (the values themselves are in props)."""
+    if value in (None, {}):
+        return None
+    if not isinstance(value, dict):
+        errors.append(f"{where}: objek {{\"preset\": \"Vintage\", \"amount\": 1}}")
+        return None
+    return {"preset": str(value.get("preset") or "")[:40], "amount": _num(value.get("amount", 1), f"{where}.amount", errors, 0, 1.5)}
+
+
+def _grade(value: Any, errors: list[str]) -> dict[str, Any] | None:
+    """The whole video's filter: colour values, fade and vignette, and the preset they came from."""
+    if value in (None, {}):
+        return None
+    if not isinstance(value, dict):
+        errors.append("grade: objek, misalnya {\"preset\": \"Sinematik\", \"contrast\": 0.2, \"vignette\": 0.4}")
+        return None
+    out: dict[str, Any] = {}
+    for key in GRADE_KEYS:
+        kind = "num" if key == "hue" else "unit" if key in ("fade", "vignette") else "adjust"
+        out[key] = _value(kind, value.get(key, 0), f"grade.{key}", errors)
+    out["preset"] = str(value.get("preset") or "")[:40]
+    out["amount"] = _num(value.get("amount", 1), "grade.amount", errors, 0, 1.5)
+    return out if any(out[k] for k in GRADE_KEYS) or out["preset"] else None
+
+
 def _tracks(value: Any, errors: list[str]) -> list[dict[str, Any]]:
     if value in (None, []):
         return []
@@ -312,6 +344,11 @@ def validate(doc: Any) -> tuple[dict[str, Any], list[str]]:
         fonts = []
     out["fonts"] = list(dict.fromkeys(fonts))
     out["tracks"] = _tracks(doc.get("tracks"), errors)
+    grade = _grade(doc.get("grade"), errors)
+    if grade is None:
+        out.pop("grade", None)
+    else:
+        out["grade"] = grade
     track_kinds = {t["id"]: t["kind"] for t in out["tracks"]}
 
     layers = doc.get("layers") or []
@@ -364,7 +401,7 @@ def validate(doc: Any) -> tuple[dict[str, Any], list[str]]:
         allowed = {k for k, v in ANIMATABLE.items() if v != "gain"} | ({"volume"} if kind == "video" else set())
         item["keys"] = _keys(layer.get("keys"), f"{where}.keys", errors, allowed)
         for field_name, check_fn in (("transIn", _transition), ("transOut", _transition), ("chroma", _chroma),
-                                     ("lut", _lut), ("mask", _mask)):
+                                     ("lut", _lut), ("mask", _mask), ("filter", _filter)):
             effect = check_fn(layer.get(field_name), f"{where}.{field_name}", errors)
             if effect is None:
                 item.pop(field_name, None)
@@ -639,6 +676,6 @@ def resolve_note(doc: dict[str, Any], number: int, reply: str) -> bool:
     return False
 
 
-__all__ = ["ANIMATABLE", "COLOR_ADJUST", "ConflictError", "EASES", "LAYER_TYPES", "StudioError", "TRANSITIONS", "check",
+__all__ = ["ANIMATABLE", "COLOR_ADJUST", "GRADE_KEYS", "ConflictError", "EASES", "LAYER_TYPES", "StudioError", "TRANSITIONS", "check",
            "doc_path", "ease", "folder", "load", "open_notes", "projects", "resolve_note", "save", "slug", "stamp", "template",
            "validate"]

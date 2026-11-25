@@ -308,3 +308,22 @@ kbd { display: inline-block; min-width: 22px; padding: 1px 6px; border: 1px soli
 .st-trmark { position: absolute; top: 0; bottom: 0; pointer-events: none; }
 .st-trmark.in { left: 0; border-radius: 5px 0 0 5px; background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, transparent), transparent); }
 .st-trmark.out { right: 0; border-radius: 0 5px 5px 0; background: linear-gradient(270deg, color-mix(in srgb, var(--accent) 55%, transparent), transparent); }
+
+/* templates: moves and filters */
+.st-motions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: var(--s-2); }
+.st-motions .st-btn { justify-content: flex-start; min-height: 32px; font-size: var(--fs-xs); white-space: normal; text-align: left; line-height: 1.25; padding: 6px var(--s-2); }
+.st-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-bottom: var(--s-3); }
+.st-filter { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 3px; border: 1.5px solid transparent; border-radius: var(--r-sm);
+  background: none; color: var(--muted); font: 600 10.5px var(--sans); cursor: pointer; transition: border-color var(--dur), color var(--dur), transform 240ms var(--spring); }
+.st-filter img, .st-filter i { display: block; width: 100%; aspect-ratio: 9 / 13; object-fit: cover; border-radius: 5px; background: var(--surface-2); }
+.st-filter span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+.st-filter:hover { color: var(--text); transform: translateY(-2px); }
+.st-filter.on { border-color: var(--accent); color: var(--accent); }
+.st-field input[type="range"] { width: 100%; accent-color: var(--accent); }
+
+/* keyframe rows */
+.st-key-prop { margin: var(--s-3) 0 var(--s-1); }
+.st-keyrow { display: grid; grid-template-columns: 64px 72px minmax(0, 1fr) 26px; gap: 4px; align-items: center; margin-bottom: 4px; padding: 2px; border-radius: var(--r-sm); }
+.st-keyrow.here { background: var(--accent-soft); }
+.st-keyrow input[type="color"] { width: 100%; height: 30px; padding: 2px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface); }
+.st-keyrow .st-hint { margin: 0; }

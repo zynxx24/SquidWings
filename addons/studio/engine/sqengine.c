@@ -58,7 +58,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "vendor/stb_image_write.h"
 
-#define SQ_VERSION "1.1.0"
+#define SQ_VERSION "1.2.0"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -135,7 +135,7 @@ static int split_tabs(char *line, char **fields, int max) {
 
 /* ── easing and keyframes (same as render.js) ───────────────────────────────── */
 
-enum { E_LINEAR, E_IN, E_OUT, E_INOUT, E_OUTBACK, E_OUTELASTIC, E_HOLD, E_INBACK, E_OUTBOUNCE, E_BEZIER };
+enum { E_LINEAR, E_IN, E_OUT, E_INOUT, E_OUTBACK, E_OUTELASTIC, E_HOLD, E_INBACK, E_OUTBOUNCE, E_BEZIER, E_SMOOTH };
 
 /* An ease: a named curve, or cubic-bezier(x1,y1,x2,y2) drawn in the editor's curve editor. */
 typedef struct { int id; float x1, y1, x2, y2; } Ease;
@@ -154,6 +154,7 @@ static Ease ease_parse(const char *s) {
     else if (!strcmp(s, "hold")) e.id = E_HOLD;
     else if (!strcmp(s, "inBack")) e.id = E_INBACK;
     else if (!strcmp(s, "outBounce")) e.id = E_OUTBOUNCE;
+    else if (!strcmp(s, "smooth")) e.id = E_SMOOTH;
     return e;
 }
 
@@ -187,7 +188,8 @@ static double ease(const Ease *e, double p) {
     switch (e->id) {
     case E_IN: return p * p * p;
     case E_OUT: return 1 - pow(1 - p, 3);
-    case E_INOUT: return p < 0.5 ? 4 * p * p * p : 1 - pow(-2 * p + 2, 3) / 2;
+    case E_INOUT: case E_SMOOTH: /* smooth on its own (a transition, a colour) moves like inOut */
+        return p < 0.5 ? 4 * p * p * p : 1 - pow(-2 * p + 2, 3) / 2;
     case E_OUTBACK: { double c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * pow(p - 1, 3) + c1 * pow(p - 1, 2); }
     case E_OUTELASTIC:
         if (p == 0 || p == 1) return p;
@@ -225,6 +227,15 @@ static float track_num(const Track *tr, double t, float fallback) {
         if (t >= a->t && t < b->t) {
             double span = b->t - a->t;
             if (span == 0) span = 1;
+            if (a->ease.id == E_SMOOTH) {
+                /* smooth: a curve through the keys (Catmull-Rom tangents in time), no stop at each key;
+                   the first and last keys start and settle gently. Same as render.js valueAt. */
+                const Key *pa = i > 0 ? &tr->k[i - 1] : NULL, *nb = i + 2 < tr->n ? &tr->k[i + 2] : NULL;
+                double m0 = pa && b->t - pa->t > 1e-9 ? (b->v - pa->v) / (b->t - pa->t) : 0;
+                double m1 = nb && nb->t - a->t > 1e-9 ? (nb->v - a->v) / (nb->t - a->t) : 0;
+                double s = (t - a->t) / span, s2 = s * s, s3 = s2 * s;
+                return (float)((2 * s3 - 3 * s2 + 1) * a->v + (s3 - 2 * s2 + s) * span * m0 + (-2 * s3 + 3 * s2) * b->v + (s3 - s2) * span * m1);
+            }
             double p = ease(&a->ease, (t - a->t) / span);
             return (float)(a->v + (b->v - a->v) * p);
         }
@@ -287,13 +298,13 @@ enum { L_TEXT, L_RECT, L_ELLIPSE, L_POLYGON, L_PATH, L_IMAGE, L_VIDEO, L_OTHER }
 
 enum {
     P_X, P_Y, P_SCALE, P_SCALEX, P_SCALEY, P_ROT, P_OPACITY, P_BLUR, P_DRAW, P_W, P_H, P_RADIUS, P_SIZE, P_STROKEW,
-    P_BRIGHT, P_CONTRAST, P_SAT, P_HUE, P_TEMP,
+    P_BRIGHT, P_CONTRAST, P_SAT, P_HUE, P_TEMP, P_FADE,
     P_COUNT
 };
 static const char *PROP_NAMES[P_COUNT] = {"x", "y", "scale", "scaleX", "scaleY", "rotation", "opacity", "blur", "draw",
                                           "w", "h", "radius", "size", "strokeWidth",
-                                          "brightness", "contrast", "saturation", "hue", "temperature"};
-static const float PROP_DEFAULTS[P_COUNT] = {0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+                                          "brightness", "contrast", "saturation", "hue", "temperature", "fade"};
+static const float PROP_DEFAULTS[P_COUNT] = {0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 /* Transitions: how a layer comes in at its start and leaves at its end. */
 enum { T_NONE, T_FADE, T_SLIDE_L, T_SLIDE_R, T_SLIDE_U, T_SLIDE_D, T_ZOOM, T_BLUR, T_WIPE_L, T_WIPE_R, T_WIPE_U, T_WIPE_D, T_IRIS };
@@ -346,6 +357,8 @@ typedef struct {
     Layer *layers; int nlayers;
     /* audio */
     char *audio_out; int audio_rate;
+    /* a filter on the whole frame: brightness, contrast, saturation, hue, temperature, fade, vignette */
+    int has_grade; float grade[7];
     struct AClip *clips; int nclips;
 } Scene;
 
@@ -594,6 +607,9 @@ static void load_scene(Scene *s, const char *path) {
             cur->video = find_video(s, fld[1]);
         } else if (cur && !strcmp(k, "fit") && n >= 2) {
             cur->cover = !strcmp(fld[1], "cover");
+        } else if (!strcmp(k, "grade") && n >= 8 && !cur) {
+            for (int c = 0; c < 7; c++) s->grade[c] = (float)atof(fld[1 + c]);
+            for (int c = 0; c < 7; c++) if (s->grade[c] != 0) s->has_grade = 1;
         } else if (!strcmp(k, "lutfile") && n >= 3) {
             s->luts = xrealloc(s->luts, sizeof(Lut) * (size_t)(s->nluts + 1));
             Lut *lt = &s->luts[s->nluts++];
@@ -1321,7 +1337,7 @@ typedef struct {
     /* effects: colour, chroma key, LUT, mask and wipes, applied to the layer alone before it is composited */
     int isolate;
     const Layer *L;
-    float color[5]; /* brightness, contrast, saturation, hue, temperature */
+    float color[6]; /* brightness, contrast, saturation, hue, temperature, fade */
     int nwipe, wipe_type[2], wipe_out[2]; float wipe_a[2];
     float box_w, box_h;         /* the layer's own box, for masks and wipes */
     Mat inv; float dscale;      /* device -> layer space, and device pixels per layer unit */
@@ -1329,6 +1345,8 @@ typedef struct {
 } Prepared;
 
 /* ── effects: the same arithmetic as render.js (effectPixel), so preview and export agree ── */
+
+static void color_ops(const float *c, float *rgb);
 
 static void effect_pixel(const Prepared *pr, float *rgb, float *alpha) {
     const Layer *L = pr->L;
@@ -1356,7 +1374,14 @@ static void effect_pixel(const Prepared *pr, float *rgb, float *alpha) {
         lut_sample(L->lut, in, out);
         r += (out[0] - r) * L->lut_mix; g += (out[1] - g) * L->lut_mix; b += (out[2] - b) * L->lut_mix;
     }
-    const float *c = pr->color;
+    rgb[0] = r; rgb[1] = g; rgb[2] = b;
+    color_ops(pr->color, rgb);
+}
+
+/* Colour adjustments in place: temperature, brightness, contrast, saturation, hue, fade; then 0..1.
+   c = {brightness, contrast, saturation, hue, temperature, fade} (render.js colorOps). */
+static void color_ops(const float *c, float *rgb) {
+    float r = rgb[0], g = rgb[1], b = rgb[2];
     if (c[4] != 0) { r += c[4] * 0.1f; b -= c[4] * 0.1f; }
     if (c[0] != 0) { float k = 1 + c[0]; r *= k; g *= k; b *= k; }
     if (c[1] != 0) { float k = 1 + c[1]; r = (r - 0.5f) * k + 0.5f; g = (g - 0.5f) * k + 0.5f; b = (b - 0.5f) * k + 0.5f; }
@@ -1371,6 +1396,7 @@ static void effect_pixel(const Prepared *pr, float *rgb, float *alpha) {
         float nb = r * (0.213f - co * 0.213f - si * 0.787f) + g * (0.715f - co * 0.715f + si * 0.715f) + b * (0.072f + co * 0.928f + si * 0.072f);
         r = nr; g = ng; b = nb;
     }
+    if (c[5] != 0) { float k = 0.22f * c[5]; r = r * (1 - k) + k; g = g * (1 - k) + k; b = b * (1 - k) + k; }
     rgb[0] = clampf(r, 0, 1); rgb[1] = clampf(g, 0, 1); rgb[2] = clampf(b, 0, 1);
 }
 
@@ -1468,9 +1494,9 @@ static void prepare_layer(const Scene *sc, Layer *L, double t, const Mat *global
     pr->L = L;
     pr->m = m;
     pr->dscale = (float)s;
-    for (int c = 0; c < 5; c++) pr->color[c] = st[P_BRIGHT + c];
+    for (int c = 0; c < 6; c++) pr->color[c] = st[P_BRIGHT + c];
     pr->isolate = L->has_chroma || (L->lut && L->lut_mix > 0) || L->has_mask || pr->nwipe > 0 ||
-                  st[P_BRIGHT] != 0 || st[P_CONTRAST] != 0 || st[P_SAT] != 0 || st[P_HUE] != 0 || st[P_TEMP] != 0;
+                  st[P_BRIGHT] != 0 || st[P_CONTRAST] != 0 || st[P_SAT] != 0 || st[P_HUE] != 0 || st[P_TEMP] != 0 || st[P_FADE] != 0;
     pr->box_w = bw; pr->box_h = bh;
     if (pr->isolate && !mat_invert(&m, &pr->inv)) pr->isolate = 0;
     if (L->type == L_IMAGE || L->type == L_VIDEO) {
@@ -1849,6 +1875,33 @@ static void task_effects(void *ctx, int band, int worker) {
     }
 }
 
+/* The video's filter over the finished frame: colour, fade, then a vignette by distance from the centre. */
+static void task_grade(void *ctx, int band, int worker) {
+    Job *j = ctx;
+    (void)worker;
+    const float *gr = j->sc->grade;
+    Canvas *c = j->cv;
+    int y0, y1;
+    job_band_range(j, band, &y0, &y1);
+    for (int y = y0; y < y1; y++) {
+        float *p = c->px + (size_t)y * c->w * 4;
+        float v = ((y + 0.5f) / c->h - 0.5f) * 2;
+        for (int x = 0; x < c->w; x++, p += 4) {
+            float a = p[3];
+            if (a <= 1e-6f) continue;
+            float rgb[3] = {p[0] / a, p[1] / a, p[2] / a};
+            color_ops(gr, rgb);
+            if (gr[6] > 0) {
+                float u = ((x + 0.5f) / c->w - 0.5f) * 2;
+                float r = sqrtf((u * u + v * v) / 2), k = clampf((r - 0.35f) / 0.65f, 0, 1);
+                float dark = 1 - gr[6] * 0.8f * k * k * (3 - 2 * k);
+                rgb[0] *= dark; rgb[1] *= dark; rgb[2] *= dark;
+            }
+            p[0] = rgb[0] * a; p[1] = rgb[1] * a; p[2] = rgb[2] * a;
+        }
+    }
+}
+
 static void task_composite(void *ctx, int band, int worker) {
     Job *j = ctx;
     (void)worker;
@@ -1890,6 +1943,7 @@ static void render_frame(Scene *sc, Pool *pool, Job *job, double t) {
         }
         prepared_free(pr);
     }
+    if (sc->has_grade) pool_for(pool, job->bands, task_grade, job);
 }
 
 static void to_rgba8(const Canvas *cv, unsigned char *out) {
@@ -1946,7 +2000,7 @@ static int has_blur(const Scene *sc) {
     for (int i = 0; i < sc->nlayers; i++) {
         const Layer *L = &sc->layers[i];
         if (L->stat[P_BLUR] > 0 || L->num_keys[P_BLUR] || L->has_chroma || L->lut || L->has_mask) return 1;
-        for (int p = P_BRIGHT; p <= P_TEMP; p++) if (L->stat[p] != 0 || L->num_keys[p]) return 1;
+        for (int p = P_BRIGHT; p <= P_FADE; p++) if (L->stat[p] != 0 || L->num_keys[p]) return 1;
         if (L->tin.type >= T_BLUR || L->tout.type >= T_BLUR) return 1; /* blur, wipes, iris */
     }
     return 0;

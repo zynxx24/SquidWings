@@ -1,5 +1,13 @@
 # Catatan perubahan
 
+## 2026-11-26: keyframe sendiri, template gerak, filter
+
+- **Atur keyframe sendiri**: bagian "Keyframe" di panel Properti menampilkan semua keyframe lapisan (waktu, nilai, gerak) dan bisa diedit langsung. Tombol Haluskan semua, Pelan awal-akhir, Linear.
+- **Gerak "Halus"**: gerak mengalir melewati semua keyframe tanpa berhenti di setiap titik (kurva Catmull-Rom), sama di pratinjau dan ekspor.
+- **Jalur gerak di kanvas**: lapisan yang bergerak menampilkan jalurnya dengan titik per keyframe posisi; titiknya bisa diseret.
+- **Template gerak**: Muncul naik, Pop, Geser dari kiri, Jatuh memantul, Ketik / gambar garis, Zoom pelan, Melayang, Denyut, Goyang, Keluar pudar, Hapus semua gerak. Dihitung dari posisi dan waktu lapisan itu, lalu tetap bisa diatur keyframe demi keyframe.
+- **Filter** dengan pratinjau kecil dari frame saat ini: Hangat, Dingin, Sinematik, Vintage, Senja, Cerah, Pastel, Pudar, Dramatis, Hitam putih, Noir. Bisa untuk seluruh video (dengan vinyet) atau per lapisan, dengan slider kekuatan; angkanya tetap bisa disetel sendiri. Properti warna baru: Pudar.
+
 ## 2026-11-25 (malam): jalankan tanpa venv
 
 - `./run.sh` (Linux, macOS) dan `run.bat` (Windows) menjalankan SquidWings tanpa mengaktifkan venv. Tanpa argumen membuka web; `./run.sh chat`, `./run.sh addon list` dan perintah lain diteruskan ke `main.py`. Kalau `.venv` belum ada, setup dijalankan dulu.

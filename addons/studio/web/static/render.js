@@ -21,10 +21,12 @@
       if (p < 2.5 / d1) { p -= 2.25 / d1; return n1 * p * p + 0.9375; }
       p -= 2.625 / d1; return n1 * p * p + 0.984375;
     },
+    // smooth: between keys a curve through all of them (valueAt); on its own it moves like inOut.
+    smooth: p => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2),
   };
   const EASE_NAMES = { linear: 'Linear', in: 'Pelan di awal', out: 'Pelan di akhir', inOut: 'Pelan di awal & akhir',
     outBack: 'Memantul lewat', inBack: 'Ambil ancang-ancang', outElastic: 'Elastis', outBounce: 'Memantul jatuh',
-    hold: 'Tahan (lompat)' };
+    smooth: 'Halus', hold: 'Tahan (lompat)' };
   // The curve editor starts a named ease from its closest cubic-bezier.
   const BEZIER_OF = { linear: [0, 0, 1, 1], in: [0.55, 0.055, 0.675, 0.19], out: [0.215, 0.61, 0.355, 1],
     inOut: [0.645, 0.045, 0.355, 1], outBack: [0.175, 0.885, 0.32, 1.275], inBack: [0.6, -0.28, 0.735, 0.045] };
@@ -108,6 +110,14 @@
       const a = frames[i], b = frames[i + 1];
       if (t >= a.t && t < b.t) {
         const span = b.t - a.t || 1;
+        if (a.ease === 'smooth' && typeof a.v === 'number' && typeof b.v === 'number') {
+          // A curve through the keys (Catmull-Rom tangents in time): no stop at each key. Same as the engine.
+          const pa = frames[i - 1], nb = frames[i + 2];
+          const m0 = pa && b.t - pa.t > 1e-9 ? (b.v - pa.v) / (b.t - pa.t) : 0;
+          const m1 = nb && nb.t - a.t > 1e-9 ? (nb.v - a.v) / (nb.t - a.t) : 0;
+          const s = (t - a.t) / span, s2 = s * s, s3 = s2 * s;
+          return (2 * s3 - 3 * s2 + 1) * a.v + (s3 - 2 * s2 + s) * span * m0 + (-2 * s3 + 3 * s2) * b.v + (s3 - s2) * span * m1;
+        }
         const p = easeFn(a.ease)((t - a.t) / span);
         return lerp(a.v, b.v, p, COLOR_PROPS.has(prop));
       }
@@ -116,8 +126,9 @@
   }
 
   const TRANSFORM_DEFAULTS = { x: 0, y: 0, scale: 1, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1, blur: 0, draw: 1,
-    brightness: 0, contrast: 0, saturation: 0, hue: 0, temperature: 0 };
-  const COLOR_ADJUST = ['brightness', 'contrast', 'saturation', 'hue', 'temperature'];
+    brightness: 0, contrast: 0, saturation: 0, hue: 0, temperature: 0, fade: 0 };
+  // The order the engine takes them in (color_ops in sqengine.c).
+  const COLOR_ADJUST = ['brightness', 'contrast', 'saturation', 'hue', 'temperature', 'fade'];
 
   /* ── transitions ────────────────────────────────── */
   const TRANSITIONS = ['none', 'fade', 'slide-left', 'slide-right', 'slide-up', 'slide-down', 'zoom', 'blur',
@@ -451,7 +462,16 @@
       lutSample(fx.lut, [clamp01(r), clamp01(g), clamp01(b)], lutOut);
       r += (lutOut[0] - r) * fx.lutMix; g += (lutOut[1] - g) * fx.lutMix; b += (lutOut[2] - b) * fx.lutMix;
     }
-    const [bright, contrast, sat, hue, temp] = fx.color;
+    rgb[0] = r; rgb[1] = g; rgb[2] = b;
+    colorOps(fx.color, rgb);
+    return alpha;
+  }
+
+  /** Colour adjustments in place, then 0..1: temperature, brightness, contrast, saturation, hue, fade.
+   *  c = [brightness, contrast, saturation, hue, temperature, fade] (color_ops in the engine). */
+  function colorOps(c, rgb) {
+    let [r, g, b] = rgb;
+    const [bright, contrast, sat, hue, temp, fade] = c;
     if (temp) { r += temp * 0.1; b -= temp * 0.1; }
     if (bright) { const m = 1 + bright; r *= m; g *= m; b *= m; }
     if (contrast) { const m = 1 + contrast; r = (r - 0.5) * m + 0.5; g = (g - 0.5) * m + 0.5; b = (b - 0.5) * m + 0.5; }
@@ -463,8 +483,38 @@
       const nb = r * (0.213 - co * 0.213 - si * 0.787) + g * (0.715 - co * 0.715 + si * 0.715) + b * (0.072 + co * 0.928 + si * 0.072);
       r = nr; g = ng; b = nb;
     }
+    if (fade) { const k = 0.22 * fade; r = r * (1 - k) + k; g = g * (1 - k) + k; b = b * (1 - k) + k; }
     rgb[0] = clamp01(r); rgb[1] = clamp01(g); rgb[2] = clamp01(b);
-    return alpha;
+  }
+
+  /* ── the video's filter (doc.grade), over the finished frame ── */
+  const GRADE_KEYS = [...COLOR_ADJUST, 'vignette'];
+  /** [brightness, contrast, saturation, hue, temperature, fade, vignette], or null when the video has no filter. */
+  function gradeOf(doc) {
+    const g = doc && doc.grade;
+    if (!g) return null;
+    const values = GRADE_KEYS.map(k => +g[k] || 0);
+    return values.some(Boolean) ? values : null;
+  }
+  function vignetteAt(v, x, y, w, h) {
+    const u = ((x + 0.5) / w - 0.5) * 2, q = ((y + 0.5) / h - 0.5) * 2;
+    const k = clamp01((Math.sqrt((u * u + q * q) / 2) - 0.35) / 0.65);
+    return 1 - v * 0.8 * k * k * (3 - 2 * k);
+  }
+  function applyGrade(ctx, grade) {
+    const W = ctx.canvas.width, H = ctx.canvas.height;
+    const img = ctx.getImageData(0, 0, W, H), d = img.data, rgb = [0, 0, 0], v = grade[6];
+    for (let y = 0, i = 0; y < H; y++) {
+      for (let x = 0; x < W; x++, i += 4) {
+        const a = d[i + 3];
+        if (!a) continue;
+        rgb[0] = d[i] / 255; rgb[1] = d[i + 1] / 255; rgb[2] = d[i + 2] / 255;
+        colorOps(grade, rgb);
+        const k = v > 0 ? vignetteAt(v, x, y, W, H) : 1;
+        d[i] = rgb[0] * k * 255 + 0.5; d[i + 1] = rgb[1] * k * 255 + 0.5; d[i + 2] = rgb[2] * k * 255 + 0.5;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
   }
 
   function sdRoundRect(px, py, hw, hh, r) {
@@ -565,6 +615,8 @@
       if (fx) drawIsolated(ctx, layer, s, assets, fx, gscale); else drawLayer(ctx, layer, s, assets, gscale);
     }
     ctx.restore();
+    const grade = gradeOf(doc);
+    if (grade) applyGrade(ctx, grade);
   }
 
   /** The topmost visible layer under a point in video pixels, or null. */
@@ -651,6 +703,6 @@
   window.StudioRender = {
     EASE, EASE_NAMES, easeFn, bezierOf, TRANSITIONS, TRANSITION_NAMES, COLOR_ADJUST, valueAt, layerState, drawFrame, hitTest,
     size, scheduleAudio, visible, trackOf, hexToRgba, seekVideos, clipTime, parseCube, lutSample, effectsOf, effectPixel,
-    coverage, transAmount,
+    coverage, transAmount, colorOps, gradeOf, vignetteAt,
   };
 })();

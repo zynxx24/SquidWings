@@ -300,10 +300,10 @@ def _color(value: Any) -> str:
 
 
 _NUM_PROPS = ("x", "y", "scale", "scaleX", "scaleY", "rotation", "opacity", "blur", "draw",
-              "brightness", "contrast", "saturation", "hue", "temperature")
+              "brightness", "contrast", "saturation", "hue", "temperature", "fade")
 _SIZE_PROPS = ("w", "h", "radius", "size", "strokeWidth")
 _PROP_DEFAULTS = {"x": 0, "y": 0, "scale": 1, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1, "blur": 0, "draw": 1,
-                  "brightness": 0, "contrast": 0, "saturation": 0, "hue": 0, "temperature": 0}
+                  "brightness": 0, "contrast": 0, "saturation": 0, "hue": 0, "temperature": 0, "fade": 0}
 
 
 def _tracks(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -370,6 +370,9 @@ def scene(doc: dict[str, Any], project: Path, *, times: list[float] | None = Non
         lines.append(f"output\t{out_size[0]}\t{out_size[1]}")
     bg = _color(doc.get("background") or "#000000")
     lines.append("background\t" + (bg if bg != "none" else "0\t0\t0\t1"))
+    grade = doc.get("grade")
+    if isinstance(grade, dict) and any(isinstance(grade.get(k), (int, float)) and grade.get(k) for k in studio_doc.GRADE_KEYS):
+        lines.append("grade\t" + "\t".join(str(float(grade.get(k) or 0)) for k in studio_doc.GRADE_KEYS))
     span = sorted(times) if times else [0.0]
     out_long = max(out_size or (width_px, height_px))
     font_ids: dict[tuple[str, int], str] = {}

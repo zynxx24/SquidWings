@@ -331,3 +331,61 @@ def test_big_clips_get_a_proxy_and_the_editor_hears_about_it(tmp_path: Path, mon
     body = events.text
     assert "event: doc\ndata: {\"stamp\":" in body and "event: render" in body
     assert '"assets/big.mp4":{"ready":true' in body
+
+
+def test_filters_fade_and_smooth_keys_are_validated():
+    doc = _fx_doc({"props": {"x": 50, "y": 50, "fade": 0.3}, "filter": {"preset": "Vintage", "amount": 0.8},
+                   "keys": {"x": [{"t": 0, "v": 10, "ease": "smooth"}, {"t": 1, "v": 90, "ease": "smooth"}]}},
+                  grade={"preset": "Noir", "amount": 1, "saturation": -1, "contrast": 0.45, "vignette": 0.6})
+    clean, errors = studio_doc.validate(doc)
+    assert errors == []
+    assert clean["grade"]["vignette"] == 0.6 and clean["grade"]["hue"] == 0.0 and clean["layers"][0]["filter"]["preset"] == "Vintage"
+    _, errors = studio_doc.validate(_fx_doc({"props": {"x": 1, "y": 1, "fade": 2}}, grade={"vignette": -1}))
+    assert any("fade" in e for e in errors) and any("grade.vignette" in e for e in errors)
+    clean, _ = studio_doc.validate(_fx_doc({}, grade={}))
+    assert "grade" not in clean, "an empty filter is dropped"
+
+
+def _node_eval(expr_cases: list) -> list:
+    """Evaluate small expressions against render.js in node (R = window.StudioRender, c = the case)."""
+    import subprocess
+
+    script = r"""
+      global.window = {}; global.document = { createElement: () => ({}) };
+      require(process.argv[1]);
+      const R = window.StudioRender;
+      console.log(JSON.stringify(JSON.parse(process.argv[2]).map(([expr, c]) => Function('R', 'c', 'return ' + expr)(R, c))));
+    """
+    render_js = Path(__file__).resolve().parents[1] / "addons" / "studio" / "web" / "static" / "render.js"
+    done = subprocess.run(["node", "-e", script, str(render_js), json.dumps(expr_cases)], capture_output=True, text=True, timeout=60, check=True)
+    return json.loads(done.stdout)
+
+
+@needs_tools
+@needs_node
+def test_smooth_keys_fade_and_the_video_filter_match_between_preview_and_export(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(fonts, "ttf", lambda family, weight=400: fonts.system_font())
+    keys = {"x": [{"t": 0, "v": 250, "ease": "smooth"}, {"t": 0.5, "v": 650, "ease": "smooth"}, {"t": 1.2, "v": 420, "ease": "smooth"},
+                  {"t": 2, "v": 700}]}
+    doc = _fx_doc({"w": 200, "h": 16, "fill": "#FFFFFF", "props": {"x": 500, "y": 8}, "keys": keys})
+    doc.update(width=1000, height=16)
+    times = [0.2, 0.7, 1.5]
+    expected = _node_eval([["R.valueAt(c.keys, 'x', c.t, 0) - 100", {"keys": keys, "t": t}] for t in times])
+    studio_doc.save(tmp_path, "fx", doc)
+    for t, want in zip(times, expected, strict=True):
+        got = _row_edge(renderer.still(tmp_path, "fx", [t], scale=1.0, out=tmp_path / "s.png"), 8)
+        assert abs(got - want) < 0.6, (t, got, want)
+    assert expected[0] > 250 and not any(abs(e + 100 - 650) < 1e-6 for e in expected), "the curve passes through, it does not stop"
+
+    grade = {"brightness": 0.05, "contrast": 0.2, "saturation": -0.3, "hue": 12, "temperature": 0.25, "fade": 0.35, "vignette": 0.7}
+    doc = _fx_doc({"fill": "#5A8CC8", "props": {"x": 50, "y": 50, "fade": 0.4}}, grade=grade)
+    studio_doc.save(tmp_path, "fx", doc)
+    png = renderer.still(tmp_path, "fx", [0.5], scale=1.0, out=tmp_path / "g.png")
+    order = ["brightness", "contrast", "saturation", "hue", "temperature", "fade", "vignette"]
+    expr = ("(() => { const rgb = [0x5A / 255, 0x8C / 255, 0xC8 / 255]; R.colorOps([0, 0, 0, 0, 0, 0.4], rgb); R.colorOps(c.g, rgb);"
+            " const k = R.vignetteAt(c.g[6], c.x, c.y, 100, 100); return rgb.map(v => v * k * 255); })()")
+    points = [(50, 50), (4, 4), (80, 20)]
+    expected = _node_eval([[expr, {"g": [grade[k] for k in order], "x": x, "y": y}] for x, y in points])
+    for (x, y), want in zip(points, expected, strict=True):
+        got = _png_pixel(png, x, y)
+        assert all(abs(g - w) <= 2 for g, w in zip(got[:3], want, strict=True)), ((x, y), got, want)
