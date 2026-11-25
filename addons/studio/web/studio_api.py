@@ -25,7 +25,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 
-from addons.studio import studio_doc
+from addons.studio import renderer, studio_doc
 from addons.studio.studio_doc import ConflictError, StudioError
 from brain.config.settings import get_settings
 from brain.utils import shared_files
@@ -48,7 +48,7 @@ _PART_EXT = {"h264": ".h264", "webm": ".webm", "wav": ".wav"}
 _JOB_RE = re.compile(r"^[a-z0-9]{8,40}$")
 _FONT_FAMILY_RE = re.compile(r"^[A-Za-z0-9 ]{1,60}(:wght@[0-9;]{1,40})?$")
 _FONT_FILE_RE = re.compile(r"^[A-Za-z0-9/_.-]{5,200}$")
-_EXPORT_SECONDS = 600
+_EXPORT_SECONDS = 6 * 3600   # the browser export's final mux; the server render has no time limit
 
 
 def _workspace(session: str) -> Path:
@@ -238,6 +238,106 @@ async def _mux(video: Path, audio: Path | None, target: Path, fps: int, duration
         process.kill()
         return "ffmpeg terlalu lama"
     return "" if process.returncode == 0 and target.exists() else (err.decode("utf-8", "replace") or "ffmpeg gagal")
+
+
+# ── server render (the C engine) ───────────────────────────────────────────────
+# An export runs on this machine as a job: the browser only starts it and watches. A phone that
+# goes to sleep does not stop it, and reopening the editor shows where it is.
+_render_jobs: dict[str, renderer.Job] = {}
+_JOB_KEEP_S = 3600.0
+
+
+def _forget_old_jobs() -> None:
+    now = time.time()
+    for job_id, job in list(_render_jobs.items()):
+        if job.finished and now - job.finished > _JOB_KEEP_S:
+            del _render_jobs[job_id]
+
+
+@router.get("/api/studio/engine")
+async def engine_status() -> dict[str, Any]:
+    """Is the C engine built, which GPU encoders work here, the thread and memory limits."""
+    return await asyncio.to_thread(renderer.status)
+
+
+@router.post("/api/studio/{session}/project/{name}/render")
+async def start_render(session: str, name: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = payload or {}
+    workspace = _workspace(session)
+    _project(session, name)
+    scale = float(payload.get("scale") or 1)
+    if not 0.1 <= scale <= 2:
+        raise HTTPException(status_code=400, detail="scale 0.1-2")
+    quality = str(payload.get("quality") or "high")
+    gpu = str(payload.get("gpu") or "")
+    _forget_old_jobs()
+    job = renderer.Job(id=os.urandom(8).hex(), session=session, project=name)
+    _render_jobs[job.id] = job
+
+    def work() -> None:
+        job.state = "running"
+        try:
+            target = renderer.export(workspace, name, scale=scale, quality=quality, gpu=gpu, job=job)
+            relative = str(target.relative_to(workspace))
+            shared_files.add(workspace, relative)
+            job.file = relative
+            job.state = "done"
+        except renderer.RenderError as exc:
+            job.state = "cancelled" if job.cancel.is_set() else "error"
+            job.error = str(exc)
+        except (StudioError, OSError) as exc:
+            job.state, job.error = "error", str(exc)
+        finally:
+            job.finished = time.time()
+
+    asyncio.get_running_loop().run_in_executor(None, work)
+    return job.public()
+
+
+def _job(session: str, job_id: str) -> renderer.Job:
+    job = _render_jobs.get(job_id)
+    if job is None or job.session != session:
+        raise HTTPException(status_code=404, detail="Job render tidak ada")
+    return job
+
+
+@router.get("/api/studio/{session}/render/{job_id}")
+async def render_status(session: str, job_id: str) -> dict[str, Any]:
+    job = _job(session, job_id)
+    out = job.public()
+    if job.state == "done" and job.file:
+        out.update(url=shared_files.url_for(session, job.file), markdown=shared_files.markdown(session, job.file, Path(job.file).name))
+    return out
+
+
+@router.get("/api/studio/{session}/renders")
+async def render_list(session: str, project: str = "") -> dict[str, Any]:
+    """Renders of this chat (running first), so a reopened editor finds the one it started."""
+    jobs = [j for j in _render_jobs.values() if j.session == session and (not project or j.project == project)]
+    jobs.sort(key=lambda j: (j.state != "running", -j.started))
+    return {"jobs": [j.public() for j in jobs[:20]]}
+
+
+@router.post("/api/studio/{session}/render/{job_id}/cancel")
+async def render_cancel(session: str, job_id: str) -> dict[str, Any]:
+    job = _job(session, job_id)
+    await asyncio.to_thread(renderer.cancel, job)
+    return job.public()
+
+
+@router.post("/api/studio/{session}/project/{name}/still")
+async def render_still(session: str, name: str, payload: dict[str, Any] | None = None) -> Response:
+    """A PNG of the frame(s) at the given times, drawn by the engine (what the export will show)."""
+    payload = payload or {}
+    workspace = _workspace(session)
+    times = [float(t) for t in (payload.get("times") or [payload.get("t") or 0])][:16]
+    try:
+        png = await asyncio.to_thread(renderer.still, workspace, name, times, scale=float(payload.get("scale") or 0.5))
+    except (renderer.RenderError, StudioError) as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    data = png.read_bytes()
+    png.unlink(missing_ok=True)
+    return Response(data, media_type="image/png", headers={"Cache-Control": "no-store"})
 
 
 # ── Google Fonts, through this server ───────────────────────────────────────────

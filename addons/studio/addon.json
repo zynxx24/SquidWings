@@ -1,7 +1,7 @@
 {
   "name": "studio",
   "title": "Studio video",
-  "description": "Editor video motion (keyframe, klip, catatan) dengan chat revisi, render MP4, dan tool studio_* untuk agent.",
+  "description": "Editor video motion (keyframe, klip, potong, catatan) dengan chat revisi, caption otomatis dari Whisper, dan render engine C di server (thread, batas memori, GPU kalau ada).",
   "files": [
     "addons/studio/studio_doc.py",
     "addons/studio/studio_context.py",
@@ -9,23 +9,31 @@
     "addons/studio/web/static/index.html",
     "addons/studio/web/static/studio.js",
     "addons/studio/tools/studio_tools.py",
-    "addons/studio/skills/studio/SKILL.md"
+    "addons/studio/skills/studio/SKILL.md",
+    "addons/studio/engine/sqengine.c",
+    "addons/studio/renderer.py"
   ],
   "requirements": "addons/studio/requirements.txt",
-  "programs": ["ffmpeg"],
+  "programs": [
+    "ffmpeg"
+  ],
   "manual": {
     "windows": [
-      "ffmpeg: winget install Gyan.FFmpeg (atau unduh dari ffmpeg.org lalu tambahkan ke PATH).",
-      "Google Chrome atau Chromium untuk gambar diam (studio_still)."
+      "ffmpeg: winget install Gyan.FFmpeg (atau biarkan memakai ffmpeg bawaan imageio-ffmpeg).",
+      "Compiler C tidak perlu dipasang: addon install memasang ziglang dari pip dan mengompilasi engine sendiri.",
+      "GPU: NVIDIA (NVENC), Intel (Quick Sync) dan AMD (AMF) dipakai otomatis kalau driver-nya terpasang."
     ],
     "linux": [
       "ffmpeg: sudo apt install ffmpeg (atau brew install ffmpeg tanpa sudo).",
-      "Chromium atau Google Chrome untuk gambar diam (studio_still)."
+      "GPU Intel/AMD lewat VAAPI: sudo apt install intel-media-va-driver (Intel) atau mesa-va-drivers (AMD). NVIDIA: driver resmi.",
+      "Compiler: cc/gcc kalau ada, kalau tidak ziglang dari pip dipakai otomatis."
     ],
     "macos": [
       "ffmpeg: brew install ffmpeg.",
-      "Google Chrome untuk gambar diam (studio_still)."
+      "GPU: VideoToolbox dipakai otomatis.",
+      "Compiler: clang (xcode-select --install) atau ziglang dari pip."
     ]
   },
-  "start": "python main.py web, lalu buka menu Studio"
+  "start": "python main.py web, lalu buka menu Studio",
+  "post_install": "addons.studio.renderer:build"
 }

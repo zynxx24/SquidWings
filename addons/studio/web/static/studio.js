@@ -807,6 +807,7 @@
           <button type="button" class="st-btn" data-act="up" title="Naikkan lapisan">Naik</button>
           <button type="button" class="st-btn" data-act="down" title="Turunkan lapisan">Turun</button>
           <button type="button" class="st-btn" data-act="dup">Duplikat</button>
+          <button type="button" class="st-btn" data-act="split" title="Potong lapisan ini di playhead (S)">Potong</button>
           <button type="button" class="st-btn" data-act="del">Hapus</button>
         </div>`;
     } else if (sel.kind === 'audio' && clipById(sel.id)) {
@@ -931,6 +932,7 @@
       case 'down': if (i > 0) mutate(() => { layers.splice(i, 1); layers.splice(i - 1, 0, l); }); break;
       case 'dup': if (l) mutate(() => { const c = JSON.parse(JSON.stringify(l)); c.id = newId(l.type); c.name = `${l.name || l.id} salinan`; c.props.x += 30; c.props.y += 30; layers.splice(i + 1, 0, c); S.sel = { kind: 'layer', id: c.id }; }); break;
       case 'del': if (l) mutate(() => { layers.splice(i, 1); S.sel = { kind: 'doc' }; S.key = null; }); break;
+      case 'split': if (l) splitAt(l, i); break;
       case 'del-key': if (l && S.key) mutate(() => { const f = l.keys[S.key.prop]; const v = f[S.key.index].v; f.splice(S.key.index, 1); if (!f.length) { delete l.keys[S.key.prop]; if (IN_PROPS.has(S.key.prop)) l.props[S.key.prop] = v; else l[S.key.prop] = v; } S.key = null; }); break;
       case 'del-audio': mutate(doc => { doc.audio = doc.audio.filter(a => a.id !== S.sel.id); S.sel = { kind: 'doc' }; }); break;
       case 'note-toggle': mutate(() => { const n = noteByN(S.sel.id); n.status = n.status === 'done' ? 'open' : 'done'; }); break;
@@ -1185,6 +1187,7 @@
     else if (e.key === 'End') seek(S.doc.duration);
     else if (e.key.toLowerCase() === 'k' && selLayer()) { const l = selLayer(); toggleKey(l, 'x'); toggleKey(l, 'y'); }
     else if (e.key.toLowerCase() === 'n') document.querySelector('[data-mode="note"]').click();
+    else if (e.key.toLowerCase() === 's' && !e.ctrlKey && !e.metaKey && selLayer()) { e.preventDefault(); splitAt(selLayer(), S.doc.layers.indexOf(selLayer())); }
     else if (e.key.toLowerCase() === 'v') document.querySelector('[data-mode="select"]').click();
     else if ((e.key === 'Delete' || e.key === 'Backspace') && S.key && selLayer()) document.querySelector('[data-act="del-key"]')?.click();
     else if ((e.key === 'Delete' || e.key === 'Backspace') && selLayer()) document.querySelector('[data-act="del"]')?.click();
@@ -1253,12 +1256,102 @@
     if (!S.dirty) fillCode();
   };
 
+  /* ── split ─────────────────────────────────────── */
+  // Cut a layer in two at the playhead. Keys are on the video's timeline, so both halves keep moving
+  // exactly as before; a video clip's second half starts further into its file.
+  function splitAt(layer, index) {
+    const t = snap(S.t), start = layer.start || 0, end = layer.end ?? S.doc.duration, frame = 1 / S.doc.fps;
+    if (t <= start + frame / 2 || t >= end - frame / 2) { setSave('Taruh playhead di tengah lapisan untuk memotong', 'warn'); return; }
+    mutate(doc => {
+      const second = JSON.parse(JSON.stringify(layer));
+      second.id = newId(layer.type);
+      second.name = `${layer.name || layer.id} (2)`;
+      second.start = +t.toFixed(4);
+      if (layer.type === 'video') second.clipStart = +((layer.clipStart || 0) + (t - start) * (layer.speed || 1)).toFixed(4);
+      layer.end = +t.toFixed(4);
+      doc.layers.splice(index + 1, 0, second);
+      S.sel = { kind: 'layer', id: second.id };
+      S.key = null;
+    });
+  }
+
   /* ── export ────────────────────────────────────── */
-  $('export').onclick = () => { if (S.doc) { $('export-status').textContent = ''; $('export-progress').hidden = true; $('export-dialog').showModal(); } };
-  $('export-start').onclick = () => exportVideo(+$('export-scale').value, +$('export-quality').value).catch(e => {
-    S.exporting = false;
-    $('export-status').textContent = `Gagal: ${e.message}`; $('export-start').disabled = false;
-  });
+  $('export').onclick = async () => {
+    if (!S.doc) return;
+    $('export-status').textContent = ''; $('export-progress').hidden = true;
+    $('export-dialog').showModal();
+    await engineInfo();
+    // A render this project started earlier (from this device or another) is still going: follow it.
+    try {
+      const { jobs } = await api(`${base()}/renders?project=${encodeURIComponent(S.name)}`);
+      const running = (jobs || []).find(j => j.state === 'running' || j.state === 'queued');
+      if (running) followRender(running.id);
+    } catch (_) { /* no list: nothing to follow */ }
+  };
+  $('export-where').onchange = () => { $('export-gpu-row').hidden = $('export-where').value !== 'server'; };
+  $('export-start').onclick = () => {
+    const scale = +$('export-scale').value, quality = +$('export-quality').value;
+    const run = $('export-where').value === 'server' && S.engine && S.engine.engine
+      ? exportOnServer(scale, quality, $('export-gpu').value) : exportVideo(scale, quality);
+    run.catch(e => {
+      S.exporting = false;
+      $('export-status').textContent = `Gagal: ${e.message}`; $('export-start').disabled = false;
+    });
+  };
+  $('export-cancel').onclick = async () => {
+    if (!S.renderJob) return;
+    try { await api(`${base()}/render/${S.renderJob}/cancel`, { method: 'POST' }); } catch (e) { $('export-status').textContent = e.message; }
+  };
+
+  /* Server render: the C engine on the machine that serves the editor does the work (threads, memory cap,
+     GPU encode when there is one). The page only starts it and watches, so closing it changes nothing. */
+  async function engineInfo() {
+    if (!S.engine) { try { S.engine = await api('/api/studio/engine'); } catch (_) { S.engine = { engine: false, error: 'tidak terjangkau' }; } }
+    const e = S.engine, where = $('export-where');
+    where.querySelector('[value=server]').disabled = !e.engine;
+    if (!e.engine) where.value = 'browser';
+    $('export-gpu-row').hidden = where.value !== 'server';
+    $('export-engine').textContent = e.engine
+      ? `Engine C siap · ${e.threads} thread · batas memori ${e.mem_mb} MB · GPU: ${(e.gpus || []).join(', ') || 'tidak ada, pakai CPU'}`
+      : `Engine C belum tersedia (${e.error || 'belum dikompilasi'}). Ekspor memakai browser ini.`;
+  }
+
+  async function exportOnServer(scale, quality) {
+    if (S.dirty) await save();
+    const gpu = $('export-gpu').value;
+    const level = quality >= 0.2 ? 'high' : 'normal';
+    $('export-start').disabled = true;
+    const job = await api(`${base()}/project/${encodeURIComponent(S.name)}/render`, { method: 'POST', ...json({ scale, quality: level, gpu }) });
+    followRender(job.id);
+  }
+
+  function followRender(id) {
+    S.renderJob = id;
+    const bar = $('export-progress');
+    bar.hidden = false;
+    $('export-start').disabled = true;
+    $('export-cancel').hidden = false;
+    clearInterval(S.renderTimer);
+    const tick = async () => {
+      let job;
+      try { job = await api(`${base()}/render/${id}`); } catch (e) { $('export-status').textContent = e.message; return; }
+      bar.value = job.progress || 0;
+      $('export-status').textContent = job.message || 'Menunggu…';
+      if (['done', 'error', 'cancelled'].includes(job.state)) {
+        clearInterval(S.renderTimer);
+        S.renderJob = null;
+        $('export-cancel').hidden = true;
+        $('export-start').disabled = false;
+        if (job.state === 'done') {
+          $('export-status').innerHTML = `Selesai dalam ${job.seconds} dtk (${esc(job.encoder)}): <a href="${esc(job.url)}" target="_blank" rel="noopener">${esc(job.file.split('/').pop())}</a>. File ini juga bisa dibagikan di chat.`;
+        } else {
+          $('export-status').textContent = job.state === 'cancelled' ? 'Render dibatalkan.' : `Gagal: ${job.error}`;
+        }
+      }
+    };
+    tick();
+    S.renderTimer = setInterval(tick, 1000);
+  }
 
   const even = n => Math.max(2, Math.round(n / 2) * 2);
   async function pickEncoder(width, height, fps, bitrate) {

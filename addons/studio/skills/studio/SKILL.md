@@ -1,14 +1,14 @@
 ---
 name: studio
 description: Video motion yang bisa diedit di Studio web - layer teks, bentuk, path, gambar dengan keyframe, musik dengan fade dan volume, catatan revisi dari pengguna di frame, lalu ekspor MP4 dari editor.
-triggers: studio, studio video, editor video, video editor, keyframe, keyframes, timeline video, motion.json, catatan video, revisi video, video motion, motion video, edit video, bisa diedit, intro video, lower third, animasi teks, kinetic typography
+triggers: studio, studio video, editor video, caption otomatis, auto caption, subtitle video, video editor, keyframe, keyframes, timeline video, motion.json, catatan video, revisi video, video motion, motion video, edit video, bisa diedit, intro video, lower third, animasi teks, kinetic typography
 scope: contextual
 context: video, motion, animasi, animation, studio, keyframe, timeline, reels, tiktok, shorts, youtube, iklan, promo, intro, mp4, catatan, revisi, detik, durasi, musik
-tools: studio_create, studio_get, studio_save, studio_notes, studio_note_done, studio_list, style_pick, load_skill, share_file
+tools: studio_create, studio_get, studio_save, studio_notes, studio_note_done, studio_list, studio_still, studio_captions, style_pick, load_skill, share_file
 ---
 # Studio: video motion sebagai data
 
-Video di Studio adalah satu file `studio/<nama>/motion.json`. Kamu menulisnya, pengguna memutar dan mengeditnya di halaman Studio (menu "Studio video" di web), menggeser keyframe, mengatur musik, dan menaruh **catatan bernomor** di frame. Ekspor MP4 dilakukan pengguna dari Studio (tombol Ekspor MP4). Kamu dan editor menulis file yang sama, jadi selalu pakai `stamp`.
+Video di Studio adalah satu file `studio/<nama>/motion.json`. Kamu menulisnya, pengguna memutar dan mengeditnya di halaman Studio (menu "Studio video" di web), menggeser keyframe, memotong lapisan di playhead (tombol Potong, tombol S), mengatur musik, dan menaruh **catatan bernomor** di frame. Ekspor MP4 dilakukan pengguna dari Studio (tombol Ekspor MP4); render-nya jalan di server dengan engine C (GPU kalau ada) dan tetap jalan walau HP pengguna tidur. Kamu dan editor menulis file yang sama, jadi selalu pakai `stamp`.
 
 ## Kapan Studio, kapan skill lain
 * **Studio**: pengguna ingin bisa mengedit sendiri, memberi catatan di frame, atau video teks/bentuk/gambar dengan gerak (promo, intro, lower third, kinetic type, explainer sederhana).
@@ -19,8 +19,10 @@ Video di Studio adalah satu file `studio/<nama>/motion.json`. Kamu menulisnya, p
 2. `studio_create(nama, width, height, fps, duration)` (9:16 = 1080x1920, 16:9 = 1920x1080, 1:1 = 1080x1080).
 3. Tulis video lengkap dengan `studio_save(nama, doc, stamp)`. Kalau ada error validasi, perbaiki bagian yang disebut lalu simpan lagi.
 4. Beri pengguna link `open` (mis. `/studio?project=promo-kopi`) dan rangkum adegannya dalam beberapa baris. Kamu tidak bisa menonton hasilnya: katakan itu, dan minta catatan di frame.
-5. Saat pengguna mengirim catatan: `studio_notes(nama)`, lalu `studio_get` (untuk stamp), ubah dokumen, `studio_save`, lalu `studio_note_done(nama, n, jawaban)` untuk tiap catatan. Jawaban satu-dua kalimat: apa yang diubah.
-6. Musik: file harus ada di `studio/<nama>/assets/` (pengguna mengunggah lewat Studio, atau buat dengan tool suara/musik lalu pindahkan ke sana). Gambar juga di `assets/`.
+5. **Lihat hasilmu sendiri**: `studio_still(nama, times)` menggambar frame pada detik-detik itu dengan engine yang sama dengan ekspor. Lihat sebelum menjawab setiap perubahan visual.
+6. **Caption dari suara**: `studio_captions(nama)` mentranskripsi voice-over atau klip video (Whisper), lalu membuat satu lapisan teks per baris pendek yang pas waktunya (id `cap-*`). Jalankan lagi untuk mengganti caption lama; ubah gaya lewat `studio_save` setelahnya.
+7. Saat pengguna mengirim catatan: `studio_notes(nama)`, lalu `studio_get` (untuk stamp), ubah dokumen, `studio_save`, lalu `studio_note_done(nama, n, jawaban)` untuk tiap catatan. Jawaban satu-dua kalimat: apa yang diubah.
+8. Musik: file harus ada di `studio/<nama>/assets/` (pengguna mengunggah lewat Studio, atau buat dengan tool suara/musik lalu pindahkan ke sana). Gambar juga di `assets/`.
 
 ## Format motion.json
 ```json

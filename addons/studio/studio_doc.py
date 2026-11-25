@@ -33,10 +33,11 @@ from pathlib import Path
 from typing import Any
 
 VERSION = 1
-MAX_BYTES = 2 * 1024 * 1024
-MAX_LAYERS = 300
-MAX_KEYS = 600
-MAX_NOTES = 500
+# Sanity bounds against a broken file, not limits on what a video may hold (no artificial limits).
+MAX_BYTES = 256 * 1024 * 1024
+MAX_LAYERS = 1_000_000
+MAX_KEYS = 1_000_000
+MAX_NOTES = 1_000_000
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,47}$")
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")

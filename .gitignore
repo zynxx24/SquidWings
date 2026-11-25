@@ -113,6 +113,8 @@ uv.lock
 addons/trading/data/
 # Which add-ons are switched on on this machine (python main.py addon install ...)
 addons/enabled.json
+# The Studio's compiled render engine (built on each machine from addons/studio/engine/sqengine.c)
+addons/studio/engine/bin/
 
 # Per-port tunnel logs (tunnel.sh, main.py trading --tunnel)
 tunnel-*.log

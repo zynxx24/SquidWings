@@ -20,9 +20,12 @@ from addons.studio import studio_doc
 from addons.studio.studio_doc import ConflictError, StudioError
 from brain.config.settings import get_settings
 from brain.utils import shared_files
+from brain.utils.logger import get_logger
 from brain.utils.workspace_context import get_active_session
 from tools.toolbox import _files
 from tools.toolbox.catalog import group, param, spec
+
+logger = get_logger(__name__)
 
 group("studio", "Video Studio: motion videos as editable data, with keyframes, music and notes",
       "studio, video editor, editor video, keyframe, timeline, motion, animasi, motion graphic, catatan video, revisi video, "
@@ -270,6 +273,17 @@ async def studio_still(name: str, times: list[float] | None = None, share: bool 
     duration = float(doc.get("duration") or 1)
     moments = [max(0.0, min(duration - 1e-3, float(t))) for t in (times or [])][:12] or \
         [round(duration * (i + 0.5) / 6, 2) for i in range(6)]
+    out = studio_doc.folder(root, name) / "stills" / f"frames-{time.strftime('%Y%m%d-%H%M%S')}.png"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # The C engine draws them on this machine, the same way the export does: no browser needed.
+    try:
+        from addons.studio import renderer
+
+        scale = min(1.0, 360 / max(doc["width"], doc["height"]))
+        await asyncio.to_thread(renderer.still, root, name, moments, scale=scale, cols=min(3, len(moments)), out=out)
+        return _still_result(root, name, out, moments, share)
+    except Exception as exc:  # noqa: BLE001 - fall back to the browser renderer below
+        logger.info(f"[studio] engine still unavailable, trying the browser: {exc}")
     browser, server, session = _browser(), _server(), get_active_session()
     if not browser or not server or not session:
         return {"ok": False, "error": "studio_still needs the web app running and Chrome or Chromium installed",
@@ -280,13 +294,15 @@ async def studio_still(name: str, times: list[float] | None = None, share: bool 
     width = int(cols * (doc["width"] * scale + 16) + 16)
     height = int(rows * (doc["height"] * scale + 40) + 16)
     query = urlencode({"session": session, "project": name, "times": ",".join(f"{t:g}" for t in moments), "scale": f"{scale:.4f}"})
-    out = studio_doc.folder(root, name) / "stills" / f"frames-{time.strftime('%Y%m%d-%H%M%S')}.png"
-    out.parent.mkdir(parents=True, exist_ok=True)
     try:
         png = await _capture(browser, f"{server}/studio/frame?{query}", width, height)
     except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
         return {"ok": False, "error": f"could not draw the frames: {exc}"}
     out.write_bytes(png)
+    return _still_result(root, name, out, moments, share)
+
+
+def _still_result(root: Path, name: str, out: Path, moments: list[float], share: bool) -> dict[str, Any]:
     if not out.is_file():
         return {"ok": False, "error": "no image was made"}
     relative = str(out.relative_to(root))
@@ -296,6 +312,40 @@ async def studio_still(name: str, times: list[float] | None = None, share: bool 
         session_id = get_active_session()
         result.update(shared=True, markdown=shared_files.markdown(session_id, relative, f"Cuplikan {name}"))
     return result
+
+
+@spec("studio_captions", "Add captions to a Studio video from its speech: Whisper transcribes the voice or the video "
+      "clip with word timings, and each short line becomes a text layer (white, outlined, pop-in) timed to the words. "
+      "Running it again replaces the captions it made before.",
+      "studio", [param("name", description="Project name."),
+                 param("source", description="Audio clip id/src or video layer id to transcribe (default: the first clip with sound).", required=False, default=""),
+                 param("language", description="Language code, e.g. 'id' or 'en' (default: detect).", required=False, default=""),
+                 param("max_words", "int", "Words per caption line.", required=False, default=4),
+                 param("position", description="bottom, middle or top.", required=False, default="bottom"),
+                 param("font", description="Font family (default: the video's first font).", required=False, default="")],
+      keywords="caption, captions, subtitle, subtitel, teks otomatis, transkrip video, caption otomatis, auto caption",
+      lead=True, workspace=True, read_only=False)
+async def studio_captions(name: str, source: str = "", language: str = "", max_words: int = 4, position: str = "bottom",
+                          font: str = "", workspace_path: str | None = None) -> dict[str, Any]:
+    from addons.studio import captions, renderer
+
+    root = _files.workspace(workspace_path)
+    doc, stamp = studio_doc.load(root, name)
+    try:
+        new_doc, count, used = await asyncio.to_thread(
+            captions.captions, doc, studio_doc.folder(root, name), source, language, max_words, position, font)
+    except renderer.RenderError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 - Whisper missing or the file unreadable: say so
+        return {"ok": False, "error": f"Transkripsi gagal: {exc}"}
+    try:
+        clean, new_stamp = studio_doc.save(root, name, new_doc, stamp)
+    except ConflictError:
+        return {"ok": False, "conflict": True, "error": "The video changed while transcribing. Run studio_captions again."}
+    except StudioError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "name": name, "stamp": new_stamp, "captions": count, "source": used, "open": _link(name),
+            "summary": _summary(clean), **_issues(clean, root, name), **_button(name)}
 
 
 @spec("studio_list", "List the Studio video projects in this chat.", "studio", [],

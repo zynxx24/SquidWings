@@ -75,6 +75,18 @@ def _install_program(name: str) -> tuple[bool, str]:
     return ok, str(result.get("manual") or result.get("message") or result.get("error") or "")
 
 
+def _post_install(hook: str) -> tuple[bool, str]:
+    """Run ``package.module:function`` named in addon.json. Never raises."""
+    import importlib
+
+    module_name, _, func_name = hook.partition(":")
+    try:
+        result = getattr(importlib.import_module(module_name), func_name)()
+    except Exception as exc:  # noqa: BLE001 - the report says what failed
+        return False, str(exc)[-2000:]
+    return True, str(result)
+
+
 def install(name: str, deps: bool = True) -> dict[str, Any]:
     """Install what the add-on needs and switch it on. Returns a report; never raises for a missing piece."""
     spec = edition.manifest(name)
@@ -92,6 +104,12 @@ def install(name: str, deps: bool = True) -> dict[str, Any]:
         for program in missing_programs(spec):
             ok, note = _install_program(program)
             report["steps"].append({"step": f"pasang {program}", "ok": ok, "log": note})
+    hook = spec.get("post_install")
+    if deps and report["ok"] and hook:
+        # e.g. compiling the Studio's render engine, once the compiler from requirements is there
+        ok, log = _post_install(str(hook))
+        report["steps"].append({"step": f"siapkan ({hook})", "ok": ok, "log": log})
+        report["ok"] = report["ok"] and ok
     report["missing_programs"] = missing_programs(spec)
     if report["ok"]:
         edition.write_state(name, True)

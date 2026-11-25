@@ -1,2 +1,4 @@
 # Add-on Studio: dipasang oleh `python main.py addon install studio`.
-# Semua paket Python-nya sudah ada di requirements.txt inti; yang perlu dipasang adalah program di addon.json.
+# Compiler C untuk engine render (addons/studio/engine/sqengine.c), lewat pip, tanpa admin, juga di Windows.
+# Kalau mesin sudah punya cc/gcc/clang/MSVC, itu yang dipakai lebih dulu.
+ziglang>=0.13

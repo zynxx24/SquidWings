@@ -128,6 +128,19 @@
 <dialog id="export-dialog" class="st-dialog">
   <form method="dialog">
     <h2>Ekspor MP4</h2>
+    <label>Dirender di
+      <select id="export-where">
+        <option value="server" selected>Server (engine C, tetap jalan walau HP tidur)</option>
+        <option value="browser">Browser ini</option>
+      </select>
+    </label>
+    <label id="export-gpu-row">GPU
+      <select id="export-gpu">
+        <option value="auto" selected>Otomatis (pakai GPU kalau ada)</option>
+        <option value="off">Matikan (CPU saja)</option>
+      </select>
+    </label>
+    <p id="export-engine" class="st-hint"></p>
     <label>Resolusi
       <select id="export-scale">
         <option value="1">Penuh</option>
@@ -146,6 +159,7 @@
     <p id="export-status" class="st-hint" aria-live="polite"></p>
     <div class="st-dialog-actions">
       <button value="cancel" class="st-btn" id="export-close">Tutup</button>
+      <button id="export-cancel" class="st-btn" type="button" hidden>Batalkan render</button>
       <button id="export-start" class="st-btn primary" type="button">Mulai ekspor</button>
     </div>
   </form>
@@ -181,6 +195,7 @@
       <div><dt><kbd>Shift</kbd> + <kbd>←</kbd> <kbd>→</kbd></dt><dd>Satu detik</dd></div>
       <div><dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>Ke awal / akhir</dd></div>
       <div><dt><kbd>V</kbd></dt><dd>Mode pilih dan geser</dd></div>
+      <div><dt><kbd>S</kbd></dt><dd>Potong lapisan terpilih di playhead</dd></div>
       <div><dt><kbd>N</kbd></dt><dd>Mode catatan: klik atau seret di video</dd></div>
       <div><dt><kbd>K</kbd></dt><dd>Keyframe posisi di waktu ini</dd></div>
       <div><dt><kbd>Delete</kbd></dt><dd>Hapus keyframe atau lapisan terpilih</dd></div>
