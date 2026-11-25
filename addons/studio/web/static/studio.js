@@ -63,7 +63,7 @@
     key: null,              // {layer, prop, index} for a selected keyframe
     past: [], future: [], images: {}, videos: {}, buffers: {}, peaks: {}, luts: {}, assetList: [],
     proxies: {}, useProxy: localStorage.getItem('studio-proxy') !== 'off', live: false, pendingStamp: null,
-    secs: {}, renders: [], rev: 0, thumbs: { key: '', urls: {} },
+    secs: {}, renders: [], rev: 0, thumbs: { key: '', urls: {} }, ownJobs: new Set(),
     audioCtx: null, stopAudio: null, playStart: 0, playFrom: 0, draft: null, conflict: null,
   };
 
@@ -1984,6 +1984,7 @@
     const level = quality >= 0.2 ? 'high' : 'normal';
     $('export-start').disabled = true;
     const job = await api(`${base()}/project/${encodeURIComponent(S.name)}/render`, { method: 'POST', ...json({ scale, quality: level, gpu }) });
+    S.ownJobs.add(job.id);   // started here: its file downloads by itself when it is ready
     followRender(job.id);
   }
 
@@ -2023,7 +2024,8 @@
     if (job.state === 'done') {
       let full = job;
       if (!full.url) { try { full = await api(`${base()}/render/${job.id}`); } catch (_) { /* the file is in the chat folder anyway */ } }
-      $('export-status').innerHTML = `Selesai dalam ${full.seconds} dtk (${esc(full.encoder)}): ${full.url ? `<a href="${esc(full.url)}" target="_blank" rel="noopener">${esc(full.file.split('/').pop())}</a>` : esc(full.file)}. File ini juga bisa dibagikan di chat.`;
+      const own = S.ownJobs.delete(job.id);
+      showResult(full.url, full.file.split('/').pop(), `Selesai dalam ${full.seconds} dtk (${esc(full.encoder)})`, own);
     } else {
       $('export-status').textContent = job.state === 'cancelled' ? 'Render dibatalkan.' : `Gagal: ${job.error}`;
     }
@@ -2140,8 +2142,19 @@
     const result = await api(`${parts}/finish?job=${job}&fps=${doc.fps}&duration=${doc.duration}`, { method: 'POST' });
     bar.value = 1;
     S.exporting = false;
-    $('export-status').innerHTML = `Selesai: <a href="${esc(result.url)}" target="_blank" rel="noopener">${esc(result.file.split('/').pop())}</a> (${(result.bytes / 1048576).toFixed(1)} MB). File ini juga bisa dibagikan di chat.`;
+    showResult(result.url, result.file.split('/').pop(), `Selesai (${(result.bytes / 1048576).toFixed(1)} MB)`, true);
     $('export-start').disabled = false;
+  }
+
+  /** A finished export: a link to watch it, a link to save it, and (for an export started here) the download at once. */
+  function showResult(url, name, summary, download) {
+    if (!url) { $('export-status').textContent = `${summary}: ${name}. File ada di folder chat.`; return; }
+    const save = `${url}${url.includes('?') ? '&' : '?'}download=1`;
+    $('export-status').innerHTML = `${summary}. <a href="${esc(url)}" target="_blank" rel="noopener">Tonton</a> · <a href="${esc(save)}" download="${esc(name)}">Unduh ${esc(name)}</a>. File ini juga bisa dibagikan di chat.`;
+    if (!download) return;
+    const a = document.createElement('a');
+    a.href = save; a.download = name; a.hidden = true;
+    document.body.append(a); a.click(); a.remove();
   }
 
   /* ── render everything ─────────────────────────── */

@@ -1,5 +1,10 @@
 # Catatan perubahan
 
+## 2026-11-26: video hasil ekspor bisa ditonton, unduh otomatis
+
+- **Perbaikan**: video, audio dan gambar yang dibagikan di chat (termasuk hasil ekspor Studio) gagal diputar saat dibuka di tab sendiri. Header `sandbox` membuat Chrome menolak pemutarnya memuat file itu sendiri. Media sekarang dikirim dengan kebijakan ketat tanpa `sandbox`; file lain (HTML dan sebagainya) tetap `sandbox` dan diunduh.
+- **Unduh otomatis**: ekspor yang dimulai dari Studio langsung mengunduh MP4-nya begitu selesai. Dialog ekspor juga memberi tautan Tonton dan Unduh. `?download=1` di tautan file mana pun memaksa unduh.
+
 ## 2026-11-26: keyframe sendiri, template gerak, filter
 
 - **Atur keyframe sendiri**: bagian "Keyframe" di panel Properti menampilkan semua keyframe lapisan (waktu, nilai, gerak) dan bisa diedit langsung. Tombol Haluskan semua, Pelan awal-akhir, Linear.

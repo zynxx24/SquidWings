@@ -56,12 +56,18 @@ def test_the_route_serves_only_what_was_shared(session: Path, monkeypatch: pytes
     video = client.get("/api/session/chat-a/files/pieces/demo/renders/share.mp4")
     assert video.status_code == 200 and video.headers["content-type"] == "video/mp4"
     assert video.headers["content-disposition"].startswith("inline")
-    assert video.headers["content-security-policy"] == "sandbox"
+    # Opened in its own tab the browser's player loads the file again from this origin: no `sandbox`
+    # (an opaque origin made Chrome refuse that request), but nothing else is allowed either.
+    policy = video.headers["content-security-policy"]
+    assert "sandbox" not in policy and "media-src 'self'" in policy and "default-src 'none'" in policy and "script-src" not in policy
+    saved = client.get("/api/session/chat-a/files/pieces/demo/renders/share.mp4?download=1")
+    assert saved.headers["content-disposition"].startswith("attachment")
     # Seeking in a video needs byte ranges.
     assert client.get("/api/session/chat-a/files/pieces/demo/renders/share.mp4", headers={"Range": "bytes=0-3"}).status_code == 206
     # Shared HTML is downloaded, never rendered on this origin.
     page = client.get("/api/session/chat-a/files/pieces/demo/index.html")
     assert page.headers["content-disposition"].startswith("attachment")
+    assert page.headers["content-security-policy"] == "sandbox"
     assert client.get("/api/session/chat-a/files/secret.txt").status_code == 404
     assert client.get("/api/session/chat-a/files/..%2Fsecret.txt").status_code == 404
 

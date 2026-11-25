@@ -951,9 +951,17 @@ def _stack(session_id: str) -> session_stack.SessionStack:
     return session_stack.SessionStack(session_id, session_workspace(session_id, create=False))
 
 
+# A shared video, audio clip or raster picture opened in its own tab: the browser's player page loads
+# the file again from this origin, so it must keep its origin (`sandbox` would make it "null" and
+# the player's own request would be refused). Media cannot run script; the policy still allows
+# nothing but the file itself.
+_MEDIA_TAB_CSP = "default-src 'none'; media-src 'self'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'"
+
+
 @app.get("/api/session/{session_id}/files/{relative:path}")
-async def session_file(session_id: str, relative: str) -> FileResponse:
-    """A file the agent shared in this chat. Nothing else in the session can be read here."""
+async def session_file(session_id: str, relative: str, download: bool = False) -> FileResponse:
+    """A file the agent shared in this chat. Nothing else in the session can be read here.
+    ``?download=1`` saves it instead of opening it (the Studio's export does that when it finishes)."""
     if not is_valid_session_id(session_id):
         raise HTTPException(status_code=404, detail="File not shared in this chat")
     path = shared_files.resolve(session_workspace(session_id, create=False), relative)
@@ -961,11 +969,12 @@ async def session_file(session_id: str, relative: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="File not shared in this chat")
     kind = shared_files.kind_of(path.name)
     # Media plays inline. Anything else downloads, so an HTML file cannot run on this origin.
-    disposition = "inline" if kind != "file" else "attachment"
-    # Opened directly in a tab, the file still gets no script, forms, or same-origin access.
+    disposition = "inline" if kind != "file" and not download else "attachment"
+    # Opened directly in a tab, anything that is not plain media gets no script, forms, or origin.
     return FileResponse(
         path, filename=path.name, content_disposition_type=disposition,
-        headers={"Content-Security-Policy": "sandbox"},
+        headers={"Content-Security-Policy": _MEDIA_TAB_CSP if kind != "file" else "sandbox",
+                 "X-Content-Type-Options": "nosniff"},
     )
 
 
