@@ -40,12 +40,14 @@ cd SquidWings
 python scripts/setup.py     # bikin .venv dan pasang requirements (pakai uv kalau ada)
 ```
 
-Lalu aktifkan venv dan jalankan:
+Lalu jalankan, tanpa perlu mengaktifkan venv:
 
-| OS | Aktifkan | Jalankan |
-|---|---|---|
-| Linux, macOS | `source .venv/bin/activate` | `python main.py web` |
-| Windows | `.venv\Scripts\activate` | `python main.py web` |
+| OS | Web | Chat terminal | Perintah lain |
+|---|---|---|---|
+| Linux, macOS | `./run.sh` | `./run.sh chat` | `./run.sh addon list`, `./run.sh doctor`, ... |
+| Windows | `run.bat` | `run.bat chat` | `run.bat addon list`, ... |
+
+`run.sh` dan `run.bat` memakai `.venv` sendiri, dan kalau `.venv` belum ada mereka menjalankan `scripts/setup.py` dulu (jadi langkah setup di atas juga boleh dilewati). Argumen apa pun diteruskan ke `main.py`.
 
 Buka http://127.0.0.1:8080. Provider dan API key bisa diatur di halaman **Router**, atau salin `.env.example` ke `.env`.
 

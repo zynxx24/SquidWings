@@ -6,6 +6,7 @@ SquidWings is an AI agent harness (terminal + web) in **one language, Python 3.1
 
 ```bash
 python scripts/setup.py                 # .venv + requirements (uses uv when present)
+./run.sh                                # web UI, no venv activation (Windows: run.bat); args go to main.py
 .venv/bin/python main.py web            # http://127.0.0.1:8080  (Windows: .venv\Scripts\python)
 .venv/bin/python main.py chat           # terminal chat
 .venv/bin/python -m pytest -q           # offline test suite, ~3 min

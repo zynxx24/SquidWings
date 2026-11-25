@@ -1,5 +1,9 @@
 # Catatan perubahan
 
+## 2026-11-25 (malam): jalankan tanpa venv
+
+- `./run.sh` (Linux, macOS) dan `run.bat` (Windows) menjalankan SquidWings tanpa mengaktifkan venv. Tanpa argumen membuka web; `./run.sh chat`, `./run.sh addon list` dan perintah lain diteruskan ke `main.py`. Kalau `.venv` belum ada, setup dijalankan dulu.
+
 ## 2026-11-25 (malam): Studio tahap 2, efek dan editor yang lebih lengkap
 
 - **Transisi** per lapisan, masuk dan keluar: pudar, geser (4 arah), zoom, blur, sapu (4 arah), lingkaran. Durasi dan gerak bisa diatur; batang di timeline menunjukkan panjang transisinya. Silang antar klip = pudar keluar ditumpuk pudar masuk.
