@@ -4,5 +4,6 @@
 3. Save with studio_save(project, doc, stamp). Its check lists what a viewer would see wrong (cut text, overlaps, low contrast, too fast); fix every fix_first item and save again. On a conflict, read again and redo your change.
 4. Moves and timing go in keys: a keyframe is {"t": seconds, "v": value, "ease": ...}; ease shapes the move to the next key (out or outBack to arrive, in to leave). Positions are layer centres in video pixels.
 5. When a change is visual and studio_still is available, look at the moment you changed before you answer.
+5b. Transitions (transIn/transOut), colour (props brightness, contrast, saturation, hue, temperature), chroma key (chroma), LUT (lut, a .cube in assets/), mask and tracks are fields on the layer; the studio skill lists them. Eases can be cubic-bezier(x1,y1,x2,y2).
 6. Notes you resolved: studio_note_done(project, n, what you changed).
 7. Answer in 1-3 short sentences in the user's language: what changed, where, at which second. No JSON in the answer.

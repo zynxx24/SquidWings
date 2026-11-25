@@ -1,7 +1,7 @@
 ---
 name: studio
-description: Video motion yang bisa diedit di Studio web - layer teks, bentuk, path, gambar dengan keyframe, musik dengan fade dan volume, catatan revisi dari pengguna di frame, lalu ekspor MP4 dari editor.
-triggers: studio, studio video, editor video, caption otomatis, auto caption, subtitle video, video editor, keyframe, keyframes, timeline video, motion.json, catatan video, revisi video, video motion, motion video, edit video, bisa diedit, intro video, lower third, animasi teks, kinetic typography
+description: Video motion yang bisa diedit di Studio web - layer teks, bentuk, path, gambar dan klip video dengan keyframe, transisi, koreksi warna, chroma key, LUT, mask, track, musik dengan fade dan volume, catatan revisi dari pengguna di frame, lalu ekspor MP4 dari editor.
+triggers: studio, studio video, editor video, caption otomatis, auto caption, subtitle video, video editor, keyframe, keyframes, timeline video, motion.json, catatan video, revisi video, video motion, motion video, edit video, bisa diedit, intro video, lower third, animasi teks, kinetic typography, transisi video, green screen, chroma key, color grading, lut, mask video
 scope: contextual
 context: video, motion, animasi, animation, studio, keyframe, timeline, reels, tiktok, shorts, youtube, iklan, promo, intro, mp4, catatan, revisi, detik, durasi, musik
 tools: studio_create, studio_get, studio_save, studio_notes, studio_note_done, studio_list, studio_still, studio_captions, style_pick, load_skill, share_file
@@ -39,6 +39,14 @@ Video di Studio adalah satu file `studio/<nama>/motion.json`. Kamu menulisnya, p
 * Tipe layer: `text` (text, font, weight, size, align, fill, stroke, strokeWidth, lineHeight, width untuk bungkus), `rect` (w, h, radius), `ellipse` (w, h), `polygon` (radius, sides, star, inner), `path` (d SVG dalam kotak w×h), `image` (src "assets/x.png", w, h, fit contain/cover, radius). Semua punya fill/stroke/strokeWidth kecuali image.
 * `props`: x, y (titik tengah layer, piksel video), scale, rotation (derajat), opacity, blur, draw (0-1: garis tergambar, teks terketik).
 * `keys`: properti yang bisa dianimasikan: x, y, scale, scaleX, scaleY, rotation, opacity, w, h, radius, size, strokeWidth, draw, blur, fill, stroke. Tiap keyframe `{"t": detik, "v": nilai, "ease": ...}`; ease membentuk gerak dari keyframe itu ke berikutnya: linear, in, out, inOut, outBack, outElastic, hold.
+* `ease` juga boleh kurva sendiri: `"cubic-bezier(0.2,0.8,0.2,1)"` (x1 dan x2 antara 0 dan 1). Nama tambahan: `inBack` (ancang-ancang), `outBounce` (memantul jatuh).
+* **Transisi** per layer: `"transIn": {"type": "fade", "duration": 0.5, "ease": "out"}`, `"transOut"` sama. Tipe: fade, slide-left, slide-right, slide-up, slide-down, zoom, blur, wipe-left, wipe-right, wipe-up, wipe-down, iris. Silang antar klip = akhir klip A ditumpuk dengan awal klip B, A `transOut` fade, B `transIn` fade.
+* **Warna** di `props` (bisa dianimasikan lewat `keys`): `brightness`, `contrast`, `saturation`, `temperature` (-1 sampai 1, 0 = asli), `hue` (derajat).
+* **Chroma key** (green screen): `"chroma": {"color": "#00FF00", "similarity": 0.25, "smoothness": 0.08, "spill": 0.5}`.
+* **LUT**: `"lut": {"src": "assets/film.cube", "mix": 1}`, file .cube 3D di `assets/`.
+* **Mask**: `"mask": {"shape": "ellipse", "x": 0, "y": 0, "w": 400, "h": 400, "radius": 0, "feather": 30, "invert": false}`, di ruang layer itu sendiri (x/y dari titik tengahnya), ikut bergerak bersama layer.
+* **Track**: `"tracks": [{"id": "v1", "name": "Klip", "kind": "video"}]` lalu `"track": "v1"` di layer (atau `kind: "audio"` untuk musik). Track hanya jalur di timeline plus sembunyikan/kunci/bisukan bersama; urutan gambar tetap urutan `layers`.
+* Klip video besar otomatis dapat proxy kecil untuk editor; ekspor dan `studio_still` selalu memakai file asli.
 * Urutan `layers` = bawah ke atas. `start`/`end` = kapan layer tampil. Audio: `start` di video, `offset` mulai dari lagu, `duration` opsional, volume 0-4, fadeIn/fadeOut detik, `keys.volume` untuk ducking.
 * Catatan dari pengguna: `n`, `t` (detik), `end` opsional, `box` [x,y,w,h] atau `point` [x,y], `layer` (id di bawahnya), `text`, `status`. Jangan menghapus catatan; tandai selesai.
 

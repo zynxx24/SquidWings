@@ -81,6 +81,7 @@
       <button id="next-frame" class="st-btn icon" type="button" title="Maju satu frame (→)" aria-label="Frame berikutnya"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="m9 18 6-6-6-6"/></svg></button>
       <span id="clock" class="st-clock">0:00.00 / 0:00.00</span>
       <label class="st-check"><input id="loop" type="checkbox" checked> Ulang</label>
+      <label class="st-check" title="Klip video besar diputar dari salinan kecil (proxy) supaya lancar, juga di HP. Ekspor tetap memakai file asli."><input id="use-proxy" type="checkbox" checked> Proxy</label>
     </div>
   </section>
 
@@ -111,8 +112,9 @@
 <section class="st-timeline" aria-label="Timeline">
   <div class="st-tl-head">
     <span class="st-tl-title">Timeline</span>
-    <span class="st-hint">Klik untuk pindah waktu · seret batang untuk geser, ujungnya untuk potong · Ctrl+scroll untuk zoom</span>
+    <span class="st-hint">Klik untuk pindah waktu · seret batang untuk geser, ujungnya untuk potong (menempel ke tepi klip, Alt untuk lepas) · Ctrl+scroll untuk zoom</span>
     <button id="tl-keys" class="st-link" type="button">Semua pintasan</button>
+    <button id="add-track" class="st-btn" type="button" title="Tambah track video; lapisan terpilih pindah ke sana">+ Track</button>
     <button id="zoom-out" class="st-btn icon" type="button" aria-label="Perkecil timeline">−</button>
     <button id="zoom-in" class="st-btn icon" type="button" aria-label="Perbesar timeline">+</button>
   </div>
@@ -202,6 +204,7 @@
       <div><dt><kbd>Ctrl</kbd> + <kbd>Z</kbd></dt><dd>Urungkan (Shift untuk ulangi)</dd></div>
       <div><dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>Simpan sekarang</dd></div>
       <div><dt><kbd>Shift</kbd> + seret penggaris</dt><dd>Catatan untuk rentang waktu</dd></div>
+      <div><dt><kbd>Alt</kbd> + seret batang</dt><dd>Geser tanpa menempel ke tepi klip lain</dd></div>
       <div><dt><kbd>Ctrl</kbd> + scroll</dt><dd>Zoom timeline</dd></div>
       <div><dt><kbd>Esc</kbd></dt><dd>Lepas pilihan</dd></div>
       <div><dt><kbd>?</kbd></dt><dd>Daftar ini</dd></div>
@@ -212,6 +215,7 @@
 
 <input id="image-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="visually-hidden">
 <input id="video-input" type="file" accept="video/mp4,video/webm,video/quicktime" class="visually-hidden">
+<input id="lut-input" type="file" accept=".cube" class="visually-hidden">
 <div id="note-pop" class="st-note-pop" hidden role="dialog" aria-label="Catatan baru">
   <p id="note-pop-where" class="st-hint"></p>
   <textarea id="note-pop-text" rows="3" placeholder="Apa yang perlu diubah di sini?"></textarea>

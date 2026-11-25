@@ -16,11 +16,28 @@ A project is a folder in the chat's workspace::
                  "keys": {"opacity": [{"t": 0, "v": 0, "ease": "out"}, {"t": 0.6, "v": 1}]}}],
      "audio": [{"id": "music", "src": "assets/musik.mp3", "start": 0, "offset": 0, "volume": 0.8,
                 "fadeIn": 0.5, "fadeOut": 1.5}],
+     "tracks": [{"id": "v1", "name": "Klip", "kind": "video"}],
      "notes": [{"n": 1, "t": 2.4, "box": [300, 700, 480, 200], "text": "Judul terlalu kecil", "status": "open"}]}
 
 Layers draw bottom to top in list order. ``x``/``y`` are the layer's centre in video pixels.
-A key's ``ease`` shapes the move from that key to the next. Times are seconds on the video's
-timeline. The browser renderer (``addons/studio/web/static/render.js``) follows the same rules.
+A key's ``ease`` shapes the move from that key to the next: a name (``EASES``) or
+``cubic-bezier(x1,y1,x2,y2)`` from the curve editor. Times are seconds on the video's timeline.
+
+Effects, per layer (all optional):
+
+* ``props`` colour: ``brightness``, ``contrast``, ``saturation`` (-1..1, 0 = as is), ``hue`` (degrees),
+  ``temperature`` (-1 cool .. 1 warm). All can have keys.
+* ``transIn`` / ``transOut``: ``{"type": "fade", "duration": 0.5, "ease": "out"}``; types in ``TRANSITIONS``.
+  A cross-dissolve is one clip's ``transOut`` fade over the next clip's ``transIn`` fade.
+* ``chroma``: ``{"color": "#00FF00", "similarity": 0.25, "smoothness": 0.08, "spill": 0.5}`` (green screen).
+* ``lut``: ``{"src": "assets/film.cube", "mix": 1}`` (a 3D .cube colour grade).
+* ``mask``: ``{"shape": "rect"|"ellipse", "x": 0, "y": 0, "w": 400, "h": 300, "radius": 0, "feather": 20,
+  "invert": false}`` in the layer's own space (x/y from its centre); it moves with the layer.
+* ``track``: the id of a ``tracks`` entry. Tracks are timeline lanes; hiding, locking or muting a track
+  applies to everything on it. Drawing order stays the order of ``layers``.
+
+The browser renderer (``addons/studio/web/static/render.js``) and the C engine (``engine/sqengine.c``)
+follow the same rules.
 """
 
 from __future__ import annotations
@@ -44,13 +61,22 @@ COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$")
 SRC_RE = re.compile(r"^assets/[A-Za-z0-9 ._()-]{1,120}$")
 
 LAYER_TYPES = ("text", "rect", "ellipse", "polygon", "path", "image", "video")
-EASES = ("linear", "in", "out", "inOut", "outBack", "outElastic", "hold")
+EASES = ("linear", "in", "out", "inOut", "outBack", "inBack", "outElastic", "outBounce", "hold")
+BEZIER_RE = re.compile(r"^cubic-bezier\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)$")
+TRANSITIONS = ("none", "fade", "slide-left", "slide-right", "slide-up", "slide-down", "zoom", "blur",
+               "wipe-left", "wipe-right", "wipe-up", "wipe-down", "iris")
+COLOR_ADJUST = ("brightness", "contrast", "saturation", "hue", "temperature")
+LUT_RE = re.compile(r"^assets/[A-Za-z0-9 ._()-]{1,120}\.cube$", re.IGNORECASE)
+TRACK_KINDS = ("video", "audio")
 # Properties a key can animate, and the kind of value each takes.
 ANIMATABLE: dict[str, str] = {
     "x": "num", "y": "num", "scale": "num", "scaleX": "num", "scaleY": "num", "rotation": "num",
     "opacity": "unit", "w": "num", "h": "num", "radius": "num", "size": "num", "strokeWidth": "num",
     "draw": "unit", "blur": "num", "fill": "color", "stroke": "color", "volume": "gain",
+    "brightness": "adjust", "contrast": "adjust", "saturation": "adjust", "hue": "num", "temperature": "adjust",
 }
+# Properties kept in ``props`` (the rest sit on the layer itself).
+IN_PROPS = ("x", "y", "scale", "scaleX", "scaleY", "rotation", "opacity", "blur", "draw", *COLOR_ADJUST)
 TRANSFORM = ("x", "y", "scale", "rotation", "opacity")
 STYLE_KEYS = {
     "text": ("text", "font", "weight", "size", "align", "fill", "stroke", "strokeWidth", "lineHeight", "width"),
@@ -133,7 +159,24 @@ def _value(kind: str, value: Any, where: str, errors: list[str]) -> Any:
         return _num(value, where, errors, 0, 1)
     if kind == "gain":
         return _num(value, where, errors, 0, 4)
+    if kind == "adjust":
+        return _num(value, where, errors, -1, 1)
     return _num(value, where, errors)
+
+
+def ease(value: Any, where: str, errors: list[str]) -> str:
+    """A key's ease: a name, or cubic-bezier(x1,y1,x2,y2) with x1, x2 in 0..1 (written without spaces)."""
+    if value in EASES:
+        return str(value)
+    match = BEZIER_RE.match(str(value)) if isinstance(value, str) else None
+    if match:
+        x1, y1, x2, y2 = (float(v) for v in match.groups())
+        if 0 <= x1 <= 1 and 0 <= x2 <= 1 and -2 <= y1 <= 3 and -2 <= y2 <= 3:
+            return "cubic-bezier(" + ",".join(f"{v:g}" for v in (round(x1, 4), round(y1, 4), round(x2, 4), round(y2, 4))) + ")"
+        errors.append(f"{where}: cubic-bezier butuh x1 dan x2 antara 0 dan 1, y antara -2 dan 3")
+        return "linear"
+    errors.append(f"{where}: pilih salah satu {', '.join(EASES)}, atau cubic-bezier(x1,y1,x2,y2)")
+    return "linear"
 
 
 def _keys(keys: Any, where: str, errors: list[str], allowed: set[str]) -> dict[str, list[dict[str, Any]]]:
@@ -158,15 +201,96 @@ def _keys(keys: Any, where: str, errors: list[str], allowed: set[str]) -> dict[s
             if not isinstance(frame, dict) or "t" not in frame or "v" not in frame:
                 errors.append(f"{spot}: keyframe butuh t (detik) dan v (nilai)")
                 continue
-            item = {"t": _num(frame["t"], f"{spot}.t", errors, 0), "v": _value(ANIMATABLE[prop], frame["v"], f"{spot}.v", errors)}
-            ease = frame.get("ease", "linear")
-            if ease not in EASES:
-                errors.append(f"{spot}.ease: pilih salah satu {', '.join(EASES)}")
-            item["ease"] = ease
+            item = {"t": _num(frame["t"], f"{spot}.t", errors, 0), "v": _value(ANIMATABLE[prop], frame["v"], f"{spot}.v", errors),
+                    "ease": ease(frame.get("ease", "linear"), f"{spot}.ease", errors)}
             out.append(item)
         out.sort(key=lambda f: f["t"])
         clean[prop] = out
     return clean
+
+
+def _transition(value: Any, where: str, errors: list[str]) -> dict[str, Any] | None:
+    if value in (None, {}, "none"):
+        return None
+    if not isinstance(value, dict):
+        errors.append(f"{where}: objek {{\"type\": \"fade\", \"duration\": 0.5}}")
+        return None
+    kind = value.get("type", "fade")
+    if kind not in TRANSITIONS:
+        errors.append(f"{where}.type: pilih salah satu {', '.join(TRANSITIONS)}")
+        return None
+    if kind == "none":
+        return None
+    return {"type": kind, "duration": _num(value.get("duration", 0.5), f"{where}.duration", errors, 0.01, 60),
+            "ease": ease(value.get("ease", "out"), f"{where}.ease", errors)}
+
+
+def _chroma(value: Any, where: str, errors: list[str]) -> dict[str, Any] | None:
+    if value in (None, {}, False):
+        return None
+    if not isinstance(value, dict):
+        errors.append(f"{where}: objek {{\"color\": \"#00FF00\"}}")
+        return None
+    return {"color": _color(value.get("color", "#00FF00"), f"{where}.color", errors) or "#00FF00",
+            "similarity": _num(value.get("similarity", 0.25), f"{where}.similarity", errors, 0, 1),
+            "smoothness": _num(value.get("smoothness", 0.08), f"{where}.smoothness", errors, 0, 1),
+            "spill": _num(value.get("spill", 0.5), f"{where}.spill", errors, 0, 1)}
+
+
+def _lut(value: Any, where: str, errors: list[str]) -> dict[str, Any] | None:
+    if value in (None, {}, ""):
+        return None
+    if isinstance(value, str):
+        value = {"src": value}
+    if not isinstance(value, dict) or not (isinstance(value.get("src"), str) and LUT_RE.match(value["src"])):
+        errors.append(f"{where}: file .cube di folder assets, misalnya {{\"src\": \"assets/film.cube\", \"mix\": 1}}")
+        return None
+    return {"src": value["src"], "mix": _num(value.get("mix", 1), f"{where}.mix", errors, 0, 1)}
+
+
+def _mask(value: Any, where: str, errors: list[str]) -> dict[str, Any] | None:
+    if value in (None, {}, False):
+        return None
+    if not isinstance(value, dict) or value.get("shape") not in ("rect", "ellipse"):
+        errors.append(f"{where}.shape: rect atau ellipse")
+        return None
+    out: dict[str, Any] = {"shape": value["shape"]}
+    for key, default, low in (("x", 0, None), ("y", 0, None), ("w", 200, 0), ("h", 200, 0), ("radius", 0, 0), ("feather", 0, 0)):
+        out[key] = _num(value.get(key, default), f"{where}.{key}", errors, low)
+    out["invert"] = bool(value.get("invert"))
+    return out
+
+
+def _tracks(value: Any, errors: list[str]) -> list[dict[str, Any]]:
+    if value in (None, []):
+        return []
+    if not isinstance(value, list):
+        errors.append("tracks: harus daftar")
+        return []
+    out, seen = [], set()
+    for i, track in enumerate(value):
+        where = f"tracks[{i}]"
+        if not isinstance(track, dict):
+            errors.append(f"{where}: harus objek")
+            continue
+        tid = str(track.get("id") or f"t{i + 1}")
+        if not ID_RE.match(tid) or tid in seen:
+            errors.append(f"{where}.id: {tid!r} harus unik, huruf/angka/_/-")
+        seen.add(tid)
+        kind = track.get("kind", "video")
+        if kind not in TRACK_KINDS:
+            errors.append(f"{where}.kind: video atau audio")
+        out.append({**track, "id": tid, "kind": kind, "name": str(track.get("name") or tid)[:60],
+                    **{flag: bool(track.get(flag)) for flag in ("hidden", "locked", "muted")}})
+    return out
+
+
+def _on_track(item: dict[str, Any], kind: str, tracks: dict[str, str], where: str, errors: list[str]) -> None:
+    track = item.get("track")
+    if track in (None, ""):
+        item.pop("track", None)
+    elif tracks.get(str(track)) != kind:
+        errors.append(f"{where}.track: {track!r} bukan track {kind} di daftar tracks")
 
 
 def validate(doc: Any) -> tuple[dict[str, Any], list[str]]:
@@ -187,6 +311,8 @@ def validate(doc: Any) -> tuple[dict[str, Any], list[str]]:
         errors.append("fonts: daftar nama Google Font, misalnya [\"Fraunces\", \"Plus Jakarta Sans\"]")
         fonts = []
     out["fonts"] = list(dict.fromkeys(fonts))
+    out["tracks"] = _tracks(doc.get("tracks"), errors)
+    track_kinds = {t["id"]: t["kind"] for t in out["tracks"]}
 
     layers = doc.get("layers") or []
     if not isinstance(layers, list):
@@ -237,6 +363,14 @@ def validate(doc: Any) -> tuple[dict[str, Any], list[str]]:
             item["volume"] = _num(layer.get("volume", 1), f"{where}.volume", errors, 0, 4)
         allowed = {k for k, v in ANIMATABLE.items() if v != "gain"} | ({"volume"} if kind == "video" else set())
         item["keys"] = _keys(layer.get("keys"), f"{where}.keys", errors, allowed)
+        for field_name, check_fn in (("transIn", _transition), ("transOut", _transition), ("chroma", _chroma),
+                                     ("lut", _lut), ("mask", _mask)):
+            effect = check_fn(layer.get(field_name), f"{where}.{field_name}", errors)
+            if effect is None:
+                item.pop(field_name, None)
+            else:
+                item[field_name] = effect
+        _on_track(item, "video", track_kinds, where, errors)
         clean_layers.append(item)
     out["layers"] = clean_layers
 
@@ -262,6 +396,7 @@ def validate(doc: Any) -> tuple[dict[str, Any], list[str]]:
         item["fadeIn"] = _num(clip.get("fadeIn", 0), f"{where}.fadeIn", errors, 0)
         item["fadeOut"] = _num(clip.get("fadeOut", 0), f"{where}.fadeOut", errors, 0)
         item["keys"] = _keys(clip.get("keys"), f"{where}.keys", errors, {"volume"})
+        _on_track(item, "audio", track_kinds, where, errors)
         clean_audio.append(item)
     out["audio"] = clean_audio
 
@@ -307,7 +442,7 @@ def save(workspace: str | Path, name: str, doc: Any, base: str | None = None) ->
         raise StudioError("; ".join(errors[:12]) + (f" (+{len(errors) - 12} lagi)" if len(errors) > 12 else ""))
     text = json.dumps(clean, ensure_ascii=False, indent=1)
     if len(text.encode("utf-8")) > MAX_BYTES:
-        raise StudioError("motion.json lebih dari 2 MB")
+        raise StudioError(f"motion.json lebih dari {MAX_BYTES // (1024 * 1024)} MB")
     path = doc_path(workspace, name)
     if base is not None and stamp(path) != base:
         raise ConflictError(stamp(path))
@@ -355,8 +490,7 @@ def _contrast(a: str, b: str) -> float:
 
 def _at(layer: dict[str, Any], prop: str, t: float, default: Any) -> Any:
     """A property's value at time t (linear between keys: enough for bounds and colours)."""
-    base = (layer.get("props") or {}).get(prop, layer.get(prop, default)) if prop in TRANSFORM or prop in ("blur", "draw") \
-        else layer.get(prop, default)
+    base = (layer.get("props") or {}).get(prop, layer.get(prop, default)) if prop in IN_PROPS else layer.get(prop, default)
     frames = (layer.get("keys") or {}).get(prop) or []
     if not frames:
         return base
@@ -480,6 +614,8 @@ def check(doc: dict[str, Any], workspace: str | Path | None = None, name: str = 
         for layer in layers:
             if layer["type"] in ("image", "video") and not (root / layer["src"]).is_file():
                 add("error", layer["id"], None, f"file {layer['src']} belum ada di folder proyek")
+            if layer.get("lut") and not (root / layer["lut"]["src"]).is_file():
+                add("error", layer["id"], None, f"file LUT {layer['lut']['src']} belum ada di folder proyek")
         for clip in clean["audio"]:
             if not (root / clip["src"]).is_file():
                 add("error", clip["id"], None, f"file audio {clip['src']} belum ada")
@@ -503,5 +639,6 @@ def resolve_note(doc: dict[str, Any], number: int, reply: str) -> bool:
     return False
 
 
-__all__ = ["ANIMATABLE", "ConflictError", "EASES", "LAYER_TYPES", "StudioError", "check", "doc_path", "folder", "load",
-           "open_notes", "projects", "resolve_note", "save", "slug", "stamp", "template", "validate"]
+__all__ = ["ANIMATABLE", "COLOR_ADJUST", "ConflictError", "EASES", "LAYER_TYPES", "StudioError", "TRANSITIONS", "check",
+           "doc_path", "ease", "folder", "load", "open_notes", "projects", "resolve_note", "save", "slug", "stamp", "template",
+           "validate"]

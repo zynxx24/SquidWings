@@ -1,6 +1,6 @@
 # Add-on Studio video
 
-Editor video motion di web (klip, keyframe, potong di playhead, catatan di frame, chat revisi) dengan **render engine C di server**. Mati bawaan.
+Editor video motion di web (klip, keyframe dengan editor kurva, transisi, koreksi warna, chroma key, LUT, mask, track, potong di playhead, catatan di frame, chat revisi) dengan **render engine C di server**. Mati bawaan.
 
 ## Pasang
 
@@ -14,7 +14,7 @@ Perintah ini memasang `ziglang` (compiler C dari pip, juga untuk Windows tanpa V
 
 | Bagian | Isi |
 |---|---|
-| `engine/sqengine.c` | Rasterizer anti-alias sendiri, teks (stb_truetype), path SVG, stroke, blur, gambar, klip video, mixer audio, pool thread lintas OS |
+| `engine/sqengine.c` | Rasterizer anti-alias sendiri, teks (stb_truetype), path SVG, stroke, blur, gambar, klip video, transisi, warna, chroma key, LUT .cube, mask, easing cubic-bezier, mixer audio, pool thread lintas OS |
 | `engine/vendor/` | stb_truetype, stb_image, stb_image_write (public domain / MIT) |
 | `renderer.py` | Kompilasi engine, motion.json ke scene, pilih encoder GPU, ekspor dan still |
 | `fonts.py` | TTF Google Fonts yang sama dengan editor (cache bersama), font sistem kalau offline |
@@ -31,6 +31,12 @@ Ekspor jalan di mesin server, bukan di browser: HP boleh tidur, render tetap jal
 
 Status: `GET /api/studio/engine` (engine siap, GPU yang terdeteksi, thread, batas memori).
 
+## Efek dan sinkron
+
+* Efek (transisi, warna, chroma key, LUT, mask) dihitung dengan rumus yang sama di `render.js` (pratinjau) dan `sqengine.c` (ekspor). Kalau satu diubah, ubah yang lain juga; `tests/test_studio_engine.py` membandingkan keduanya lewat node.
+* Klip video besar (lebih dari 960 px atau 40 MB) dibuatkan **proxy** di `proxies/` saat diunggah: 960 px, keyframe tiap setengah detik, supaya editor lancar di HP. Tombol Proxy di bawah pratinjau mematikannya. Ekspor dan still selalu memakai file asli.
+* Editor tidak polling: `GET /api/studio/{sesi}/events?project=` adalah satu aliran Server-Sent Events yang mengirim stamp proyek (simpanan AI atau tab lain), progres render, dan progres proxy. HP yang tidur memutus aliran; browser menyambung lagi sendiri.
+
 ## Langkah manual
 
 | OS | Yang perlu dilakukan sendiri |
@@ -45,7 +51,7 @@ Status: `GET /api/studio/engine` (engine siap, GPU yang terdeteksi, thread, bata
 |---|---|
 | `studio_doc.py`, `studio_context.py` | Dokumen motion.json dan konteks untuk agent |
 | `harness_studio.txt` | Protokol chat revisi di dalam editor |
-| `web/` | API Studio (proyek, aset, render server, still) dan halaman editor (`web/static/`) |
+| `web/` | API Studio (proyek, aset, render server, still, proxy, aliran events) dan halaman editor (`web/static/`) |
 | `tools/` | Tool agent `studio_*`, termasuk `studio_still` (engine) dan `studio_captions` |
 | `skills/` | Skill `studio` |
 

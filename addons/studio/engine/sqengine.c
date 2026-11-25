@@ -58,7 +58,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "vendor/stb_image_write.h"
 
-#define SQ_VERSION "1.0.0"
+#define SQ_VERSION "1.1.0"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -135,20 +135,56 @@ static int split_tabs(char *line, char **fields, int max) {
 
 /* ── easing and keyframes (same as render.js) ───────────────────────────────── */
 
-enum { E_LINEAR, E_IN, E_OUT, E_INOUT, E_OUTBACK, E_OUTELASTIC, E_HOLD };
+enum { E_LINEAR, E_IN, E_OUT, E_INOUT, E_OUTBACK, E_OUTELASTIC, E_HOLD, E_INBACK, E_OUTBOUNCE, E_BEZIER };
 
-static int ease_id(const char *s) {
-    if (!strcmp(s, "in")) return E_IN;
-    if (!strcmp(s, "out")) return E_OUT;
-    if (!strcmp(s, "inOut")) return E_INOUT;
-    if (!strcmp(s, "outBack")) return E_OUTBACK;
-    if (!strcmp(s, "outElastic")) return E_OUTELASTIC;
-    if (!strcmp(s, "hold")) return E_HOLD;
-    return E_LINEAR;
+/* An ease: a named curve, or cubic-bezier(x1,y1,x2,y2) drawn in the editor's curve editor. */
+typedef struct { int id; float x1, y1, x2, y2; } Ease;
+
+static Ease ease_parse(const char *s) {
+    Ease e = {E_LINEAR, 0, 0, 1, 1};
+    if (!strncmp(s, "cubic-bezier(", 13)) {
+        if (sscanf(s + 13, "%f ,%f ,%f ,%f", &e.x1, &e.y1, &e.x2, &e.y2) == 4) e.id = E_BEZIER;
+        return e;
+    }
+    if (!strcmp(s, "in")) e.id = E_IN;
+    else if (!strcmp(s, "out")) e.id = E_OUT;
+    else if (!strcmp(s, "inOut")) e.id = E_INOUT;
+    else if (!strcmp(s, "outBack")) e.id = E_OUTBACK;
+    else if (!strcmp(s, "outElastic")) e.id = E_OUTELASTIC;
+    else if (!strcmp(s, "hold")) e.id = E_HOLD;
+    else if (!strcmp(s, "inBack")) e.id = E_INBACK;
+    else if (!strcmp(s, "outBounce")) e.id = E_OUTBOUNCE;
+    return e;
 }
 
-static double ease(int e, double p) {
-    switch (e) {
+/* CSS cubic-bezier: x(t) = p, solved by Newton steps, bisection when those do not settle (as render.js). */
+static double bez_at(double t, double p1, double p2) { double u = 1 - t; return 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t; }
+static double bez_slope(double t, double p1, double p2) { double u = 1 - t; return 3 * u * u * p1 + 6 * u * t * (p2 - p1) + 3 * t * t * (1 - p2); }
+
+static double bezier(const Ease *e, double x) {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    double t = x;
+    for (int i = 0; i < 8; i++) {
+        double err = bez_at(t, e->x1, e->x2) - x;
+        if (fabs(err) < 1e-7 && t >= 0 && t <= 1) return bez_at(t, e->y1, e->y2);
+        double d = bez_slope(t, e->x1, e->x2);
+        if (fabs(d) < 1e-6) break;
+        t -= err / d;
+    }
+    double lo = 0, hi = 1;
+    t = x;
+    for (int i = 0; i < 60; i++) {
+        double v = bez_at(t, e->x1, e->x2);
+        if (fabs(v - x) < 1e-7) break;
+        if (v < x) lo = t; else hi = t;
+        t = (lo + hi) / 2;
+    }
+    return bez_at(t, e->y1, e->y2);
+}
+
+static double ease(const Ease *e, double p) {
+    switch (e->id) {
     case E_IN: return p * p * p;
     case E_OUT: return 1 - pow(1 - p, 3);
     case E_INOUT: return p < 0.5 ? 4 * p * p * p : 1 - pow(-2 * p + 2, 3) / 2;
@@ -157,11 +193,21 @@ static double ease(int e, double p) {
         if (p == 0 || p == 1) return p;
         return pow(2, -10 * p) * sin((p * 10 - 0.75) * (2 * M_PI / 3)) + 1;
     case E_HOLD: return 0;
+    case E_INBACK: { double c1 = 1.70158, c3 = c1 + 1; return c3 * p * p * p - c1 * p * p; }
+    case E_OUTBOUNCE: {
+        const double n1 = 7.5625, d1 = 2.75;
+        if (p < 1 / d1) return n1 * p * p;
+        if (p < 2 / d1) { p -= 1.5 / d1; return n1 * p * p + 0.75; }
+        if (p < 2.5 / d1) { p -= 2.25 / d1; return n1 * p * p + 0.9375; }
+        p -= 2.625 / d1;
+        return n1 * p * p + 0.984375;
+    }
+    case E_BEZIER: return bezier(e, p);
     default: return p;
     }
 }
 
-typedef struct { float t; float v; float c[4]; int has_color; int ease; } Key;
+typedef struct { float t; float v; float c[4]; int has_color; Ease ease; } Key;
 typedef struct { char name[16]; Key *k; int n, cap; int color; } Track;
 
 static void track_add(Track *tr, Key key) {
@@ -179,7 +225,7 @@ static float track_num(const Track *tr, double t, float fallback) {
         if (t >= a->t && t < b->t) {
             double span = b->t - a->t;
             if (span == 0) span = 1;
-            double p = ease(a->ease, (t - a->t) / span);
+            double p = ease(&a->ease, (t - a->t) / span);
             return (float)(a->v + (b->v - a->v) * p);
         }
     }
@@ -199,7 +245,7 @@ static void track_color(const Track *tr, double t, const float *fallback, int fa
         if (t >= a->t && t < b->t) {
             double span = b->t - a->t;
             if (span == 0) span = 1;
-            double p = ease(a->ease, (t - a->t) / span);
+            double p = ease(&a->ease, (t - a->t) / span);
             if (!a->has_color || !b->has_color) {
                 const Key *k = p < 0.5 ? a : b;
                 memcpy(out, k->c, sizeof(float) * 4);
@@ -241,11 +287,27 @@ enum { L_TEXT, L_RECT, L_ELLIPSE, L_POLYGON, L_PATH, L_IMAGE, L_VIDEO, L_OTHER }
 
 enum {
     P_X, P_Y, P_SCALE, P_SCALEX, P_SCALEY, P_ROT, P_OPACITY, P_BLUR, P_DRAW, P_W, P_H, P_RADIUS, P_SIZE, P_STROKEW,
+    P_BRIGHT, P_CONTRAST, P_SAT, P_HUE, P_TEMP,
     P_COUNT
 };
 static const char *PROP_NAMES[P_COUNT] = {"x", "y", "scale", "scaleX", "scaleY", "rotation", "opacity", "blur", "draw",
-                                          "w", "h", "radius", "size", "strokeWidth"};
-static const float PROP_DEFAULTS[P_COUNT] = {0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0};
+                                          "w", "h", "radius", "size", "strokeWidth",
+                                          "brightness", "contrast", "saturation", "hue", "temperature"};
+static const float PROP_DEFAULTS[P_COUNT] = {0, 0, 1, 1, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+/* Transitions: how a layer comes in at its start and leaves at its end. */
+enum { T_NONE, T_FADE, T_SLIDE_L, T_SLIDE_R, T_SLIDE_U, T_SLIDE_D, T_ZOOM, T_BLUR, T_WIPE_L, T_WIPE_R, T_WIPE_U, T_WIPE_D, T_IRIS };
+static const char *TRANS_NAMES[] = {"none", "fade", "slide-left", "slide-right", "slide-up", "slide-down", "zoom", "blur",
+                                    "wipe-left", "wipe-right", "wipe-up", "wipe-down", "iris"};
+typedef struct { int type; float dur; Ease ease; } Trans;
+
+static int trans_id(const char *s) {
+    for (int i = 0; i < (int)(sizeof(TRANS_NAMES) / sizeof(TRANS_NAMES[0])); i++) if (!strcmp(TRANS_NAMES[i], s)) return i;
+    return T_NONE;
+}
+
+/* A 3D colour lookup table from a .cube file (r fastest), sampled trilinearly. */
+typedef struct Lut { char *id; int n; float *d; float dmin[3], dmax[3]; } Lut;
 
 typedef struct {
     int type;
@@ -265,6 +327,11 @@ typedef struct {
     Image *image;
     Video *video;
     int cover;
+    /* effects */
+    Trans tin, tout;
+    int has_chroma; float kcb, kcr, ksim, ksoft, kspill;
+    Lut *lut; float lut_mix;
+    int has_mask, mask_ellipse, mask_invert; float mask_x, mask_y, mask_w, mask_h, mask_r, mask_feather;
 } Layer;
 
 typedef struct {
@@ -275,6 +342,7 @@ typedef struct {
     Font *fonts; int nfonts;
     Image *images; int nimages;
     Video *videos; int nvideos;
+    Lut *luts; int nluts;
     Layer *layers; int nlayers;
     /* audio */
     char *audio_out; int audio_rate;
@@ -303,6 +371,64 @@ static Image *find_image(Scene *s, const char *id) {
 static Video *find_video(Scene *s, const char *id) {
     for (int i = 0; i < s->nvideos; i++) if (!strcmp(s->videos[i].id, id)) return &s->videos[i];
     return NULL;
+}
+static Lut *find_lut(Scene *s, const char *id) {
+    for (int i = 0; i < s->nluts; i++) if (!strcmp(s->luts[i].id, id)) return &s->luts[i];
+    return NULL;
+}
+
+/* Read a .cube 3D LUT. 0 when the file is missing, 1D only, or short. */
+static int lut_load(Lut *lt, const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    char line[1024];
+    long count = 0, total = 0;
+    lt->dmin[0] = lt->dmin[1] = lt->dmin[2] = 0;
+    lt->dmax[0] = lt->dmax[1] = lt->dmax[2] = 1;
+    while (fgets(line, sizeof(line), f)) {
+        char *s = line;
+        while (*s && isspace((unsigned char)*s)) s++;
+        if (!*s || *s == '#') continue;
+        if (!strncmp(s, "LUT_3D_SIZE", 11)) {
+            int n = atoi(s + 11);
+            if (n < 2 || n > 256 || lt->d) break;
+            lt->n = n;
+            total = (long)n * n * n;
+            lt->d = xmalloc(sizeof(float) * 3 * (size_t)total);
+            continue;
+        }
+        if (!strncmp(s, "DOMAIN_MIN", 10)) { sscanf(s + 10, "%f %f %f", &lt->dmin[0], &lt->dmin[1], &lt->dmin[2]); continue; }
+        if (!strncmp(s, "DOMAIN_MAX", 10)) { sscanf(s + 10, "%f %f %f", &lt->dmax[0], &lt->dmax[1], &lt->dmax[2]); continue; }
+        if (isalpha((unsigned char)*s)) continue; /* TITLE, LUT_1D_SIZE (not supported: no table, so refused below) */
+        if (!lt->d || count >= total) continue;
+        float r, g, b;
+        if (sscanf(s, "%f %f %f", &r, &g, &b) == 3) { lt->d[count * 3] = r; lt->d[count * 3 + 1] = g; lt->d[count * 3 + 2] = b; count++; }
+    }
+    fclose(f);
+    if (!lt->d || count != total) { free(lt->d); lt->d = NULL; return 0; }
+    return 1;
+}
+
+static void lut_sample(const Lut *lt, const float *in, float *out) {
+    int n = lt->n, i0[3];
+    float fr[3];
+    for (int k = 0; k < 3; k++) {
+        float span = lt->dmax[k] - lt->dmin[k];
+        float c = span > 0 ? (in[k] - lt->dmin[k]) / span : in[k];
+        c = clampf(c, 0, 1) * (float)(n - 1);
+        int i = (int)floorf(c);
+        if (i > n - 2) i = n - 2;
+        i0[k] = i;
+        fr[k] = c - (float)i;
+    }
+    out[0] = out[1] = out[2] = 0;
+    for (int corner = 0; corner < 8; corner++) {
+        int dr = corner & 1, dg = (corner >> 1) & 1, db = (corner >> 2) & 1;
+        float w = (dr ? fr[0] : 1 - fr[0]) * (dg ? fr[1] : 1 - fr[1]) * (db ? fr[2] : 1 - fr[2]);
+        if (w == 0) continue;
+        const float *p = lt->d + 3 * ((size_t)(i0[0] + dr) + (size_t)(i0[1] + dg) * n + (size_t)(i0[2] + db) * n * n);
+        out[0] += p[0] * w; out[1] += p[1] * w; out[2] += p[2] * w;
+    }
 }
 
 static unsigned char *read_file(const char *path, size_t *size) {
@@ -440,13 +566,13 @@ static void load_scene(Scene *s, const char *path) {
             int p = parse_prop(fld[1]);
             if (p < 0) continue;
             if (!cur->num_keys[p]) cur->num_keys[p] = new_track(fld[1], 0);
-            Key key = {(float)atof(fld[2]), (float)atof(fld[3]), {0}, 0, ease_id(fld[4])};
+            Key key = {(float)atof(fld[2]), (float)atof(fld[3]), {0}, 0, ease_parse(fld[4])};
             track_add(cur->num_keys[p], key);
         } else if (cur && !strcmp(k, "ckey") && n >= 5) {
             Track **tr = !strcmp(fld[1], "fill") ? &cur->fill_keys : !strcmp(fld[1], "stroke") ? &cur->stroke_keys : NULL;
             if (!tr) continue;
             if (!*tr) *tr = new_track(fld[1], 1);
-            Key key = {(float)atof(fld[2]), 0, {0}, 0, ease_id(fld[3])};
+            Key key = {(float)atof(fld[2]), 0, {0}, 0, ease_parse(fld[3])};
             parse_color(fld, n, 4, key.c, &key.has_color);
             track_add(*tr, key);
         } else if (cur && !strcmp(k, "text") && n >= 2) {
@@ -468,6 +594,34 @@ static void load_scene(Scene *s, const char *path) {
             cur->video = find_video(s, fld[1]);
         } else if (cur && !strcmp(k, "fit") && n >= 2) {
             cur->cover = !strcmp(fld[1], "cover");
+        } else if (!strcmp(k, "lutfile") && n >= 3) {
+            s->luts = xrealloc(s->luts, sizeof(Lut) * (size_t)(s->nluts + 1));
+            Lut *lt = &s->luts[s->nluts++];
+            memset(lt, 0, sizeof(*lt));
+            lt->id = xstrdup(fld[1]);
+            char *p = pct_decode(fld[2]);
+            if (!lut_load(lt, p)) fprintf(stderr, "sqengine: LUT %s could not be read (%s; a 3D .cube is needed)\n", lt->id, p);
+            free(p);
+        } else if (cur && !strcmp(k, "lut") && n >= 3) {
+            cur->lut = find_lut(s, fld[1]);
+            if (cur->lut && !cur->lut->d) cur->lut = NULL;
+            cur->lut_mix = clampf((float)atof(fld[2]), 0, 1);
+        } else if (cur && !strcmp(k, "trans") && n >= 5) {
+            Trans *tr = !strcmp(fld[1], "out") ? &cur->tout : &cur->tin;
+            tr->type = trans_id(fld[2]); tr->dur = (float)atof(fld[3]); tr->ease = ease_parse(fld[4]);
+        } else if (cur && !strcmp(k, "chroma") && n >= 7) {
+            float r = (float)atof(fld[1]), g = (float)atof(fld[2]), b = (float)atof(fld[3]);
+            float y = 0.299f * r + 0.587f * g + 0.114f * b;
+            cur->has_chroma = 1;
+            cur->kcb = (b - y) * 0.564f; cur->kcr = (r - y) * 0.713f;
+            cur->ksim = (float)atof(fld[4]); cur->ksoft = (float)atof(fld[5]); cur->kspill = (float)atof(fld[6]);
+        } else if (cur && !strcmp(k, "mask") && n >= 9) {
+            cur->has_mask = 1;
+            cur->mask_ellipse = !strcmp(fld[1], "ellipse");
+            cur->mask_x = (float)atof(fld[2]); cur->mask_y = (float)atof(fld[3]);
+            cur->mask_w = (float)atof(fld[4]); cur->mask_h = (float)atof(fld[5]);
+            cur->mask_r = (float)atof(fld[6]); cur->mask_feather = (float)atof(fld[7]);
+            cur->mask_invert = atoi(fld[8]);
         } else if (!strcmp(k, "audio") && n >= 4) {
             s->audio_out = pct_decode(fld[1]);
             s->audio_rate = atoi(fld[2]);
@@ -480,7 +634,7 @@ static void load_scene(Scene *s, const char *path) {
             clip->start = atof(fld[2]); clip->length = atof(fld[3]); clip->volume = atof(fld[4]);
             clip->fade_in = atof(fld[5]); clip->fade_out = atof(fld[6]);
         } else if (clip && !strcmp(k, "akey") && n >= 4) {
-            Key key = {(float)atof(fld[1]), (float)atof(fld[2]), {0}, 0, ease_id(fld[3])};
+            Key key = {(float)atof(fld[1]), (float)atof(fld[2]), {0}, 0, ease_parse(fld[3])};
             track_add(&clip->keys, key);
         }
     }
@@ -1164,7 +1318,122 @@ typedef struct {
     float bw, bh, radius, opacity;
     int cover;
     float blur; /* device pixels */
+    /* effects: colour, chroma key, LUT, mask and wipes, applied to the layer alone before it is composited */
+    int isolate;
+    const Layer *L;
+    float color[5]; /* brightness, contrast, saturation, hue, temperature */
+    int nwipe, wipe_type[2], wipe_out[2]; float wipe_a[2];
+    float box_w, box_h;         /* the layer's own box, for masks and wipes */
+    Mat inv; float dscale;      /* device -> layer space, and device pixels per layer unit */
+    int bx0, by0, bx1, by1;     /* device rows/columns the layer can touch */
 } Prepared;
+
+/* ── effects: the same arithmetic as render.js (effectPixel), so preview and export agree ── */
+
+static void effect_pixel(const Prepared *pr, float *rgb, float *alpha) {
+    const Layer *L = pr->L;
+    float r = rgb[0], g = rgb[1], b = rgb[2];
+    if (L->has_chroma) {
+        float y = 0.299f * r + 0.587f * g + 0.114f * b;
+        float cb = (b - y) * 0.564f, cr = (r - y) * 0.713f;
+        float d = hypotf(cb - L->kcb, cr - L->kcr);
+        float soft = fmaxf(1e-4f, L->ksoft * 0.5f);
+        *alpha *= clampf((d - L->ksim * 0.5f) / soft, 0, 1);
+        float klen = hypotf(L->kcb, L->kcr);
+        if (L->kspill > 0 && klen > 1e-6f) {
+            float proj = (cb * L->kcb + cr * L->kcr) / klen;
+            if (proj > 0) {
+                cb -= L->kspill * proj * L->kcb / klen;
+                cr -= L->kspill * proj * L->kcr / klen;
+                r = y + cr / 0.713f;
+                b = y + cb / 0.564f;
+                g = (y - 0.299f * r - 0.114f * b) / 0.587f;
+            }
+        }
+    }
+    if (L->lut && L->lut_mix > 0) {
+        float in[3] = {clampf(r, 0, 1), clampf(g, 0, 1), clampf(b, 0, 1)}, out[3];
+        lut_sample(L->lut, in, out);
+        r += (out[0] - r) * L->lut_mix; g += (out[1] - g) * L->lut_mix; b += (out[2] - b) * L->lut_mix;
+    }
+    const float *c = pr->color;
+    if (c[4] != 0) { r += c[4] * 0.1f; b -= c[4] * 0.1f; }
+    if (c[0] != 0) { float k = 1 + c[0]; r *= k; g *= k; b *= k; }
+    if (c[1] != 0) { float k = 1 + c[1]; r = (r - 0.5f) * k + 0.5f; g = (g - 0.5f) * k + 0.5f; b = (b - 0.5f) * k + 0.5f; }
+    if (c[2] != 0) {
+        float l = 0.2126f * r + 0.7152f * g + 0.0722f * b, k = 1 + c[2];
+        r = l + (r - l) * k; g = l + (g - l) * k; b = l + (b - l) * k;
+    }
+    if (c[3] != 0) { /* the CSS hue-rotate matrix */
+        float a = c[3] * (float)M_PI / 180, co = cosf(a), si = sinf(a);
+        float nr = r * (0.213f + co * 0.787f - si * 0.213f) + g * (0.715f - co * 0.715f - si * 0.715f) + b * (0.072f - co * 0.072f + si * 0.928f);
+        float ng = r * (0.213f - co * 0.213f + si * 0.143f) + g * (0.715f + co * 0.285f + si * 0.140f) + b * (0.072f - co * 0.072f - si * 0.283f);
+        float nb = r * (0.213f - co * 0.213f - si * 0.787f) + g * (0.715f - co * 0.715f + si * 0.715f) + b * (0.072f + co * 0.928f + si * 0.072f);
+        r = nr; g = ng; b = nb;
+    }
+    rgb[0] = clampf(r, 0, 1); rgb[1] = clampf(g, 0, 1); rgb[2] = clampf(b, 0, 1);
+}
+
+/* How much of the layer stays at layer-space point (x, y): its mask times its wipes, 0..1. */
+static float coverage(const Prepared *pr, float x, float y) {
+    const Layer *L = pr->L;
+    float s = pr->dscale > 1e-6f ? pr->dscale : 1, cov = 1;
+    if (L->has_mask) {
+        float hw = fabsf(L->mask_w) / 2, hh = fabsf(L->mask_h) / 2, d;
+        float px = x - L->mask_x, py = y - L->mask_y;
+        if (L->mask_ellipse) d = (hypotf(px / fmaxf(hw, 1e-3f), py / fmaxf(hh, 1e-3f)) - 1) * fminf(hw, hh);
+        else d = sd_round_rect(px, py, hw, hh, fmaxf(0, L->mask_r));
+        float m = clampf(0.5f - d / (fmaxf(0, L->mask_feather) + 1 / s), 0, 1);
+        cov *= L->mask_invert ? 1 - m : m;
+    }
+    for (int i = 0; i < pr->nwipe; i++) {
+        float a = pr->wipe_a[i], w = pr->box_w, h = pr->box_h, d;
+        int out = pr->wipe_out[i];
+        switch (pr->wipe_type[i]) {
+        case T_WIPE_R: d = out ? (-w / 2 + a * w) - x : x - (-w / 2 + (1 - a) * w); break;
+        case T_WIPE_L: d = out ? x - (w / 2 - a * w) : (w / 2 - (1 - a) * w) - x; break;
+        case T_WIPE_D: d = out ? (-h / 2 + a * h) - y : y - (-h / 2 + (1 - a) * h); break;
+        case T_WIPE_U: d = out ? y - (h / 2 - a * h) : (h / 2 - (1 - a) * h) - y; break;
+        default: d = hypotf(x, y) - (1 - a) * hypotf(w, h) / 2; break; /* iris */
+        }
+        cov *= clampf(0.5f - d * s, 0, 1);
+    }
+    return cov;
+}
+
+/* The amount (0 shown .. 1 gone) a transition takes away at time t. */
+static float trans_amount(const Trans *tr, double t, double start, double end, int out) {
+    if (tr->type == T_NONE || tr->dur <= 0) return 0;
+    double p = out ? (end - t) / tr->dur : (t - start) / tr->dur;
+    if (p >= 1) return 0;
+    if (p < 0) p = 0;
+    return (float)(1 - ease(&tr->ease, p));
+}
+
+static void apply_transitions(const Scene *sc, const Layer *L, double t, float *st, Prepared *pr) {
+    for (int side = 0; side < 2; side++) {
+        const Trans *tr = side ? &L->tout : &L->tin;
+        float a = trans_amount(tr, t, L->start, L->end, side);
+        if (a == 0) continue;
+        float sign = side ? -1.0f : 1.0f; /* in: from the far side; out: on to the far side */
+        switch (tr->type) {
+        case T_FADE: st[P_OPACITY] *= 1 - a; break;
+        case T_SLIDE_L: st[P_X] += sign * a * (float)sc->w; break;
+        case T_SLIDE_R: st[P_X] -= sign * a * (float)sc->w; break;
+        case T_SLIDE_U: st[P_Y] += sign * a * (float)sc->h; break;
+        case T_SLIDE_D: st[P_Y] -= sign * a * (float)sc->h; break;
+        case T_ZOOM: st[P_SCALE] *= side ? 1 + 0.3f * a : 1 - 0.3f * a; st[P_OPACITY] *= 1 - a; break;
+        case T_BLUR: st[P_BLUR] += a * 0.03f * (float)(sc->w < sc->h ? sc->w : sc->h); st[P_OPACITY] *= 1 - a; break;
+        case T_WIPE_L: case T_WIPE_R: case T_WIPE_U: case T_WIPE_D: case T_IRIS:
+            if (a > 0 && pr->nwipe < 2) {
+                pr->wipe_type[pr->nwipe] = tr->type; pr->wipe_out[pr->nwipe] = side; pr->wipe_a[pr->nwipe] = fminf(a, 1);
+                pr->nwipe++;
+            }
+            break;
+        default: break;
+        }
+    }
+}
 
 static void premul(const float *c, float opacity, float *out) {
     float a = clampf(c[3], 0, 1) * clampf(opacity, 0, 1);
@@ -1176,6 +1445,7 @@ static void prepare_layer(const Scene *sc, Layer *L, double t, const Mat *global
     if (t < L->start || t >= L->end || L->type == L_OTHER) return;
     float st[P_COUNT];
     for (int p = 0; p < P_COUNT; p++) st[p] = track_num(L->num_keys[p], t, L->stat[p]);
+    apply_transitions(sc, L, t, st, pr);
     float fill[4], stroke[4];
     int has_fill, has_stroke;
     track_color(L->fill_keys, t, L->fill, L->has_fill, fill, &has_fill);
@@ -1195,6 +1465,14 @@ static void prepare_layer(const Scene *sc, Layer *L, double t, const Mat *global
     pr->visible = 1;
     pr->blur = st[P_BLUR] > 0 ? (float)(st[P_BLUR] * mat_scale(global)) : 0;
     pr->opacity = opacity;
+    pr->L = L;
+    pr->m = m;
+    pr->dscale = (float)s;
+    for (int c = 0; c < 5; c++) pr->color[c] = st[P_BRIGHT + c];
+    pr->isolate = L->has_chroma || (L->lut && L->lut_mix > 0) || L->has_mask || pr->nwipe > 0 ||
+                  st[P_BRIGHT] != 0 || st[P_CONTRAST] != 0 || st[P_SAT] != 0 || st[P_HUE] != 0 || st[P_TEMP] != 0;
+    pr->box_w = bw; pr->box_h = bh;
+    if (pr->isolate && !mat_invert(&m, &pr->inv)) pr->isolate = 0;
     if (L->type == L_IMAGE || L->type == L_VIDEO) {
         pr->kind = 1;
         pr->m = m; pr->bw = bw; pr->bh = bh; pr->radius = fmaxf(0, st[P_RADIUS]); pr->cover = L->cover;
@@ -1213,6 +1491,12 @@ static void prepare_layer(const Scene *sc, Layer *L, double t, const Mat *global
             premul(dark, opacity, pr->fillc);
             pr->kind = 0;
             shape_free(&box);
+        }
+        if (pr->isolate) {
+            Pt c[4] = {mat_apply(&m, -bw / 2, -bh / 2), mat_apply(&m, bw / 2, -bh / 2), mat_apply(&m, bw / 2, bh / 2), mat_apply(&m, -bw / 2, bh / 2)};
+            float x0 = c[0].x, x1 = c[0].x, y0 = c[0].y, y1 = c[0].y;
+            for (int i = 1; i < 4; i++) { x0 = fminf(x0, c[i].x); x1 = fmaxf(x1, c[i].x); y0 = fminf(y0, c[i].y); y1 = fmaxf(y1, c[i].y); }
+            pr->bx0 = (int)floorf(x0) - 2; pr->bx1 = (int)ceilf(x1) + 2; pr->by0 = (int)floorf(y0) - 2; pr->by1 = (int)ceilf(y1) + 2;
         }
         return;
     }
@@ -1263,7 +1547,9 @@ static void prepare_layer(const Scene *sc, Layer *L, double t, const Mat *global
         float px = st[P_SIZE] > 0 ? st[P_SIZE] : 48;
         float tw, th;
         text_shape(L, px, st[P_DRAW], &sh, tol, &tw, &th);
+        pr->box_w = tw; pr->box_h = th;
     }
+    if (L->type == L_POLYGON) { pr->box_w = bw; pr->box_h = bh; }
     /* fill */
     if (has_fill && sh.n) {
         shape_to_segs(&sh, &m, &pr->fill);
@@ -1292,6 +1578,18 @@ static void prepare_layer(const Scene *sc, Layer *L, double t, const Mat *global
         shape_free(&out);
     }
     shape_free(&sh);
+    if (pr->isolate) {
+        const Segs *g[2] = {&pr->fill, &pr->stroke};
+        int any = 0;
+        float x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+        for (int i = 0; i < 2; i++) {
+            if (!g[i]->n) continue;
+            if (!any) { x0 = g[i]->minx; x1 = g[i]->maxx; y0 = g[i]->miny; y1 = g[i]->maxy; any = 1; }
+            else { x0 = fminf(x0, g[i]->minx); x1 = fmaxf(x1, g[i]->maxx); y0 = fminf(y0, g[i]->miny); y1 = fmaxf(y1, g[i]->maxy); }
+        }
+        if (!any) { pr->isolate = 0; return; }
+        pr->bx0 = (int)floorf(x0) - 2; pr->bx1 = (int)ceilf(x1) + 2; pr->by0 = (int)floorf(y0) - 2; pr->by1 = (int)ceilf(y1) + 2;
+    }
 }
 
 static void prepared_free(Prepared *pr) { free(pr->fill.s); free(pr->stroke.s); memset(pr, 0, sizeof(*pr)); }
@@ -1474,7 +1772,7 @@ static void task_layer(void *ctx, int band, int worker) {
     Job *j = ctx;
     int y0, y1;
     job_band_range(j, band, &y0, &y1);
-    Canvas *target = j->pr[j->layer].blur > 0 ? j->scratch : j->cv;
+    Canvas *target = j->pr[j->layer].blur > 0 || j->pr[j->layer].isolate ? j->scratch : j->cv;
     draw_prepared(target, &j->sc->layers[j->layer], &j->pr[j->layer], y0, y1, j->acc[worker], j->acc_cap);
 }
 
@@ -1523,6 +1821,34 @@ static void task_blur(void *ctx, int index, int worker) {
     }
 }
 
+/* Colour, key, LUT, mask and wipes on the layer in the scratch canvas (premultiplied in, premultiplied out). */
+static void task_effects(void *ctx, int band, int worker) {
+    Job *j = ctx;
+    (void)worker;
+    const Prepared *pr = &j->pr[j->layer];
+    Canvas *c = j->scratch;
+    int y0, y1;
+    job_band_range(j, band, &y0, &y1);
+    if (y0 < pr->by0) y0 = pr->by0;
+    if (y1 > pr->by1) y1 = pr->by1;
+    int x0 = pr->bx0 < 0 ? 0 : pr->bx0, x1 = pr->bx1 > c->w ? c->w : pr->bx1;
+    int masked = pr->L->has_mask || pr->nwipe > 0;
+    for (int y = y0 < 0 ? 0 : y0; y < y1; y++) {
+        float *p = c->px + ((size_t)y * c->w + x0) * 4;
+        for (int x = x0; x < x1; x++, p += 4) {
+            float a = p[3];
+            if (a <= 1e-6f) continue;
+            float rgb[3] = {p[0] / a, p[1] / a, p[2] / a};
+            effect_pixel(pr, rgb, &a);
+            if (masked) {
+                Pt l = mat_apply(&pr->inv, x + 0.5f, y + 0.5f);
+                a *= coverage(pr, l.x, l.y);
+            }
+            p[0] = rgb[0] * a; p[1] = rgb[1] * a; p[2] = rgb[2] * a; p[3] = a;
+        }
+    }
+}
+
 static void task_composite(void *ctx, int band, int worker) {
     Job *j = ctx;
     (void)worker;
@@ -1546,14 +1872,17 @@ static void render_frame(Scene *sc, Pool *pool, Job *job, double t) {
         prepare_layer(sc, &sc->layers[i], t, &global, pr);
         if (!pr->visible) continue;
         job->layer = i;
-        if (pr->blur > 0) {
+        if (pr->blur > 0 || pr->isolate) {
             job->pass = 1;
             pool_for(pool, job->bands, task_clear, job);
             job->pass = 0;
             pool_for(pool, job->bands, task_layer, job);
-            job->radius = pr->blur;
-            job->pass = 0; pool_for(pool, job->cv->h, task_blur, job);
-            job->pass = 1; pool_for(pool, job->cv->w, task_blur, job);
+            if (pr->isolate) pool_for(pool, job->bands, task_effects, job);
+            if (pr->blur > 0) {
+                job->radius = pr->blur;
+                job->pass = 0; pool_for(pool, job->cv->h, task_blur, job);
+                job->pass = 1; pool_for(pool, job->cv->w, task_blur, job);
+            }
             job->pass = 0;
             pool_for(pool, job->bands, task_composite, job);
         } else {
@@ -1612,8 +1941,14 @@ static double image_bytes(const Scene *sc) {
     return b;
 }
 
+/* Does any layer need the second canvas (blur, or effects drawn on the layer alone)? */
 static int has_blur(const Scene *sc) {
-    for (int i = 0; i < sc->nlayers; i++) if (sc->layers[i].stat[P_BLUR] > 0 || sc->layers[i].num_keys[P_BLUR]) return 1;
+    for (int i = 0; i < sc->nlayers; i++) {
+        const Layer *L = &sc->layers[i];
+        if (L->stat[P_BLUR] > 0 || L->num_keys[P_BLUR] || L->has_chroma || L->lut || L->has_mask) return 1;
+        for (int p = P_BRIGHT; p <= P_TEMP; p++) if (L->stat[p] != 0 || L->num_keys[p]) return 1;
+        if (L->tin.type >= T_BLUR || L->tout.type >= T_BLUR) return 1; /* blur, wipes, iris */
+    }
     return 0;
 }
 

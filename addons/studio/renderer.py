@@ -15,6 +15,9 @@ Pieces:
   VAAPI, VideoToolbox or AMF with a one-second test and keeps the first that works; ``off`` is CPU
   (libx264); a name forces that one.
 * ``export()`` and ``still()``: the work itself, with progress callbacks.
+* ``make_proxy()``: a small copy of a big video clip (960 px, a keyframe every half second) that the
+  editor plays and scrubs instead of the original, so editing on a phone stays smooth. Exports and
+  stills always read the original.
 
 Resource control: ``STUDIO_THREADS`` (default: all cores but one), ``STUDIO_MEM_MB`` (default 2048),
 ``STUDIO_NICE`` (default on: the render runs below normal priority so the machine stays responsive).
@@ -296,9 +299,50 @@ def _color(value: Any) -> str:
     return f"{r:.5f}\t{g:.5f}\t{b:.5f}\t{a:.5f}"
 
 
-_NUM_PROPS = ("x", "y", "scale", "scaleX", "scaleY", "rotation", "opacity", "blur", "draw")
+_NUM_PROPS = ("x", "y", "scale", "scaleX", "scaleY", "rotation", "opacity", "blur", "draw",
+              "brightness", "contrast", "saturation", "hue", "temperature")
 _SIZE_PROPS = ("w", "h", "radius", "size", "strokeWidth")
-_PROP_DEFAULTS = {"x": 0, "y": 0, "scale": 1, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1, "blur": 0, "draw": 1}
+_PROP_DEFAULTS = {"x": 0, "y": 0, "scale": 1, "scaleX": 1, "scaleY": 1, "rotation": 0, "opacity": 1, "blur": 0, "draw": 1,
+                  "brightness": 0, "contrast": 0, "saturation": 0, "hue": 0, "temperature": 0}
+
+
+def _tracks(doc: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {str(t.get("id")): t for t in doc.get("tracks") or [] if isinstance(t, dict)}
+
+
+def _off_track(item: dict[str, Any], tracks: dict[str, dict[str, Any]], *flags: str) -> bool:
+    """True when the item sits on a track that is hidden (or muted, ...)."""
+    track = tracks.get(str(item.get("track") or ""))
+    return bool(track and any(track.get(flag) for flag in flags))
+
+
+def _effects(layer: dict[str, Any], project: Path, lut_ids: dict[str, str], lines: list[str]) -> list[str]:
+    """Scene lines for a layer's transitions, chroma key, LUT and mask (the colour props go as `num`)."""
+    body: list[str] = []
+    for side, field_name in (("in", "transIn"), ("out", "transOut")):
+        tr = layer.get(field_name)
+        if isinstance(tr, dict) and tr.get("type") not in (None, "none") and float(tr.get("duration") or 0) > 0:
+            body.append(f"trans\t{side}\t{tr['type']}\t{float(tr['duration'])}\t{tr.get('ease') or 'out'}")
+    chroma = layer.get("chroma")
+    if isinstance(chroma, dict) and chroma.get("color"):
+        rgb = _color(chroma["color"]).split("\t")[:3]
+        if len(rgb) == 3:
+            body.append("\t".join(["chroma", *rgb, str(float(chroma.get("similarity", 0.25))),
+                                   str(float(chroma.get("smoothness", 0.08))), str(float(chroma.get("spill", 0.5)))]))
+    lut = layer.get("lut")
+    if isinstance(lut, dict) and lut.get("src") and (project / str(lut["src"])).is_file():
+        src = str(lut["src"])
+        lid = lut_ids.get(src)
+        if lid is None:
+            lid = lut_ids[src] = f"l{len(lut_ids)}"
+            lines.append(f"lutfile\t{lid}\t{_esc(str(project / src))}")
+        body.append(f"lut\t{lid}\t{float(lut.get('mix', 1))}")
+    mask = layer.get("mask")
+    if isinstance(mask, dict) and mask.get("shape") in ("rect", "ellipse"):
+        body.append("\t".join(["mask", mask["shape"], *(str(float(mask.get(k) or 0)) for k in ("x", "y")),
+                               str(float(mask.get("w", 200))), str(float(mask.get("h", 200))),
+                               *(str(float(mask.get(k) or 0)) for k in ("radius", "feather")), "1" if mask.get("invert") else "0"]))
+    return body
 
 
 def _visible_times(layer: dict[str, Any], times: list[float]) -> list[float]:
@@ -330,9 +374,11 @@ def scene(doc: dict[str, Any], project: Path, *, times: list[float] | None = Non
     out_long = max(out_size or (width_px, height_px))
     font_ids: dict[tuple[str, int], str] = {}
     image_ids: dict[str, str] = {}
+    lut_ids: dict[str, str] = {}
+    tracks = _tracks(doc)
     body: list[str] = []
     for index, layer in enumerate(doc.get("layers") or []):
-        if layer.get("hidden"):
+        if layer.get("hidden") or _off_track(layer, tracks, "hidden"):
             continue
         kind = layer.get("type")
         end = layer.get("end")
@@ -354,6 +400,7 @@ def scene(doc: dict[str, Any], project: Path, *, times: list[float] | None = Non
                     body.append(f"ckey\t{prop}\t{float(key['t'])}\t{ease}\t{_color(key.get('v'))}")
                 elif prop != "volume" and isinstance(key.get("v"), (int, float)):
                     body.append(f"key\t{prop}\t{float(key['t'])}\t{float(key['v'])}\t{ease}")
+        body += _effects(layer, project, lut_ids, lines)
         if kind == "text":
             weight = int(layer.get("weight") or 400)
             family = str(layer.get("font") or "")
@@ -425,10 +472,12 @@ def _atempo(rate: float) -> str:
 def audio_scene(doc: dict[str, Any], project: Path, wav: Path) -> str | None:
     """The engine's audio mix: music clips and the sound of video clips, with fades and volume keys."""
     duration = float(doc.get("duration") or 1)
-    clips: list[dict[str, Any]] = [dict(c) for c in doc.get("audio") or []]
+    tracks = _tracks(doc)
+    clips: list[dict[str, Any]] = [dict(c) for c in doc.get("audio") or [] if not _off_track(c, tracks, "muted")]
     for layer in doc.get("layers") or []:
         volume = layer.get("volume")
-        if layer.get("type") == "video" and not layer.get("muted") and not layer.get("hidden") and (volume is None or float(volume) > 0):
+        if layer.get("type") == "video" and not layer.get("muted") and not layer.get("hidden") and \
+                not _off_track(layer, tracks, "muted", "hidden") and (volume is None or float(volume) > 0):
             end = min(float(layer.get("end") if layer.get("end") is not None else duration), duration)
             clips.append({"src": layer.get("src"), "start": float(layer.get("start") or 0), "offset": float(layer.get("clipStart") or 0),
                           "rate": float(layer.get("speed") or 1), "volume": float(layer.get("volume", 1)), "keys": layer.get("keys"),
@@ -469,6 +518,8 @@ class Job:
     session: str
     project: str
     state: str = "queued"          # queued, running, done, error, cancelled
+    kind: str = "render"           # render, proxy
+    src: str = ""                  # proxy: the clip it is made from
     progress: float = 0.0
     message: str = ""
     file: str = ""
@@ -480,7 +531,8 @@ class Job:
     procs: list[subprocess.Popen[bytes]] = field(default_factory=list)
 
     def public(self) -> dict[str, Any]:
-        return {"id": self.id, "project": self.project, "state": self.state, "progress": round(self.progress, 4),
+        return {"id": self.id, "kind": self.kind, "src": self.src, "project": self.project, "state": self.state,
+                "progress": round(self.progress, 4),
                 "message": self.message, "file": self.file, "encoder": self.encoder, "error": self.error,
                 "seconds": round((self.finished or time.time()) - self.started, 1)}
 
@@ -623,6 +675,71 @@ def still(workspace: Path, name: str, times: list[float], *, scale: float = 0.5,
         shutil.rmtree(work, ignore_errors=True)
 
 
+# ── proxies ──────────────────────────────────────────────────────────────────
+
+PROXY_LONG_SIDE = 960
+PROXY_FROM_BYTES = 40 * 1024 * 1024
+
+
+def proxy_path(project: Path, src: str) -> Path:
+    return project / "proxies" / f"{Path(src).name}.proxy.mp4"
+
+
+def proxy_ready(project: Path, src: str) -> bool:
+    """A proxy that exists and is newer than its clip (a replaced clip needs a new one)."""
+    proxy, original = proxy_path(project, src), project / src
+    return proxy.is_file() and original.is_file() and proxy.stat().st_mtime >= original.stat().st_mtime
+
+
+def wants_proxy(path: Path) -> bool:
+    """Big clips get a proxy: larger than the proxy size, or heavy files."""
+    media = probe(path)
+    return bool(media.width) and (max(media.width, media.height) > PROXY_LONG_SIDE or path.stat().st_size > PROXY_FROM_BYTES)
+
+
+def make_proxy(project: Path, src: str, job: Job | None = None) -> Path:
+    """Write the clip's proxy: 960 px on the long side, H.264 with a keyframe every half second (fast
+    seeking), its sound as AAC. Runs below normal priority. Returns the proxy file."""
+    source = project / src
+    if not source.is_file():
+        raise RenderError(f"{src} tidak ada")
+    media = probe(source)
+    if not media.width or not media.height:
+        raise RenderError(f"{src} bukan video yang bisa dibaca ffmpeg")
+    k = min(1.0, PROXY_LONG_SIDE / max(media.width, media.height))
+    width_px, height_px = _even(media.width * k), _even(media.height * k)
+    target = proxy_path(project, src)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    part = target.with_name(target.name + ".part.mp4")
+    argv = [ffmpeg(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", str(source),
+            "-vf", f"scale={width_px}:{height_px}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+            "-g", "15", "-keyint_min", "15", "-pix_fmt", "yuv420p",
+            *(["-c:a", "aac", "-b:a", "96k", "-ac", "2"] if media.audio else ["-an"]),
+            "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", str(part)]
+    proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, **_popen_kwargs())
+    if job:
+        job.procs.append(proc)
+    assert proc.stdout is not None
+    for raw in proc.stdout:
+        line = raw.decode("utf-8", "replace").strip()
+        if line.startswith("out_time_us=") and media.duration > 0 and job:
+            try:
+                job.progress = min(0.99, int(line.split("=", 1)[1]) / 1e6 / media.duration)
+                job.message = f"Proxy {Path(src).name}: {int(job.progress * 100)}%"
+            except ValueError:
+                pass
+    _, err = proc.communicate()
+    if proc.returncode != 0 or not part.exists():
+        part.unlink(missing_ok=True)
+        if job and job.cancel.is_set():
+            raise RenderError("Dibatalkan")
+        raise RenderError("Proxy gagal: " + (err or b"").decode("utf-8", "replace").strip()[-400:])
+    os.replace(part, target)
+    if job:
+        job.progress, job.message = 1.0, "Proxy siap"
+    return target
+
+
 def status() -> dict[str, Any]:
     """For the editor and `addon list`: is the engine there, what GPU encoders work, the limits."""
     info: dict[str, Any] = {"engine": False, "threads": threads(), "mem_mb": mem_mb(),
@@ -638,5 +755,5 @@ def status() -> dict[str, Any]:
     return info
 
 
-__all__ = ["Job", "RenderError", "audio_scene", "available", "build", "cancel", "encoder", "export", "probe",
-           "scene", "status", "still"]
+__all__ = ["Job", "RenderError", "audio_scene", "available", "build", "cancel", "encoder", "export", "make_proxy", "probe",
+           "proxy_path", "proxy_ready", "scene", "status", "still", "wants_proxy"]

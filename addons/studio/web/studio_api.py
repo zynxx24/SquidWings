@@ -4,9 +4,14 @@ The Studio page edits ``studio/<name>/motion.json`` in a chat's folder (see ``ad
 the same file the agent writes. Saves carry the stamp the page loaded, so an edit never silently
 overwrites a change the agent made meanwhile (409 with the newer stamp).
 
-Export happens in the browser: the page renders every frame with the same renderer it previews
-with, encodes H.264 with WebCodecs (or records WebM where that is missing) and mixes the audio to
-WAV. It uploads the parts here, and ffmpeg puts them into one MP4 the chat can show.
+Export runs on this machine with the C engine (``/render``), as a job the page only starts and
+watches. The older browser export (WebCodecs, parts uploaded and muxed here) stays as a fallback.
+
+Live updates: ``/events`` is one Server-Sent Events stream per open editor. It pushes the project's
+stamp when the file changes (the agent or another tab saved), render progress, and proxy progress,
+so the page does not poll. A phone that sleeps drops the stream; the browser reconnects on its own.
+
+Proxies: big video clips get a small copy (``proxies/``) that the editor plays instead.
 
 Fonts: the page's CSP only allows its own origin, so Google Fonts CSS and font files are fetched
 through ``/api/fonts`` and kept on disk. A font used once keeps working offline and in exports.
@@ -15,6 +20,8 @@ through ``/api/fonts`` and kept on disk. A font used once keeps working offline 
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import os
 import re
 import time
@@ -23,7 +30,7 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from addons.studio import renderer, studio_doc
 from addons.studio.studio_doc import ConflictError, StudioError
@@ -40,7 +47,9 @@ _ASSET_TYPES = {
     ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif",
     ".mp3": "audio/mpeg", ".wav": "audio/wav", ".ogg": "audio/ogg", ".m4a": "audio/mp4", ".aac": "audio/aac",
     ".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime", ".m4v": "video/mp4",
+    ".cube": "text/plain",
 }
+_ASSET_KIND = {".cube": "lut"}
 _ASSET_MAX = 80 * 1024 * 1024
 _VIDEO_ASSET_MAX = 600 * 1024 * 1024
 _PART_MAX = {"video": 1024 * 1024 * 1024, "audio": 512 * 1024 * 1024}
@@ -126,6 +135,7 @@ async def put_project(session: str, name: str, payload: dict[str, Any]) -> dict[
         raise HTTPException(status_code=409, detail={"message": str(exc), "stamp": exc.current}) from exc
     except StudioError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _notify()
     return {"name": name, "doc": clean, "stamp": stamp}
 
 
@@ -134,8 +144,12 @@ async def put_project(session: str, name: str, payload: dict[str, Any]) -> dict[
 async def list_assets(session: str, name: str) -> dict[str, Any]:
     folder = _project(session, name) / "assets"
     files = sorted(p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in _ASSET_TYPES) if folder.is_dir() else []
-    return {"assets": [{"src": f"assets/{p.name}", "size": p.stat().st_size,
-                        "kind": _ASSET_TYPES[p.suffix.lower()].split("/")[0]} for p in files]}
+    return {"assets": [{"src": f"assets/{p.name}", "size": p.stat().st_size, "kind": _kind(p.suffix)} for p in files]}
+
+
+def _kind(suffix: str) -> str:
+    suffix = suffix.lower()
+    return _ASSET_KIND.get(suffix) or _ASSET_TYPES[suffix].split("/")[0]
 
 
 @router.post("/api/studio/{session}/project/{name}/asset")
@@ -143,8 +157,8 @@ async def upload_asset(request: Request, session: str, name: str, file: str = Qu
     clean = re.sub(r"[^A-Za-z0-9 ._()-]", "_", Path(file).name).strip(" .")[:120] or "file"
     suffix = Path(clean).suffix.lower()
     if suffix not in _ASSET_TYPES:
-        raise HTTPException(status_code=415, detail="Hanya gambar (png, jpg, webp, gif), audio (mp3, wav, ogg, m4a) "
-                                                    "dan video (mp4, webm, mov)")
+        raise HTTPException(status_code=415, detail="Hanya gambar (png, jpg, webp, gif), audio (mp3, wav, ogg, m4a), "
+                                                    "video (mp4, webm, mov) dan LUT warna (.cube)")
     data = await _body(request, _VIDEO_ASSET_MAX if _ASSET_TYPES[suffix].startswith("video/") else _ASSET_MAX)
     folder = _project(session, name) / "assets"
     folder.mkdir(parents=True, exist_ok=True)
@@ -152,7 +166,17 @@ async def upload_asset(request: Request, session: str, name: str, file: str = Qu
     while target.exists():
         target, n = folder / f"{Path(clean).stem}-{n}{suffix}", n + 1
     await asyncio.to_thread(target.write_bytes, data)
-    return {"src": f"assets/{target.name}", "kind": _ASSET_TYPES[suffix].split("/")[0]}
+    src = f"assets/{target.name}"
+    kind = _kind(suffix)
+    proxy = None
+    if kind == "video":
+        try:
+            if await asyncio.to_thread(renderer.wants_proxy, target):
+                proxy = _start_proxy(session, name, src).public()
+        except renderer.RenderError as exc:   # no ffmpeg: the clip still works, only without a proxy
+            logger.info(f"[studio] no proxy for {src}: {exc}")
+    _notify()
+    return {"src": src, "kind": kind, "proxy": proxy}
 
 
 @router.get("/api/studio/{session}/project/{name}/asset/{filename}")
@@ -289,8 +313,10 @@ async def start_render(session: str, name: str, payload: dict[str, Any] | None =
             job.state, job.error = "error", str(exc)
         finally:
             job.finished = time.time()
+            _notify()
 
     asyncio.get_running_loop().run_in_executor(None, work)
+    _notify()
     return job.public()
 
 
@@ -338,6 +364,152 @@ async def render_still(session: str, name: str, payload: dict[str, Any] | None =
     data = png.read_bytes()
     png.unlink(missing_ok=True)
     return Response(data, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+# ── proxies ─────────────────────────────────────────────────────────────────────
+_proxy_jobs: dict[str, renderer.Job] = {}
+
+
+def _proxy_key(session: str, name: str, src: str) -> str:
+    return f"{session}/{name}/{src}"
+
+
+def _start_proxy(session: str, name: str, src: str) -> renderer.Job:
+    """A proxy job for this clip (the running one when there is one)."""
+    key = _proxy_key(session, name, src)
+    running = _proxy_jobs.get(key)
+    if running and running.state in ("queued", "running"):
+        return running
+    project = _project(session, name)
+    for old_key, old in list(_proxy_jobs.items()):
+        if old.finished and time.time() - old.finished > _JOB_KEEP_S:
+            del _proxy_jobs[old_key]
+    job = renderer.Job(id=os.urandom(8).hex(), session=session, project=name, kind="proxy", src=src)
+    _proxy_jobs[key] = job
+
+    def work() -> None:
+        job.state = "running"
+        try:
+            renderer.make_proxy(project, src, job)
+            job.state = "done"
+        except (renderer.RenderError, OSError) as exc:
+            job.state, job.error = ("cancelled" if job.cancel.is_set() else "error"), str(exc)
+        finally:
+            job.finished = time.time()
+            _notify()
+
+    asyncio.get_running_loop().run_in_executor(None, work)
+    return job
+
+
+def _proxies(session: str, name: str, project: Path) -> dict[str, dict[str, Any]]:
+    """Every video clip of the project: is its proxy ready, or being made."""
+    folder = project / "assets"
+    found: dict[str, dict[str, Any]] = {}
+    if not folder.is_dir():
+        return found
+    for path in sorted(folder.iterdir()):
+        if not path.is_file() or _ASSET_TYPES.get(path.suffix.lower(), "").split("/")[0] != "video":
+            continue
+        src = f"assets/{path.name}"
+        job = _proxy_jobs.get(_proxy_key(session, name, src))
+        ready = renderer.proxy_ready(project, src)
+        found[src] = {"ready": ready, "state": "done" if ready else (job.state if job else "none"),
+                      "progress": 1.0 if ready else (round(job.progress, 3) if job else 0.0),
+                      "error": job.error if job and not ready else ""}
+    return found
+
+
+@router.get("/api/studio/{session}/project/{name}/proxies")
+async def list_proxies(session: str, name: str) -> dict[str, Any]:
+    return {"proxies": await asyncio.to_thread(_proxies, session, name, _project(session, name))}
+
+
+@router.post("/api/studio/{session}/project/{name}/proxy")
+async def make_proxy(session: str, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    src = str(payload.get("src") or "")
+    if not studio_doc.SRC_RE.match(src) or not (_project(session, name) / src).is_file():
+        raise HTTPException(status_code=404, detail="Klip tidak ada")
+    if _ASSET_TYPES.get(Path(src).suffix.lower(), "").split("/")[0] != "video":
+        raise HTTPException(status_code=400, detail="Proxy hanya untuk klip video")
+    job = _start_proxy(session, name, src)
+    _notify()
+    return job.public()
+
+
+@router.get("/api/studio/{session}/project/{name}/proxy/{filename}")
+async def get_proxy(session: str, name: str, filename: str) -> FileResponse:
+    if Path(filename).name != filename or filename.startswith("."):
+        raise HTTPException(status_code=404, detail="Proxy tidak ada")
+    project = _project(session, name)
+    src = f"assets/{filename}"
+    if not renderer.proxy_ready(project, src):
+        raise HTTPException(status_code=404, detail="Proxy belum siap")
+    return FileResponse(renderer.proxy_path(project, src), media_type="video/mp4",
+                        headers={"Cache-Control": "private, max-age=60", "X-Content-Type-Options": "nosniff"})
+
+
+# ── live updates (Server-Sent Events) ───────────────────────────────────────────
+# One stream per open editor. Saves, finished jobs and new proxies wake every stream at once;
+# otherwise each looks again twice a second while something is running, once a second when not
+# (a stat of motion.json: cheap). The agent in a terminal writes the same file, so the stat stays.
+_listeners: set[tuple[asyncio.AbstractEventLoop, asyncio.Event]] = set()
+_PING_S = 15.0
+
+
+def _notify() -> None:
+    """Wake every open event stream (safe from any thread)."""
+    for loop, event in list(_listeners):
+        try:
+            loop.call_soon_threadsafe(event.set)
+        except RuntimeError:          # that loop has closed: the stream is gone
+            _listeners.discard((loop, event))
+
+
+def _live_state(session: str, name: str, project: Path) -> dict[str, Any]:
+    renders = [j.public() for j in _render_jobs.values() if j.session == session and j.project == name]
+    renders.sort(key=lambda j: (j["state"] != "running", -j["seconds"]))
+    return {"doc": {"stamp": studio_doc.stamp(project / "motion.json")}, "render": renders[:5],
+            "proxy": _proxies(session, name, project)}
+
+
+@router.get("/api/studio/{session}/events")
+async def live_events(request: Request, session: str, project: str = Query(""), once: bool = False) -> StreamingResponse:
+    """Server-Sent Events: `doc` (stamp), `render` (jobs), `proxy` (clips), each sent when it changes."""
+    folder = _project(session, project)
+
+    async def stream():  # type: ignore[no-untyped-def]
+        loop = asyncio.get_running_loop()
+        wake = asyncio.Event()
+        entry = (loop, wake)
+        _listeners.add(entry)
+        last: dict[str, str] = {}
+        quiet_since = time.monotonic()
+        try:
+            yield "retry: 2000\n\n"
+            while True:
+                state = await asyncio.to_thread(_live_state, session, project, folder)
+                for event, value in state.items():
+                    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+                    if last.get(event) != text:
+                        last[event] = text
+                        quiet_since = time.monotonic()
+                        yield f"event: {event}\ndata: {text}\n\n"
+                if once or await request.is_disconnected():
+                    return
+                if time.monotonic() - quiet_since > _PING_S:   # keeps tunnels and proxies from closing an idle stream
+                    quiet_since = time.monotonic()
+                    yield ": ping\n\n"
+                busy = any(j["state"] in ("queued", "running") for j in state["render"]) or \
+                    any(p["state"] in ("queued", "running") for p in state["proxy"].values())
+                wake.clear()
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(wake.wait(), timeout=0.5 if busy else 1.0)
+        finally:
+            _listeners.discard(entry)
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
 
 
 # ── Google Fonts, through this server ───────────────────────────────────────────

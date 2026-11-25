@@ -1,5 +1,6 @@
 /* Studio: edit a motion.json by hand, leave notes for the AI, and export an MP4.
- * The document format and its rules live in utils/studio_doc.py; drawing lives in render.js. */
+ * The document format and its rules live in addons/studio/studio_doc.py; drawing lives in render.js.
+ * Live updates (the AI's saves, render and proxy progress) arrive on one Server-Sent Events stream. */
 (() => {
   'use strict';
   const R = window.StudioRender;
@@ -10,10 +11,14 @@
   try { embedded = window.self !== window.top; } catch (_) { embedded = true; }
 
   // Where a property's static value lives: transform-like ones in layer.props, the rest on the layer.
-  const IN_PROPS = new Set(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity', 'blur', 'draw']);
+  const IN_PROPS = new Set(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity', 'blur', 'draw',
+    'brightness', 'contrast', 'saturation', 'hue', 'temperature']);
   const ANIMATABLE = new Set(['x', 'y', 'scale', 'scaleX', 'scaleY', 'rotation', 'opacity', 'w', 'h', 'radius', 'size',
-    'strokeWidth', 'draw', 'blur', 'fill', 'stroke', 'volume']);
-  const DEFAULTS = { scale: 1, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1, blur: 0, draw: 1 };
+    'strokeWidth', 'draw', 'blur', 'fill', 'stroke', 'volume', 'brightness', 'contrast', 'saturation', 'hue', 'temperature']);
+  const DEFAULTS = { scale: 1, scaleX: 1, scaleY: 1, rotation: 0, opacity: 1, blur: 0, draw: 1,
+    brightness: 0, contrast: 0, saturation: 0, hue: 0, temperature: 0 };
+  const COLOR_FIELDS = [['brightness', 'Kecerahan', 0.01], ['contrast', 'Kontras', 0.01], ['saturation', 'Saturasi', 0.01],
+    ['hue', 'Rona °', 1], ['temperature', 'Suhu warna', 0.01]];
   const FONTS = ['Fraunces', 'Plus Jakarta Sans', 'DM Serif Display', 'DM Sans', 'Anton', 'Barlow', 'Bricolage Grotesque',
     'Space Grotesk', 'Playfair Display', 'Poppins', 'Montserrat', 'Bebas Neue', 'Caveat', 'Lexend', 'Syne', 'Unbounded',
     'Archivo Black', 'JetBrains Mono', 'Cormorant Garamond', 'Shrikhand', 'Abril Fatface', 'Baloo 2', 'Fredoka'];
@@ -39,7 +44,9 @@
     dirty: false, saving: false, t: 0, playing: false, mode: 'select', zoom: 80,
     sel: null,              // {kind: 'layer'|'audio'|'note'|'doc', id}
     key: null,              // {layer, prop, index} for a selected keyframe
-    past: [], future: [], images: {}, videos: {}, buffers: {}, peaks: {},
+    past: [], future: [], images: {}, videos: {}, buffers: {}, peaks: {}, luts: {}, assetList: [],
+    proxies: {}, useProxy: localStorage.getItem('studio-proxy') !== 'off', live: false, pendingStamp: null,
+    secs: {}, renders: [],
     audioCtx: null, stopAudio: null, playStart: 0, playFrom: 0, draft: null, conflict: null,
   };
 
@@ -59,6 +66,9 @@
   }
   const json = body => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const assetUrl = src => `${base()}/project/${encodeURIComponent(S.name)}/asset/${encodeURIComponent(src.replace(/^assets\//, ''))}`;
+  const proxyUrl = src => `${base()}/project/${encodeURIComponent(S.name)}/proxy/${encodeURIComponent(src.replace(/^assets\//, ''))}`;
+  /** Where the editor reads a video clip from: its proxy when one is ready (and proxies are on), else the file. */
+  const mediaUrl = src => (S.useProxy && S.proxies[src] && S.proxies[src].ready ? proxyUrl(src) : assetUrl(src));
 
   function setSave(text, kind = '') {
     if (!kind) kind = /^Tersimpan/.test(text) ? 'ok' : /Menyimpan/i.test(text) ? 'busy' : '';
@@ -87,7 +97,7 @@
       [['Buat video baru', 'new', true], ['Minta AI di chat', 'chat', false]]],
     error: ['Studio tidak bisa dibuka', 'Server tidak menjawab atau proyeknya rusak. Detailnya ada di pita atas.', [['Coba lagi', 'retry', true]]],
   };
-  const EDIT_CONTROLS = ['undo', 'redo', 'send-ai', 'export', 'to-start', 'prev-frame', 'play', 'next-frame', 'zoom-in', 'zoom-out'];
+  const EDIT_CONTROLS = ['undo', 'redo', 'send-ai', 'export', 'to-start', 'prev-frame', 'play', 'next-frame', 'zoom-in', 'zoom-out', 'add-track'];
   function setEditable(on) {
     document.body.classList.toggle('st-nodoc', !on);
     EDIT_CONTROLS.forEach(id => { $(id).disabled = !on; });
@@ -129,6 +139,7 @@
     if (!keepView) { S.past = []; S.future = []; S.sel = { kind: 'doc' }; S.key = null; S.t = 0; fitZoom(); }
     S.t = Math.min(S.t, S.doc.duration);
     setSave('Tersimpan');
+    Live.open();
     // Show the project at once; fonts, pictures and clips fill in as they arrive.
     renderAll();
     await Promise.all([loadFonts(), loadAssets()]);
@@ -178,18 +189,43 @@
     for (const layer of S.doc.layers || []) {
       if (layer.type === 'video' && layer.src && !S.videos[layer.src]) jobs.push(loadVideo(layer.src));
     }
+    jobs.push(loadAssetList().then(() => Promise.all((S.doc.layers || []).filter(l => l.lut && l.lut.src && !S.luts[l.lut.src]).map(l => loadLut(l.lut.src)))));
     await Promise.all(jobs);
+  }
+
+  /** The project's files (for the LUT list), and its clips' proxy state. */
+  async function loadAssetList() {
+    try {
+      const [{ assets }, { proxies }] = await Promise.all([
+        api(`${base()}/project/${encodeURIComponent(S.name)}/assets`),
+        api(`${base()}/project/${encodeURIComponent(S.name)}/proxies`).catch(() => ({ proxies: {} })),
+      ]);
+      S.assetList = assets || [];
+      if (!S.live) onProxies(proxies || {});
+    } catch (_) { /* the list is a convenience */ }
+  }
+
+  async function loadLut(src) {
+    S.luts[src] = S.luts[src] || null;
+    try {
+      const text = await (await fetch(assetUrl(src))).text();
+      const lut = R.parseCube(text);
+      if (!lut) { banner(`LUT <b>${esc(src)}</b> bukan file .cube 3D yang bisa dibaca.`); return; }
+      S.luts[src] = lut;
+      renderView();
+    } catch (e) { banner(`LUT <b>${esc(src)}</b> tidak bisa dibuka: ${esc(e.message)}`); }
   }
 
   /** A clip for drawing (muted: its sound is mixed through Web Audio with the music, so it stays in sync). */
   function loadVideo(src) {
     const v = document.createElement('video');
     v.muted = true; v.playsInline = true; v.preload = 'auto'; v.crossOrigin = 'anonymous';
-    v.src = assetUrl(src);
+    v.dataset.url = mediaUrl(src);
+    v.src = v.dataset.url;
     S.videos[src] = v;
     v.addEventListener('seeked', () => { if (!S.exporting) renderView(); });
-    // Its soundtrack, if it has one; a clip without sound simply has none.
-    if (!S.buffers[src]) loadAudio(src, true);
+    // Its soundtrack, if it has one (from the proxy when there is one: a smaller download); a clip without sound has none.
+    if (!S.buffers[src]) loadAudio(src, true, v.dataset.url);
     // A clip that stalls must not hold the editor: give up waiting after a while (it still loads later).
     return new Promise(r => { const t = setTimeout(r, 8000); v.onloadeddata = () => { clearTimeout(t); renderView(); r(); }; v.onerror = () => { clearTimeout(t); r(); }; });
   }
@@ -213,9 +249,27 @@
     }
   }
 
-  async function loadAudio(src, quiet = false) {
+  /** Point every clip at its proxy or its file, as the setting and the ready proxies say. */
+  async function refreshVideos() {
+    const swaps = [];
+    for (const [src, v] of Object.entries(S.videos)) {
+      if (v.dataset.url === mediaUrl(src)) continue;
+      const at = v.currentTime;
+      v.dataset.url = mediaUrl(src);
+      v.src = v.dataset.url;
+      swaps.push(new Promise(r => {
+        const t = setTimeout(r, 8000);
+        v.addEventListener('loadeddata', () => { clearTimeout(t); v.currentTime = at; r(); }, { once: true });
+        v.addEventListener('error', () => { clearTimeout(t); r(); }, { once: true });
+      }));
+    }
+    await Promise.all(swaps);
+    renderView();
+  }
+
+  async function loadAudio(src, quiet = false, url = '') {
     try {
-      const data = await (await fetch(assetUrl(src))).arrayBuffer();
+      const data = await (await fetch(url || assetUrl(src))).arrayBuffer();
       S.audioCtx = S.audioCtx || new AudioContext();
       const buffer = await S.audioCtx.decodeAudioData(data);
       S.buffers[src] = buffer;
@@ -242,6 +296,7 @@
   const frameEps = () => 0.5 / S.doc.fps;
   const layerById = id => (S.doc.layers || []).find(l => l.id === id);
   const clipById = id => (S.doc.audio || []).find(c => c.id === id);
+  const trackById = id => (S.doc.tracks || []).find(t => t.id === id);
   const noteByN = n => (S.doc.notes || []).find(x => x.n === n);
   const selLayer = () => (S.sel && S.sel.kind === 'layer' ? layerById(S.sel.id) : null);
 
@@ -312,6 +367,7 @@
       S.stamp = data.stamp;
       if (JSON.stringify(S.doc) === sent) { S.dirty = false; setSave('Tersimpan'); } else scheduleSave();
       banner('');
+      S.pendingStamp = S.pendingStamp === data.stamp ? null : S.pendingStamp;
     } catch (e) {
       if (e.status === 409) {
         S.conflict = true;
@@ -320,24 +376,66 @@
         $('take-theirs').onclick = async () => { S.conflict = null; banner(''); await openProject(S.name, true); };
         $('keep-mine').onclick = async () => { S.conflict = null; S.stamp = e.data.detail.stamp; banner(''); S.saving = false; await save(); };
       } else { setSave('Gagal menyimpan', 'warn'); banner(esc(e.message)); }
-    } finally { S.saving = false; }
+    } finally { S.saving = false; settlePending(); }
   }
 
-  // The AI edits the same file: pick its change up when nothing here is unsaved.
-  async function poll() {
-    if (!S.doc || !S.name || S.saving || document.hidden || S.playing) return;
+  // The AI edits the same file: pick its change up when nothing here is unsaved. The stamp arrives on
+  // the live stream; a save or playback in progress puts it aside until it is done.
+  async function onStamp(stamp) {
+    if (!S.doc || !S.name || stamp === S.stamp || stamp === '0') return;
+    if (S.saving || S.playing) { S.pendingStamp = stamp; return; }
+    if (S.dirty) {
+      if (!S.conflict) { S.conflict = true; banner('Video ini diubah AI sementara kamu mengedit. <button class="st-btn" id="take-theirs">Muat versi AI</button> (perubahanmu yang belum tersimpan hilang)'); $('take-theirs').onclick = async () => { S.conflict = null; banner(''); await openProject(S.name, true); }; }
+      return;
+    }
     try {
-      const { stamp } = await api(`${base()}/project/${encodeURIComponent(S.name)}/stamp`);
-      if (stamp === S.stamp || stamp === '0') return;
-      if (S.dirty) {
-        if (!S.conflict) { S.conflict = true; banner('Video ini diubah AI sementara kamu mengedit. <button class="st-btn" id="take-theirs">Muat versi AI</button> (perubahanmu yang belum tersimpan hilang)'); $('take-theirs').onclick = async () => { S.conflict = null; banner(''); await openProject(S.name, true); }; }
-        return;
-      }
       await openProject(S.name, true);
       setSave('Diperbarui oleh AI');
+    } catch (_) { /* offline for a moment: the next stamp tries again */ }
+  }
+  function settlePending() { const p = S.pendingStamp; S.pendingStamp = null; if (p) onStamp(p); }
+
+  /* One Server-Sent Events stream per open project: doc stamps, renders, proxies. The browser
+     reconnects by itself after a dropped connection (a phone waking up); while it is down, a slow
+     poll of the stamp stands in. */
+  const Live = (() => {
+    let es = null, key = '';
+    function open() {
+      if (!S.session || !S.name || !window.EventSource) return;
+      const want = `${S.session}|${S.name}`;
+      if (es && key === want && es.readyState !== EventSource.CLOSED) return;
+      close();
+      key = want;
+      es = new EventSource(`${base()}/events?project=${encodeURIComponent(S.name)}`);
+      es.onopen = () => { S.live = true; };
+      es.onerror = () => { S.live = !!es && es.readyState === EventSource.OPEN; };
+      es.addEventListener('doc', e => { try { onStamp(JSON.parse(e.data).stamp); } catch (_) { /* bad frame */ } });
+      es.addEventListener('render', e => { try { onRenders(JSON.parse(e.data)); } catch (_) { /* bad frame */ } });
+      es.addEventListener('proxy', e => { try { onProxies(JSON.parse(e.data)); } catch (_) { /* bad frame */ } });
+    }
+    function close() { if (es) es.close(); es = null; key = ''; S.live = false; }
+    return { open, close };
+  })();
+
+  async function poll() {
+    if (S.live || !S.doc || !S.name || document.hidden) return;
+    try {
+      const { stamp } = await api(`${base()}/project/${encodeURIComponent(S.name)}/stamp`);
+      onStamp(stamp);
     } catch (_) { /* offline for a moment */ }
   }
-  setInterval(poll, 2500);
+  setInterval(poll, 4000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && S.doc) { Live.open(); poll(); } });
+
+  /** Proxy state from the server: swap clips to a proxy as soon as it is ready. */
+  function onProxies(map) {
+    const before = JSON.stringify(S.proxies);
+    S.proxies = map || {};
+    if (JSON.stringify(S.proxies) === before) return;
+    refreshVideos();
+    const l = selLayer();
+    if (l && l.type === 'video' && !drag && !document.activeElement?.closest?.('#inspector')) renderInspector();
+  }
 
   /* ── preview ───────────────────────────────────── */
   let viewScale = 1;
@@ -363,7 +461,7 @@
     const ctx = c.getContext('2d');
     ctx.setTransform(viewScale, 0, 0, viewScale, 0, 0);
     if (!S.exporting) syncVideos();
-    R.drawFrame(ctx, S.doc, S.t, { images: S.images, videos: S.videos });
+    R.drawFrame(ctx, S.doc, S.t, { images: S.images, videos: S.videos, luts: S.luts });
     renderOverlay();
     $('clock').textContent = `${clock(S.t)} / ${clock(S.doc.duration)}`;
     const x = LABEL_W + S.t * S.zoom;
@@ -452,6 +550,8 @@
       if (hit) { layer = hit; S.sel = { kind: 'layer', id: hit.id }; action = 'move'; renderAll(); }
       else { S.sel = { kind: 'doc' }; S.key = null; renderAll(); return; }
     }
+    const track = layer.track && trackById(layer.track);
+    if (track && track.locked) { setSave('Track ini dikunci', 'warn'); return; }
     checkpoint();
     const s = R.layerState(layer, S.t);
     drag = { action, layer, start: p, s, angle0: Math.atan2(p.y - s.y, p.x - s.x), dist0: Math.hypot(p.x - s.x, p.y - s.y) || 1 };
@@ -670,6 +770,8 @@
 
   async function upload(file) {
     const res = await api(`${base()}/project/${encodeURIComponent(S.name)}/asset?file=${encodeURIComponent(file.name)}`, { method: 'POST', body: file });
+    // A big clip starts its proxy on the server right away; the live stream reports when it is ready.
+    if (res.proxy) S.proxies = { ...S.proxies, [res.src]: { ready: false, state: res.proxy.state, progress: 0, error: '' } };
     return res.src;
   }
 
@@ -713,6 +815,27 @@
       });
     } catch (err) { banner(esc(err.message)); setSave('Gagal mengunggah', 'warn'); }
   };
+
+  $('lut-input').onchange = async e => {
+    const file = e.target.files[0]; e.target.value = '';
+    const l = selLayer();
+    if (!file || !S.doc || !l) return;
+    setSave('Mengunggah LUT…');
+    try {
+      const src = await upload(file);
+      await loadAssetList();
+      await loadLut(src);
+      mutate(() => { l.lut = { mix: 1, ...(l.lut || {}), src }; });
+    } catch (err) { banner(esc(err.message)); setSave('Gagal mengunggah', 'warn'); }
+  };
+
+  async function startProxy(src) {
+    try {
+      const job = await api(`${base()}/project/${encodeURIComponent(S.name)}/proxy`, { method: 'POST', ...json({ src }) });
+      S.proxies = { ...S.proxies, [src]: { ready: false, state: job.state, progress: job.progress || 0, error: '' } };
+      renderInspector();
+    } catch (err) { banner(esc(err.message)); }
+  }
 
   $('audio-input').onchange = async e => {
     const file = e.target.files[0]; e.target.value = '';
@@ -783,6 +906,166 @@
     return `<input type="number" data-prop="${prop}" step="${step || (kind === 'int' ? 1 : 1)}" value="${esc(n)}">`;
   }
 
+  /* ── inspector sections: track, transitions, colour, effects, proxy, curve ── */
+  function details(id, title, body, openByDefault) {
+    const open = S.secs[id] ?? openByDefault;
+    return `<details class="st-sec" data-sec="${id}" ${open ? 'open' : ''}><summary>${esc(title)}</summary><div class="st-sec-body">${body}</div></details>`;
+  }
+
+  function trackField(item, kind) {
+    const tracks = (S.doc.tracks || []).filter(t => (t.kind || 'video') === kind);
+    return field('Track', `<select data-track="${kind}"><option value="">Tanpa track</option>${tracks.map(t => `<option value="${esc(t.id)}" ${item.track === t.id ? 'selected' : ''}>${esc(t.name || t.id)}</option>`).join('')}<option value="+">+ Track baru</option></select>`);
+  }
+
+  function newTrack(kind) {
+    S.doc.tracks = S.doc.tracks || [];
+    const used = new Set(S.doc.tracks.map(t => t.id)), prefix = kind === 'audio' ? 'a' : 'v';
+    let i = 1; while (used.has(`${prefix}${i}`)) i++;
+    const count = S.doc.tracks.filter(t => (t.kind || 'video') === kind).length + 1;
+    const track = { id: `${prefix}${i}`, name: `${kind === 'audio' ? 'Audio' : 'Video'} ${count}`, kind };
+    S.doc.tracks.push(track);
+    return track;
+  }
+
+  const easeOptions = value => Object.entries(R.EASE_NAMES).map(([k, n]) => `<option value="${k}" ${value === k ? 'selected' : ''}>${n}</option>`).join('')
+    + (String(value).startsWith('cubic-bezier') ? `<option value="${esc(value)}" selected>Kurva sendiri</option>` : '');
+
+  function transBlock(l, key, label) {
+    const tr = l[key] || {};
+    const type = tr.type || 'none';
+    return `<div class="st-trans"><span class="st-trans-label">${label}</span>
+      <select data-fx="${key}.type" aria-label="Transisi ${label.toLowerCase()}">${R.TRANSITIONS.map(t => `<option value="${t}" ${t === type ? 'selected' : ''}>${esc(R.TRANSITION_NAMES[t])}</option>`).join('')}</select>
+      ${type !== 'none' ? `<input type="number" min="0.05" step="0.05" data-fx="${key}.duration" value="${tr.duration ?? 0.5}" aria-label="Durasi transisi ${label.toLowerCase()} (detik)" title="Durasi (detik)">
+      <select data-fx="${key}.ease" aria-label="Gerak transisi ${label.toLowerCase()}">${easeOptions(tr.ease || 'out')}</select>` : ''}</div>`;
+  }
+
+  const sectionTransitions = l => details('trans', 'Transisi', transBlock(l, 'transIn', 'Masuk') + transBlock(l, 'transOut', 'Keluar')
+    + '<p class="st-hint">Silang antar klip: tumpuk ujung klip ini dengan awal klip berikutnya, beri keduanya Pudar.</p>', !!(l.transIn || l.transOut));
+
+  const sectionColor = l => details('color', 'Warna',
+    COLOR_FIELDS.map(([p, label, step]) => field(label, control(l, p, 'num', step, currentValue(l, p)), keyButton(l, p))).join('')
+    + '<div class="st-row"><button type="button" class="st-btn" data-act="color-reset">Kembalikan warna asli</button></div>',
+    l.type === 'image' || l.type === 'video' || COLOR_FIELDS.some(([p]) => currentValue(l, p)));
+
+  function sectionEffects(l) {
+    const ch = l.chroma, lut = l.lut, m = l.mask;
+    const luts = S.assetList.filter(a => a.kind === 'lut').map(a => a.src);
+    if (lut && lut.src && !luts.includes(lut.src)) luts.push(lut.src);
+    const num = (path, value, step, min, max) => `<input type="number" step="${step}" ${min != null ? `min="${min}"` : ''} ${max != null ? `max="${max}"` : ''} data-fx="${path}" value="${esc(+(+value).toFixed(3))}">`;
+    const chroma = field('Chroma key', `<input type="checkbox" data-fx-toggle="chroma" ${ch ? 'checked' : ''}>`)
+      + (ch ? field('Warna kunci', `<input type="color" data-fx="chroma.color" value="${esc(String(ch.color || '#00FF00').slice(0, 7))}">`)
+        + field('Kemiripan', num('chroma.similarity', ch.similarity ?? 0.25, 0.01, 0, 1))
+        + field('Kehalusan tepi', num('chroma.smoothness', ch.smoothness ?? 0.08, 0.01, 0, 1))
+        + field('Buang pantulan', num('chroma.spill', ch.spill ?? 0.5, 0.05, 0, 1)) : '');
+    const lutBlock = field('LUT (.cube)', `<select data-fx="lut.src"><option value="">Tanpa LUT</option>${luts.map(src => `<option value="${esc(src)}" ${lut && lut.src === src ? 'selected' : ''}>${esc(src.replace(/^assets\//, ''))}</option>`).join('')}</select>`)
+      + (lut ? field('Kekuatan LUT', num('lut.mix', lut.mix ?? 1, 0.05, 0, 1)) : '')
+      + '<div class="st-row"><button type="button" class="st-btn" data-act="lut-upload">Unggah .cube</button></div>';
+    const maskBlock = field('Mask', `<select data-fx="mask.shape"><option value="">Tanpa mask</option><option value="rect" ${m?.shape === 'rect' ? 'selected' : ''}>Kotak</option><option value="ellipse" ${m?.shape === 'ellipse' ? 'selected' : ''}>Elips</option></select>`)
+      + (m ? [['x', 'Geser X'], ['y', 'Geser Y'], ['w', 'Lebar'], ['h', 'Tinggi'], ['radius', 'Sudut'], ['feather', 'Lembut tepi']]
+        .map(([k, label]) => field(label, num(`mask.${k}`, m[k] ?? 0, 1, k === 'x' || k === 'y' ? null : 0))).join('')
+        + field('Balik (lubangi)', `<input type="checkbox" data-fx="mask.invert" ${m.invert ? 'checked' : ''}>`) : '');
+    return details('fx', 'Efek: chroma key, LUT, mask', chroma + lutBlock + maskBlock, !!(ch || lut || m));
+  }
+
+  function proxyInfo(l) {
+    const p = S.proxies[l.src];
+    const busy = p && (p.state === 'running' || p.state === 'queued');
+    const state = !p ? 'belum ada' : p.ready ? (S.useProxy ? 'siap, dipakai di editor' : 'siap, tapi Proxy dimatikan')
+      : busy ? `sedang dibuat ${Math.round((p.progress || 0) * 100)}%` : p.state === 'error' ? `gagal (${p.error})` : 'belum ada';
+    return `<p class="st-hint">Proxy: ${esc(state)}. Ekspor selalu memakai file asli.</p>`
+      + (!busy && !(p && p.ready) ? '<div class="st-row"><button type="button" class="st-btn" data-act="make-proxy">Buat proxy</button></div>' : '');
+  }
+
+  /* The curve editor: the selected keyframe's ease as a graph, with two handles for cubic-bezier. */
+  const CURVE = { w: 220, h: 220, pad: 18, ymin: -0.4, ymax: 1.4 };
+  const curveX = x => CURVE.pad + x * (CURVE.w - 2 * CURVE.pad);
+  const curveY = y => CURVE.h - CURVE.pad - ((y - CURVE.ymin) / (CURVE.ymax - CURVE.ymin)) * (CURVE.h - 2 * CURVE.pad);
+  function curvePath(ease) {
+    const f = R.easeFn(ease);
+    let d = '';
+    for (let i = 0; i <= 80; i++) {
+      const x = i / 80, y = ease === 'hold' ? (i < 80 ? 0 : 1) : f(x);
+      d += `${i ? 'L' : 'M'}${curveX(x).toFixed(1)} ${curveY(Math.max(CURVE.ymin, Math.min(CURVE.ymax, y))).toFixed(1)}`;
+    }
+    return d;
+  }
+  function curveEditor(ease) {
+    const b = R.bezierOf(ease) || R.bezierOf('out');
+    const own = !!R.bezierOf(ease);
+    return `<div class="st-curve" data-curve>
+      <svg viewBox="0 0 ${CURVE.w} ${CURVE.h}" role="img" aria-label="Kurva gerak: seret dua titik bulat untuk mengubahnya">
+        <rect class="frame" x="${curveX(0)}" y="${curveY(1)}" width="${curveX(1) - curveX(0)}" height="${curveY(0) - curveY(1)}"></rect>
+        <line class="arm" data-arm="1" x1="${curveX(0)}" y1="${curveY(0)}" x2="${curveX(b[0])}" y2="${curveY(b[1])}"></line>
+        <line class="arm" data-arm="2" x1="${curveX(1)}" y1="${curveY(1)}" x2="${curveX(b[2])}" y2="${curveY(b[3])}"></line>
+        <path class="curve" d="${curvePath(ease)}"></path>
+        <circle class="handle" data-h="1" cx="${curveX(b[0])}" cy="${curveY(b[1])}" r="8"></circle>
+        <circle class="handle" data-h="2" cx="${curveX(b[2])}" cy="${curveY(b[3])}" r="8"></circle>
+      </svg>
+      <p class="st-hint">${own ? 'Seret titik bulat untuk mengubah gerak. Kiri bawah = keyframe ini, kanan atas = berikutnya.' : 'Gerak ini bukan kurva bezier. Seret titik untuk membuat kurva sendiri.'}</p>
+    </div>`;
+  }
+
+  let curveDrag = null;
+  $('inspector').addEventListener('pointerdown', e => {
+    const h = e.target.closest('.st-curve circle.handle');
+    const l = selLayer();
+    if (!h || !l || !S.key) return;
+    const frame = (l.keys[S.key.prop] || [])[S.key.index];
+    if (!frame) return;
+    e.preventDefault();
+    h.setPointerCapture(e.pointerId);
+    curveDrag = { h: +h.dataset.h, el: h, svg: h.ownerSVGElement, b: R.bezierOf(frame.ease) || R.bezierOf('out'), frame };
+  });
+  $('inspector').addEventListener('pointermove', e => {
+    if (!curveDrag) return;
+    const pt = curveDrag.svg.createSVGPoint();
+    pt.x = e.clientX; pt.y = e.clientY;
+    const p = pt.matrixTransform(curveDrag.svg.getScreenCTM().inverse());
+    const x = Math.max(0, Math.min(1, (p.x - CURVE.pad) / (CURVE.w - 2 * CURVE.pad)));
+    const y = Math.max(CURVE.ymin, Math.min(CURVE.ymax, CURVE.ymin + ((CURVE.h - CURVE.pad - p.y) / (CURVE.h - 2 * CURVE.pad)) * (CURVE.ymax - CURVE.ymin)));
+    const i = curveDrag.h === 1 ? 0 : 2;
+    curveDrag.b[i] = +x.toFixed(3); curveDrag.b[i + 1] = +y.toFixed(3);
+    const svg = curveDrag.svg, ease = `cubic-bezier(${curveDrag.b.join(',')})`;
+    curveDrag.el.setAttribute('cx', curveX(x)); curveDrag.el.setAttribute('cy', curveY(y));
+    const arm = svg.querySelector(`[data-arm="${curveDrag.h}"]`);
+    arm.setAttribute('x2', curveX(x)); arm.setAttribute('y2', curveY(y));
+    svg.querySelector('.curve').setAttribute('d', curvePath(ease));
+  });
+  $('inspector').addEventListener('pointerup', () => {
+    if (!curveDrag) return;
+    const { frame, b } = curveDrag;
+    curveDrag = null;
+    mutate(() => { frame.ease = `cubic-bezier(${b.join(',')})`; });
+  });
+  // Open and closed sections stay as they were while the inspector redraws.
+  $('inspector').addEventListener('toggle', e => { const d = e.target.closest && e.target.closest('details[data-sec]'); if (d) S.secs[d.dataset.sec] = d.open; }, true);
+
+  /** Change a transition, chroma key, LUT or mask setting (data-fx="group.key"). */
+  function setFx(layer, path, value) {
+    const [group, key] = path.split('.');
+    if (group === 'transIn' || group === 'transOut') {
+      if (key === 'type') {
+        if (value === 'none') delete layer[group];
+        else layer[group] = { duration: 0.5, ease: 'out', ...(layer[group] || {}), type: value };
+      } else if (layer[group]) layer[group][key] = key === 'duration' ? Math.max(0.05, +value || 0.5) : value;
+    } else if (group === 'lut') {
+      if (key === 'src') {
+        if (!value) delete layer.lut;
+        else { layer.lut = { mix: 1, ...(layer.lut || {}), src: value }; if (!S.luts[value]) loadLut(value); }
+      } else if (layer.lut) layer.lut.mix = Math.max(0, Math.min(1, +value));
+    } else if (group === 'mask') {
+      if (key === 'shape') {
+        if (!value) delete layer.mask;
+        else {
+          const box = R.size(layer, R.layerState(layer, S.t), $('view').getContext('2d'));
+          layer.mask = { x: 0, y: 0, w: Math.round(box.w * 0.8), h: Math.round(box.h * 0.8), radius: 0, feather: 0, invert: false, ...(layer.mask || {}), shape: value };
+        }
+      } else if (layer.mask) layer.mask[key] = key === 'invert' ? !!value : (+value || 0);
+    } else if (group === 'chroma' && layer.chroma) {
+      layer.chroma[key] = key === 'color' ? value : Math.max(0, Math.min(1, +value));
+    }
+  }
+
   function renderInspector() {
     const box = $('inspector');
     if (!S.doc) return;
@@ -800,9 +1083,15 @@
         ${TRANSFORM_FIELDS.map(([p, label, step]) => field(label, control(l, p, 'num', step, currentValue(l, p)), keyButton(l, p))).join('')}
         <p class="st-sub">Tampilan</p>
         ${style.map(([p, label, kind, step]) => field(label, control(l, p, kind, step, ANIMATABLE.has(p) ? currentValue(l, p) : l[p]), keyButton(l, p))).join('')}
+        ${l.type === 'video' ? proxyInfo(l) : ''}
         ${keyInfo ? `<p class="st-sub">Keyframe ${esc(S.key.prop)} di ${clock(keyInfo.t)}</p>
-          ${field('Gerak ke berikutnya', `<select data-ease>${Object.entries(R.EASE_NAMES).map(([k, n]) => `<option value="${k}" ${keyInfo.ease === k ? 'selected' : ''}>${n}</option>`).join('')}</select>`)}
+          ${field('Gerak ke berikutnya', `<select data-ease>${easeOptions(keyInfo.ease)}</select>`)}
+          ${curveEditor(keyInfo.ease)}
           <div class="st-row"><button type="button" class="st-btn" data-act="del-key">Hapus keyframe</button></div>` : ''}
+        ${trackField(l, 'video')}
+        ${sectionTransitions(l)}
+        ${sectionColor(l)}
+        ${sectionEffects(l)}
         <div class="st-row">
           <button type="button" class="st-btn" data-act="up" title="Naikkan lapisan">Naik</button>
           <button type="button" class="st-btn" data-act="down" title="Turunkan lapisan">Turun</button>
@@ -827,7 +1116,19 @@
         ${field('Fade in', `<input type="number" step="0.1" min="0" data-ameta="fadeIn" value="${a.fadeIn ?? 0}">`)}
         ${field('Fade out', `<input type="number" step="0.1" min="0" data-ameta="fadeOut" value="${a.fadeOut ?? 0}">`)}
         ${field('Bisu', `<input type="checkbox" data-ameta="muted" ${a.muted ? 'checked' : ''}>`)}
+        ${trackField(a, 'audio')}
         <div class="st-row"><button type="button" class="st-btn" data-act="del-audio">Hapus musik</button></div>`;
+    } else if (sel.kind === 'track' && trackById(sel.id)) {
+      const tr = trackById(sel.id);
+      const audio = tr.kind === 'audio';
+      const count = (audio ? S.doc.audio || [] : S.doc.layers || []).filter(x => x.track === tr.id).length;
+      box.innerHTML = `<h2>Track ${audio ? 'audio' : 'video'}</h2>
+        ${field('Nama', `<input type="text" data-tmeta="name" value="${esc(tr.name || '')}">`)}
+        ${audio ? field('Bisu', `<input type="checkbox" data-tmeta="muted" ${tr.muted ? 'checked' : ''}>`)
+          : field('Sembunyikan', `<input type="checkbox" data-tmeta="hidden" ${tr.hidden ? 'checked' : ''}>`) + field('Bisukan suara klip', `<input type="checkbox" data-tmeta="muted" ${tr.muted ? 'checked' : ''}>`)}
+        ${field('Kunci', `<input type="checkbox" data-tmeta="locked" ${tr.locked ? 'checked' : ''}>`)}
+        <p class="st-hint">${count} ${audio ? 'klip' : 'lapisan'} di track ini. ${audio ? '' : 'Urutan gambar (siapa di atas) tetap mengikuti daftar Lapisan.'}</p>
+        <div class="st-row"><button type="button" class="st-btn" data-act="track-del">Hapus track</button></div>`;
     } else if (sel.kind === 'note' && noteByN(sel.id)) {
       const n = noteByN(sel.id);
       box.innerHTML = `<h2>Catatan #${n.n}</h2>
@@ -862,6 +1163,26 @@
   $('inspector').addEventListener('change', e => {
     const el = e.target;
     const l = selLayer();
+    if (el.dataset.track) {
+      const item = l || (S.sel?.kind === 'audio' ? clipById(S.sel.id) : null);
+      if (!item) return;
+      mutate(() => {
+        if (el.value === '+') item.track = newTrack(el.dataset.track).id;
+        else if (el.value) item.track = el.value;
+        else delete item.track;
+      });
+      return;
+    }
+    if (el.dataset.fx && l) { mutate(() => setFx(l, el.dataset.fx, readInput(el))); return; }
+    if (el.dataset.fxToggle === 'chroma' && l) {
+      mutate(() => { if (el.checked) l.chroma = { color: '#00FF00', similarity: 0.25, smoothness: 0.08, spill: 0.5 }; else delete l.chroma; });
+      return;
+    }
+    if (el.dataset.tmeta && S.sel?.kind === 'track') {
+      const tr = trackById(S.sel.id);
+      mutate(() => { tr[el.dataset.tmeta] = readInput(el); });
+      return;
+    }
     if (el.dataset.prop && l) {
       mutate(() => {
         let v = readInput(el);
@@ -937,6 +1258,15 @@
       case 'del-audio': mutate(doc => { doc.audio = doc.audio.filter(a => a.id !== S.sel.id); S.sel = { kind: 'doc' }; }); break;
       case 'note-toggle': mutate(() => { const n = noteByN(S.sel.id); n.status = n.status === 'done' ? 'open' : 'done'; }); break;
       case 'note-del': mutate(doc => { doc.notes = doc.notes.filter(n => n.n !== S.sel.id); S.sel = { kind: 'doc' }; }); break;
+      case 'color-reset': if (l) mutate(() => { COLOR_FIELDS.forEach(([p]) => { if (l.props) delete l.props[p]; if (l.keys) delete l.keys[p]; }); }); break;
+      case 'lut-upload': $('lut-input').click(); break;
+      case 'make-proxy': if (l && l.src) startProxy(l.src); break;
+      case 'track-del': mutate(doc => {
+        const id = S.sel.id;
+        doc.tracks = (doc.tracks || []).filter(t => t.id !== id);
+        [...(doc.layers || []), ...(doc.audio || [])].forEach(x => { if (x.track === id) delete x.track; });
+        S.sel = { kind: 'doc' };
+      }); break;
       default: break;
     }
   });
@@ -970,30 +1300,69 @@
     $('ruler').innerHTML = ruler;
     $('ruler').style.width = width + 'px';
 
+    // Rows: video tracks (top track first), then layers on no track, then audio tracks and loose clips.
+    // A track row holds every bar on it; a layer's own row holds just its bar.
     const rows = [];
-    for (const l of [...(d.layers || [])].reverse()) {
-      const on = S.sel?.kind === 'layer' && S.sel.id === l.id;
-      const times = [...new Set(Object.values(l.keys || {}).flat().map(k => +k.t.toFixed(4)))];
-      rows.push(`<div class="st-tl-row ${on ? 'on' : ''}" data-row="${esc(l.id)}"><div class="st-tl-label" data-pick="${esc(l.id)}">${esc(l.name || l.id)}</div>
-        <div class="st-tl-track"><div class="st-bar" data-bar="${esc(l.id)}" style="left:${tx(l.start || 0)}px;width:${Math.max(4, tx((l.end ?? d.duration) - (l.start || 0)))}px">
-        <span class="edge l" data-edge="l"></span><span class="edge r" data-edge="r"></span></div>
-        ${on ? '' : times.map(t => `<span class="st-diamond" style="left:${tx(t)}px" data-sum="${esc(l.id)}" data-t="${t}"></span>`).join('')}</div></div>`);
-      if (on) {
-        for (const [prop, frames] of Object.entries(l.keys || {})) {
-          rows.push(`<div class="st-tl-row sub"><div class="st-tl-label">${esc(prop)}</div><div class="st-tl-track">
-            ${frames.map((k, i) => `<span class="st-diamond ${S.key && S.key.layer === l.id && S.key.prop === prop && S.key.index === i ? 'sel' : ''}" style="left:${tx(k.t)}px" data-kl="${esc(l.id)}" data-kp="${esc(prop)}" data-ki="${i}" title="${esc(prop)} = ${esc(typeof k.v === 'number' ? +k.v.toFixed(2) : k.v)} · ${esc(R.EASE_NAMES[k.ease] || k.ease)}"></span>`).join('')}
-          </div></div>`);
-        }
-      }
-    }
-    for (const a of d.audio || []) {
+    const selected = l => S.sel?.kind === 'layer' && S.sel.id === l.id;
+    const keyRows = l => Object.entries(l.keys || {}).map(([prop, frames]) => `<div class="st-tl-row sub"><div class="st-tl-label">${esc(prop)}</div><div class="st-tl-track">
+        ${frames.map((k, i) => `<span class="st-diamond ${S.key && S.key.layer === l.id && S.key.prop === prop && S.key.index === i ? 'sel' : ''}" style="left:${tx(k.t)}px" data-kl="${esc(l.id)}" data-kp="${esc(prop)}" data-ki="${i}" title="${esc(prop)} = ${esc(typeof k.v === 'number' ? +k.v.toFixed(2) : k.v)} · ${esc(R.EASE_NAMES[k.ease] || 'kurva sendiri')}"></span>`).join('')}
+      </div></div>`);
+    const summary = l => (selected(l) ? '' : [...new Set(Object.values(l.keys || {}).flat().map(k => +k.t.toFixed(4)))]
+      .map(t => `<span class="st-diamond" style="left:${tx(t)}px" data-sum="${esc(l.id)}" data-t="${t}"></span>`).join(''));
+    const transMark = (l, key, side) => {
+      const tr = l[key];
+      return tr && tr.type && tr.type !== 'none' ? `<span class="st-trmark ${side}" style="width:${Math.max(3, tx(tr.duration || 0))}px" title="${esc(R.TRANSITION_NAMES[tr.type] || tr.type)} ${tr.duration || 0} dtk"></span>` : '';
+    };
+    const layerBar = (l, named) => `<div class="st-bar ${selected(l) ? 'on' : ''}" data-bar="${esc(l.id)}" style="left:${tx(l.start || 0)}px;width:${Math.max(4, tx((l.end ?? d.duration) - (l.start || 0)))}px">
+        ${transMark(l, 'transIn', 'in')}${transMark(l, 'transOut', 'out')}${named ? `<span class="st-bar-name">${esc(l.name || l.id)}</span>` : ''}
+        <span class="edge l" data-edge="l"></span><span class="edge r" data-edge="r"></span></div>`;
+    const audioBar = (a, named) => {
       const buffer = S.buffers[a.src];
       const length = a.duration ?? (buffer ? buffer.duration - (a.offset || 0) : d.duration - (a.start || 0));
+      return `<div class="st-bar audio" data-abar="${esc(a.id)}" style="left:${tx(a.start || 0)}px;width:${Math.max(4, tx(Math.max(0.05, length)))}px">
+        <canvas data-wave="${esc(a.id)}"></canvas>${named ? `<span class="st-bar-name">♪ ${esc(a.name || a.src)}</span>` : ''}<span class="edge r" data-edge="r"></span></div>
+        ${Object.values(a.keys || {}).flat().map(k => `<span class="st-diamond" style="left:${tx(k.t)}px"></span>`).join('')}`;
+    };
+    const ICON = {
+      eye: '<svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+      eyeOff: '<svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.6 9.6 0 0 0 4.4-1"/></svg>',
+      lock: '<svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+      unlock: '<svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>',
+      sound: '<svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16 9a4 4 0 0 1 0 6"/></svg>',
+      mute: '<svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="m17 9 5 6M22 9l-5 6"/></svg>',
+    };
+    const trackLabel = tr => {
+      const audio = tr.kind === 'audio', name = esc(tr.name || tr.id);
+      const flag = audio ? `<button type="button" class="st-tbtn" data-tflag="muted" data-tid="${esc(tr.id)}" aria-pressed="${!!tr.muted}" aria-label="${tr.muted ? 'Bunyikan' : 'Bisukan'} ${name}" title="${tr.muted ? 'Bunyikan' : 'Bisukan'}">${tr.muted ? ICON.mute : ICON.sound}</button>`
+        : `<button type="button" class="st-tbtn" data-tflag="hidden" data-tid="${esc(tr.id)}" aria-pressed="${!!tr.hidden}" aria-label="${tr.hidden ? 'Tampilkan' : 'Sembunyikan'} ${name}" title="${tr.hidden ? 'Tampilkan' : 'Sembunyikan'}">${tr.hidden ? ICON.eyeOff : ICON.eye}</button>`;
+      return `<div class="st-tl-label st-track-label" data-tpick="${esc(tr.id)}"><span class="name">${name}</span>${flag}<button type="button" class="st-tbtn" data-tflag="locked" data-tid="${esc(tr.id)}" aria-pressed="${!!tr.locked}" aria-label="${tr.locked ? 'Buka kunci' : 'Kunci'} ${name}" title="${tr.locked ? 'Buka kunci' : 'Kunci'}">${tr.locked ? ICON.lock : ICON.unlock}</button></div>`;
+    };
+    const tracks = d.tracks || [];
+    for (const tr of [...tracks].filter(t => t.kind !== 'audio').reverse()) {
+      const items = (d.layers || []).filter(l => l.track === tr.id);
+      const on = S.sel?.kind === 'track' && S.sel.id === tr.id;
+      rows.push(`<div class="st-tl-row track ${on ? 'on' : ''} ${tr.hidden ? 'is-off' : ''} ${tr.locked ? 'is-locked' : ''}">${trackLabel(tr)}
+        <div class="st-tl-track">${items.map(l => layerBar(l, true) + summary(l)).join('')}</div></div>`);
+      const pick = items.find(selected);
+      if (pick) rows.push(...keyRows(pick));
+    }
+    for (const l of [...(d.layers || [])].reverse()) {
+      if (l.track && trackById(l.track)) continue;
+      const on = selected(l);
+      rows.push(`<div class="st-tl-row ${on ? 'on' : ''}" data-row="${esc(l.id)}"><div class="st-tl-label" data-pick="${esc(l.id)}">${esc(l.name || l.id)}</div>
+        <div class="st-tl-track">${layerBar(l, false)}${summary(l)}</div></div>`);
+      if (on) rows.push(...keyRows(l));
+    }
+    for (const tr of tracks.filter(t => t.kind === 'audio')) {
+      const on = S.sel?.kind === 'track' && S.sel.id === tr.id;
+      rows.push(`<div class="st-tl-row track ${on ? 'on' : ''} ${tr.muted ? 'is-off' : ''} ${tr.locked ? 'is-locked' : ''}">${trackLabel(tr)}
+        <div class="st-tl-track">${(d.audio || []).filter(a => a.track === tr.id).map(a => audioBar(a, true)).join('')}</div></div>`);
+    }
+    for (const a of d.audio || []) {
+      if (a.track && trackById(a.track)) continue;
       const on = S.sel?.kind === 'audio' && S.sel.id === a.id;
       rows.push(`<div class="st-tl-row ${on ? 'on' : ''}"><div class="st-tl-label" data-apick="${esc(a.id)}">♪ ${esc(a.name || a.src)}</div>
-        <div class="st-tl-track"><div class="st-bar audio" data-abar="${esc(a.id)}" style="left:${tx(a.start || 0)}px;width:${Math.max(4, tx(Math.max(0.05, length)))}px">
-        <canvas data-wave="${esc(a.id)}"></canvas><span class="edge r" data-edge="r"></span></div>
-        ${Object.values(a.keys || {}).flat().map(k => `<span class="st-diamond" style="left:${tx(k.t)}px"></span>`).join('')}</div></div>`);
+        <div class="st-tl-track">${audioBar(a, false)}</div></div>`);
     }
     $('tl-rows').innerHTML = rows.join('') || '<p class="st-empty">Tambahkan lapisan atau musik.</p>';
     $('tl-rows').querySelectorAll('canvas[data-wave]').forEach(drawWave);
@@ -1025,6 +1394,24 @@
     if (S.sel?.kind === 'layer' || S.sel?.kind === 'audio') renderInspector();
   }
 
+  const clipLength = a => a.duration ?? (S.buffers[a.src] ? S.buffers[a.src].duration - (a.offset || 0) : S.doc.duration - (a.start || 0));
+  /** Times a dragged bar snaps to: the playhead, the video's ends, and the edges of bars on its track. */
+  function snapTargets(item, audio) {
+    const out = [S.t, 0, S.doc.duration];
+    if (item.track) {
+      for (const o of audio ? S.doc.audio || [] : S.doc.layers || []) {
+        if (o === item || o.track !== item.track) continue;
+        out.push(o.start || 0, audio ? (o.start || 0) + clipLength(o) : o.end ?? S.doc.duration);
+      }
+    }
+    return out;
+  }
+  function snapTo(t, targets) {
+    let best = t, gap = 8 / S.zoom;
+    for (const x of targets) { const dd = Math.abs(x - t); if (dd < gap) { gap = dd; best = x; } }
+    return best;
+  }
+
   // Click on the ruler or an empty track: move the playhead. Drag on a bar, an edge or a diamond: edit time.
   let tdrag = null;
   $('tl-inner').addEventListener('pointerdown', e => {
@@ -1034,6 +1421,10 @@
     const target = e.target;
     const note = target.closest('.note-mark');
     if (note) { const n = noteByN(+note.dataset.note); S.sel = { kind: 'note', id: n.n }; seek(n.t); renderAll(); return; }
+    const flag = target.closest('[data-tflag]');
+    if (flag) { const tr = trackById(flag.dataset.tid); if (tr) mutate(() => { tr[flag.dataset.tflag] = !tr[flag.dataset.tflag]; }); return; }
+    const tpick = target.closest('[data-tpick]');
+    if (tpick) { S.sel = { kind: 'track', id: tpick.dataset.tpick }; S.key = null; renderAll(); return; }
     const pick = target.closest('[data-pick]');
     if (pick) { S.sel = { kind: 'layer', id: pick.dataset.pick }; S.key = null; renderAll(); return; }
     const apick = target.closest('[data-apick]');
@@ -1054,11 +1445,15 @@
       const edge = target.closest('[data-edge]');
       const item = bar.dataset.bar ? layerById(bar.dataset.bar) : clipById(bar.dataset.abar);
       S.sel = bar.dataset.bar ? { kind: 'layer', id: item.id } : { kind: 'audio', id: item.id };
+      S.key = null;
+      const tr = item.track && trackById(item.track);
+      if (tr && tr.locked) { setSave('Track ini dikunci', 'warn'); renderAll(); tdrag = null; return; }   // locked: select, never move
       checkpoint();
-      tdrag = { kind: edge ? `edge-${edge.dataset.edge}` : 'bar', audio: !!bar.dataset.abar, item, x0: xAt(e),
-        start: item.start || 0, end: item.end ?? S.doc.duration, duration: item.duration,
+      const audio = !!bar.dataset.abar;
+      tdrag = { kind: edge ? `edge-${edge.dataset.edge}` : 'bar', audio, item, x0: xAt(e),
+        start: item.start || 0, end: audio ? (item.start || 0) + clipLength(item) : item.end ?? S.doc.duration, duration: item.duration,
         keys: JSON.parse(JSON.stringify(item.keys || {})) };
-      renderLists(); renderInspector();
+      renderAll();
       return;
     }
     if (e.shiftKey && target.closest('#ruler')) {
@@ -1085,7 +1480,15 @@
       S.key.index = frames.indexOf(tdrag.frame);
       S.t = tdrag.frame.t;
     } else if (tdrag.kind === 'bar') {
-      const shift = snap(Math.max(-tdrag.start, dt));
+      let shift = snap(Math.max(-tdrag.start, dt));
+      // Snap the bar's start or end to a neighbour's edge, the playhead, or the video's ends (Alt: no snap).
+      if (!e.altKey) {
+        const targets = snapTargets(tdrag.item, tdrag.audio);
+        const a = snapTo(tdrag.start + shift, targets), b = snapTo(tdrag.end + shift, targets);
+        if (a !== tdrag.start + shift) shift = a - tdrag.start;
+        else if (b !== tdrag.end + shift) shift = b - tdrag.end;
+        shift = Math.max(-tdrag.start, shift);
+      }
       tdrag.item.start = +(tdrag.start + shift).toFixed(4);
       if (!tdrag.audio) {
         tdrag.item.end = +Math.min(S.doc.duration, tdrag.end + shift).toFixed(4);
@@ -1093,14 +1496,18 @@
         for (const [prop, frames] of Object.entries(tdrag.keys)) tdrag.item.keys[prop] = frames.map(k => ({ ...k, t: +Math.max(0, k.t + shift).toFixed(4) }));
       }
     } else if (tdrag.kind === 'edge-l') {
-      tdrag.item.start = Math.min(snap(tdrag.start + dt), (tdrag.item.end ?? S.doc.duration) - 1 / S.doc.fps);
+      const t = e.altKey ? snap(tdrag.start + dt) : snapTo(snap(tdrag.start + dt), snapTargets(tdrag.item, false));
+      tdrag.item.start = Math.max(0, Math.min(t, (tdrag.item.end ?? S.doc.duration) - 1 / S.doc.fps));
     } else if (tdrag.kind === 'edge-r') {
       if (tdrag.audio) {
         const buffer = S.buffers[tdrag.item.src];
         const full = buffer ? buffer.duration - (tdrag.item.offset || 0) : S.doc.duration;
         const was = tdrag.duration ?? full;
         tdrag.item.duration = Math.max(0.1, Math.min(full, +(was + dt).toFixed(3)));
-      } else tdrag.item.end = Math.max(snap(tdrag.end + dt), tdrag.start + 1 / S.doc.fps);
+      } else {
+        const t = e.altKey ? snap(tdrag.end + dt) : snapTo(snap(tdrag.end + dt), snapTargets(tdrag.item, false));
+        tdrag.item.end = Math.max(t, tdrag.start + 1 / S.doc.fps);
+      }
     }
     S.dirty = true; scheduleSave(); setSave('Belum disimpan…');
     renderView(); renderTimeline(); renderInspector();
@@ -1120,6 +1527,22 @@
     renderTimeline();
   }, { passive: false });
   $('zoom-in').onclick = () => { S.zoom = Math.min(600, S.zoom * 1.4); renderTimeline(); };
+  $('add-track').onclick = () => {
+    if (!S.doc) return;
+    mutate(() => {
+      const tr = newTrack('video');
+      const l = selLayer();
+      if (l && !l.track) l.track = tr.id;   // the selected layer moves onto the new track
+      S.sel = l ? S.sel : { kind: 'track', id: tr.id };
+    });
+  };
+  $('use-proxy').checked = S.useProxy;
+  $('use-proxy').onchange = () => {
+    S.useProxy = $('use-proxy').checked;
+    localStorage.setItem('studio-proxy', S.useProxy ? 'on' : 'off');
+    refreshVideos();
+    renderInspector();
+  };
   $('zoom-out').onclick = () => { S.zoom = Math.max(10, S.zoom / 1.4); renderTimeline(); };
 
   /* ── playback ──────────────────────────────────── */
@@ -1143,6 +1566,7 @@
     S.playing = false; $('play').classList.remove('is-playing'); $('play').setAttribute('aria-label', 'Putar');
     if (S.stopAudio) { S.stopAudio(); S.stopAudio = null; }
     S.t = snap(S.t); renderView(); renderInspector();
+    settlePending();
   }
   function tick() {
     if (!S.playing) return;
@@ -1325,32 +1749,46 @@
     followRender(job.id);
   }
 
+  /* Render progress comes on the live stream; without it (or for the final link) the job is asked directly. */
   function followRender(id) {
     S.renderJob = id;
-    const bar = $('export-progress');
-    bar.hidden = false;
+    $('export-progress').hidden = false;
     $('export-start').disabled = true;
     $('export-cancel').hidden = false;
     clearInterval(S.renderTimer);
     const tick = async () => {
-      let job;
-      try { job = await api(`${base()}/render/${id}`); } catch (e) { $('export-status').textContent = e.message; return; }
-      bar.value = job.progress || 0;
-      $('export-status').textContent = job.message || 'Menunggu…';
-      if (['done', 'error', 'cancelled'].includes(job.state)) {
-        clearInterval(S.renderTimer);
-        S.renderJob = null;
-        $('export-cancel').hidden = true;
-        $('export-start').disabled = false;
-        if (job.state === 'done') {
-          $('export-status').innerHTML = `Selesai dalam ${job.seconds} dtk (${esc(job.encoder)}): <a href="${esc(job.url)}" target="_blank" rel="noopener">${esc(job.file.split('/').pop())}</a>. File ini juga bisa dibagikan di chat.`;
-        } else {
-          $('export-status').textContent = job.state === 'cancelled' ? 'Render dibatalkan.' : `Gagal: ${job.error}`;
-        }
-      }
+      if (S.live && S.renderJob !== id) { clearInterval(S.renderTimer); return; }
+      if (S.live) return;   // the stream is carrying it
+      try { showRender(await api(`${base()}/render/${id}`)); } catch (e) { $('export-status').textContent = e.message; }
     };
     tick();
     S.renderTimer = setInterval(tick, 1000);
+    const known = S.renders.find(j => j.id === id);
+    if (known) showRender(known);
+  }
+
+  function onRenders(jobs) {
+    S.renders = jobs || [];
+    const job = S.renderJob && S.renders.find(j => j.id === S.renderJob);
+    if (job) showRender(job);
+  }
+
+  async function showRender(job) {
+    if (!job || job.id !== S.renderJob) return;
+    $('export-progress').value = job.progress || 0;
+    $('export-status').textContent = job.message || 'Menunggu…';
+    if (!['done', 'error', 'cancelled'].includes(job.state)) return;
+    clearInterval(S.renderTimer);
+    S.renderJob = null;
+    $('export-cancel').hidden = true;
+    $('export-start').disabled = false;
+    if (job.state === 'done') {
+      let full = job;
+      if (!full.url) { try { full = await api(`${base()}/render/${job.id}`); } catch (_) { /* the file is in the chat folder anyway */ } }
+      $('export-status').innerHTML = `Selesai dalam ${full.seconds} dtk (${esc(full.encoder)}): ${full.url ? `<a href="${esc(full.url)}" target="_blank" rel="noopener">${esc(full.file.split('/').pop())}</a>` : esc(full.file)}. File ini juga bisa dibagikan di chat.`;
+    } else {
+      $('export-status').textContent = job.state === 'cancelled' ? 'Render dibatalkan.' : `Gagal: ${job.error}`;
+    }
   }
 
   const even = n => Math.max(2, Math.round(n / 2) * 2);
@@ -1380,6 +1818,13 @@
   async function exportVideo(scale, quality) {
     if (S.dirty) await save();
     pause();
+    // A browser export draws from the clips themselves, never from their small proxies.
+    const hadProxy = S.useProxy;
+    if (hadProxy) { S.useProxy = false; await refreshVideos(); }
+    try { await exportInBrowser(scale, quality); } finally { if (hadProxy) { S.useProxy = true; refreshVideos(); } }
+  }
+
+  async function exportInBrowser(scale, quality) {
     const doc = JSON.parse(JSON.stringify(S.doc));
     const status = t => { $('export-status').textContent = t; };
     const bar = $('export-progress');
@@ -1397,7 +1842,7 @@
     const draw = async i => {
       if (hasVideo) await R.seekVideos(doc, i / doc.fps, S.videos);
       ctx.setTransform(W / doc.width, 0, 0, H / doc.height, 0, 0);
-      R.drawFrame(ctx, doc, i / doc.fps, { images: S.images, videos: S.videos });
+      R.drawFrame(ctx, doc, i / doc.fps, { images: S.images, videos: S.videos, luts: S.luts });
     };
     let video = null, format = 'h264';
     const config = await pickEncoder(W, H, doc.fps, Math.round(W * H * doc.fps * quality));

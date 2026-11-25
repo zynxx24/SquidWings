@@ -22,6 +22,17 @@ _MAX_LAYER_JSON = 4_000
 _MAX_BLOCK = 9_000
 
 
+def _effects(layer: dict[str, Any]) -> str:
+    """Transitions, colour, key, LUT, mask and track of a layer, in a few words."""
+    found = [f"{side} {layer[key]['type']}" for side, key in (("masuk", "transIn"), ("keluar", "transOut"))
+             if isinstance(layer.get(key), dict)]
+    found += [name for name in studio_doc.COLOR_ADJUST if (layer.get("props") or {}).get(name)]
+    found += [name for name in ("chroma", "lut", "mask") if layer.get(name)]
+    if layer.get("track"):
+        found.append(f"track {layer['track']}")
+    return f" efek: {', '.join(found)}" if found else ""
+
+
 def clean(raw: Any) -> dict[str, Any] | None:
     """The Studio fields of a chat message, checked. None when there are none."""
     if not isinstance(raw, dict) or not studio_doc.NAME_RE.match(str(raw.get("project") or "")):
@@ -85,7 +96,7 @@ def prompt_block(workspace: str | Path) -> str:
         lines.append(
             f"- {layer.get('id')} {layer.get('type')}{label} {layer.get('start', 0)}-{layer.get('end', '')}s"
             f"{' (tampil sekarang)' if visible else ''} x{float(x):.0f} y{float(y):.0f}"
-            f" anim: {', '.join(sorted((layer.get('keys') or {}).keys())) or '-'}")
+            f" anim: {', '.join(sorted((layer.get('keys') or {}).keys())) or '-'}{_effects(layer)}")
     selected = next((layer for layer in doc.get("layers") or [] if layer.get("id") == ctx.get("layer")), None)
     if selected:
         body = json.dumps(selected, ensure_ascii=False)
