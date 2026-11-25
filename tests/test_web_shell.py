@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from config.edition import trading_enabled
-from model.router.groups import group_of, grouped
-from security.headers import (
+from brain.config.edition import trading_enabled
+from brain.model.router.groups import group_of, grouped
+from brain.security.headers import (
     DEFAULT_CSP,
     LOOPBACK_FRAMES,
     csp_with,
@@ -19,6 +19,7 @@ from security.headers import (
 )
 
 STATIC = Path(__file__).resolve().parent.parent / "web" / "static"
+TRADING_PAGE = STATIC.parents[1] / "addons" / "trading" / "web" / "static" / "index.html"
 
 
 # ---------------------------------------------------------------- grouping
@@ -50,7 +51,7 @@ def test_grouped_sorts_groups_and_ids():
 
 def test_family_matches_the_router_rest_scope():
     # The picker group and the quota rest of the rotator must name the same upstream.
-    from model.router.rotation import family_of
+    from brain.model.router.rotation import family_of
 
     assert group_of("kg/x", "default", NAMES, PREFIXES).family == family_of("kg/x")
 
@@ -102,7 +103,7 @@ def test_embedded_pages(client, path, script):
 
 
 def test_models_carry_their_group(client, monkeypatch):
-    from model.registry.model_info import ModelInfo
+    from brain.model.registry.model_info import ModelInfo
     from web import server
 
     orch = server.get_orchestrator()
@@ -124,9 +125,9 @@ def test_models_carry_their_group(client, monkeypatch):
 # ---------------------------------------------------------------- static wiring
 
 def test_pages_load_the_shared_loader_before_their_scripts():
-    pages = ("index.html", "router/index.html") + (("trading/index.html",) if trading_enabled() else ())
+    pages = [STATIC / "index.html", STATIC / "router/index.html"] + ([TRADING_PAGE] if trading_enabled() else [])
     for page in pages:
-        html = (STATIC / page).read_text(encoding="utf-8")
+        html = page.read_text(encoding="utf-8")
         scripts = re.findall(r'<script src="([^"]+)"', html)
         assert scripts[0] == "/static/js/page.js", page
         assert "/static/css/page.css" in html
@@ -135,7 +136,7 @@ def test_pages_load_the_shared_loader_before_their_scripts():
 @pytest.mark.enterprise
 def test_standalone_controls_hide_inside_the_chat_page():
     router = (STATIC / "router/index.html").read_text(encoding="utf-8")
-    trading = (STATIC / "trading/index.html").read_text(encoding="utf-8")
+    trading = TRADING_PAGE.read_text(encoding="utf-8")
     assert 'data-sq-view="chat" data-sq-standalone' in router
     assert 'id="themebtn"' in trading and 'data-sq-standalone>Tema' in trading
 

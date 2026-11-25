@@ -8,9 +8,9 @@ import re
 import pytest
 
 from brain.classifier.intent_classifier import IntentClassifier
-from config.constants import TaskType
-from tool.execute.execute_toolbox import CATALOG, _themes, style_tools
-from utils import style_history
+from brain.config.constants import TaskType
+from brain.utils import style_history
+from tools.toolbox import CATALOG, _themes, style_tools
 
 
 @pytest.fixture(autouse=True)
@@ -37,9 +37,9 @@ def test_real_picture_requests_stay_image_requests(text):
 
 
 def test_an_image_request_gets_tools_to_draw_save_and_share():
-    from agent.harness.tiers import _SCAFFOLDS as SCAFFOLDS
-    from agent.harness.tiers import Tier
-    from agent.harness.tool_select import select_tools
+    from brain.harness.tiers import _SCAFFOLDS as SCAFFOLDS
+    from brain.harness.tiers import Tier
+    from brain.harness.tool_select import select_tools
 
     names = {"style_pick", "file_write", "execute_command", "share_file", "read_file", "calc"}
     schemas = [{"type": "function", "function": {"name": n, "description": n, "parameters": {"type": "object", "properties": {}}}}

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import re
 
-from config.constants import TaskType
+from brain.config.constants import TaskType
 
 # Pattern → (TaskType, confidence)
 # Ordered by specificity (most specific first)

@@ -13,10 +13,10 @@ from urllib.parse import parse_qs, unquote
 import httpx
 import pytest
 
-from utils import datastore
-from utils.datastore import access, registry
-from utils.datastore.base import DataError, coerce, holds, normalize_where
-from utils.datastore.files import (
+from brain.utils import datastore
+from brain.utils.datastore import access, registry
+from brain.utils.datastore.base import DataError, coerce, holds, normalize_where
+from brain.utils.datastore.files import (
     CsvFile,
     JsonFile,
     JsonLinesFile,
@@ -25,15 +25,15 @@ from utils.datastore.files import (
     create_file,
     open_file,
 )
-from utils.datastore.mongo import MongoBackend
-from utils.datastore.sheets import (
+from brain.utils.datastore.mongo import MongoBackend
+from brain.utils.datastore.sheets import (
     SheetsBackend,
     column_letter,
     parse_service_account,
     parse_spreadsheet,
     sign_jwt,
 )
-from utils.datastore.sql import MysqlDialect, PostgresDialect, SqlBackend, sqlite_backend
+from brain.utils.datastore.sql import MysqlDialect, PostgresDialect, SqlBackend, sqlite_backend
 
 
 @pytest.fixture(autouse=True)
@@ -315,7 +315,7 @@ def test_postgres_and_mysql_statements() -> None:
 
 
 def test_a_driver_that_is_not_installed_says_how_to_install_it(monkeypatch: pytest.MonkeyPatch) -> None:
-    from utils.datastore import sql
+    from brain.utils.datastore import sql
 
     monkeypatch.setattr(sql.importlib.util, "find_spec", lambda name: None)
     with pytest.raises(DataError, match=r"pip install .psycopg\[binary\]"):
@@ -535,7 +535,7 @@ class FakeGoogle:
 
 @pytest.fixture
 def google() -> tuple[SheetsBackend, FakeGoogle]:
-    from utils.datastore import sheets
+    from brain.utils.datastore import sheets
 
     sheets._tokens.clear()
     fake = FakeGoogle()

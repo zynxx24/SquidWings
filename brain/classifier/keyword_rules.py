@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 
-from config.constants import TaskType
+from brain.config.constants import TaskType
 
 # Keyword → TaskType mapping
 # Format: (keyword_or_phrase, weight)

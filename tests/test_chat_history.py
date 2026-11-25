@@ -114,8 +114,8 @@ def test_web_and_cli_stores_see_each_others_chats(tmp_path: Path):
 def test_a_failed_turn_stays_in_the_chat_but_never_reaches_the_model(tmp_path: Path):
     from types import SimpleNamespace
 
-    from agent.orchestrator import AgentResponse, Orchestrator
-    from config.constants import ResponseStatus
+    from brain.agent.orchestrator import AgentResponse, Orchestrator
+    from brain.config.constants import ResponseStatus
 
     store = ConversationStore(storage_dir=tmp_path)
     store.add_message("sess-x", "user", "halo")

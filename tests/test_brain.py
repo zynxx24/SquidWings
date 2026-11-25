@@ -11,9 +11,9 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from trading import news as market_news
-from trading.quant import analyst, brain, memory, neural, papersim
-from trading.quant.memory import PLANS, SL, TIMEOUT, TP
+from addons.trading import news as market_news
+from addons.trading.quant import analyst, brain, memory, neural, papersim
+from addons.trading.quant.memory import PLANS, SL, TIMEOUT, TP
 
 os.environ.setdefault("TRADING_BRAIN_SIZE", "kecil")   # tests train the small networks; the machine's size is for real use
 
@@ -295,7 +295,7 @@ def test_the_brain_needs_the_intraday_style(tmp_path):
 
 # ── the API ─────────────────────────────────────────────────────────────────
 def test_brain_and_analyst_api(trained, tmp_path, monkeypatch):
-    from web import quant_api
+    from addons.trading.web import quant_api
     from web.server import app
 
     b, base = trained

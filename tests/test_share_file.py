@@ -8,13 +8,13 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from agent.harness import tool_select
-from agent.harness.tiers import _SCAFFOLDS, Tier
-from config.constants import TaskType
-from tool.execute.execute_command_prompt import run_command_tool
-from tool.execute.execute_share_file import share_tool
-from utils import session_settings, shared_files
-from utils.workspace_context import set_active_session, set_active_workspace
+from brain.config.constants import TaskType
+from brain.harness import tool_select
+from brain.harness.tiers import _SCAFFOLDS, Tier
+from brain.utils import session_settings, shared_files
+from brain.utils.workspace_context import set_active_session, set_active_workspace
+from tools.command_prompt import run_command_tool
+from tools.share_file import share_tool
 from web import server
 
 
@@ -108,10 +108,10 @@ def test_a_tool_that_makes_files_brings_share_file(session: Path) -> None:
 
 
 async def test_the_loop_puts_shared_files_under_the_answer(session: Path) -> None:
-    from agent.agent_loop import AgentLoop
-    from model.connection.response_handler import ParsedResponse
-    from tool.registry.tool_registry import ToolRegistry
-    from tool.registry.tool_schema import ToolSchema
+    from brain.agent.agent_loop import AgentLoop
+    from brain.model.connection.response_handler import ParsedResponse
+    from tools.registry.tool_registry import ToolRegistry
+    from tools.registry.tool_schema import ToolSchema
 
     tools = ToolRegistry()
     tools.reset()
@@ -159,7 +159,7 @@ def test_a_render_nobody_shared_is_found_newest_first(tmp_path):
     import os
     import time
 
-    from utils import shared_files
+    from brain.utils import shared_files
 
     start = time.time()
     real = b"\x00\x00\x00\x18ftypisom" + b"\x00" * 4096

@@ -11,9 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from utils.helpers import is_valid_session_id
-from utils.logger import get_logger
-from utils.session_names import TAGS, label, quick_title, split_label
+from brain.utils.helpers import is_valid_session_id
+from brain.utils.logger import get_logger
+from brain.utils.session_names import TAGS, label, quick_title, split_label
 
 logger = get_logger(__name__)
 

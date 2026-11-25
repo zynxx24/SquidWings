@@ -9,9 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.harness import RunLimits
-from agent.harness.tiers import scaffold_for
-from agent.team_orchestrator import (
+from brain.agent.team_orchestrator import (
     _OLD_VIDEO_INSTRUCTIONS,
     REPORTS_DIR,
     VIDEO_INSTRUCTIONS,
@@ -20,9 +18,11 @@ from agent.team_orchestrator import (
     TeamStore,
     team_templates,
 )
+from brain.harness import RunLimits
+from brain.harness.tiers import scaffold_for
 from tests.test_teams_flow import finish, make, member
 
-KIT = Path(__file__).resolve().parent.parent / "brain" / "skills" / "animate"
+KIT = Path(__file__).resolve().parent.parent / "skills" / "builtin" / "animate"
 
 
 # ---------------------------------------------------------------- limits
@@ -93,7 +93,7 @@ def test_old_template_teams_get_the_new_steps_and_edited_ones_do_not(tmp_path, v
 # ---------------------------------------------------------------- reports and the reason
 
 async def test_reports_are_saved_for_later_members(tmp_path):
-    from agent.session_stack import session_workspace
+    from brain.agent.session_stack import session_workspace
 
     manager, fake = make(tmp_path, {"-script-": ["BRIEF: api di gambut"]})
     team = manager.create_team("t", "", [member("script"), member("animator", "script"), member("lead")], "lead")
@@ -117,7 +117,7 @@ async def test_a_video_run_without_video_says_why_per_member(tmp_path, monkeypat
 
 
 async def test_a_leftover_piece_is_rendered_and_shared(tmp_path, monkeypatch):
-    from utils import shared_files
+    from brain.utils import shared_files
 
     monkeypatch.setattr(TeamOrchestrator, "_render_leftover",
                         staticmethod(lambda workspace, run_id: ("pieces/x/renders/share.mp4", "")))
@@ -125,7 +125,7 @@ async def test_a_leftover_piece_is_rendered_and_shared(tmp_path, monkeypatch):
     team = manager.create_team("t", "", [member("a"), member("lead")], "lead", mode="video")
     run = await finish(manager, team.id)
     assert run.status == "completed", run.error
-    from agent.session_stack import session_workspace
+    from brain.agent.session_stack import session_workspace
 
     assert "pieces/x/renders/share.mp4" in shared_files.shared(session_workspace(run.id))
 
@@ -173,7 +173,7 @@ def test_a_copied_demo_or_template_is_never_rendered(tmp_path):
 
 
 def test_a_full_disk_is_named_before_rendering(tmp_path, monkeypatch):
-    import agent.team_orchestrator as team_module
+    import brain.agent.team_orchestrator as team_module
 
     kit = _installed_kit(tmp_path)
     piece = _quick_piece(tmp_path, kit, seconds=24)
@@ -184,7 +184,7 @@ def test_a_full_disk_is_named_before_rendering(tmp_path, monkeypatch):
 
 
 async def test_a_video_run_stops_at_once_on_a_full_disk(tmp_path, monkeypatch):
-    import agent.team_orchestrator as team_module
+    import brain.agent.team_orchestrator as team_module
 
     monkeypatch.setattr(team_module, "free_bytes", lambda path: 300 * 2**20)
     manager, fake = make(tmp_path)
@@ -208,8 +208,8 @@ def test_quickstart_names_only_real_kit_functions():
 @pytest.mark.skipif(not shutil.which("node") or not shutil.which("ffmpeg"), reason="needs node and ffmpeg")
 def test_leftover_render_really_renders_a_piece(tmp_path, monkeypatch):
     """The real kit, the real sandbox: the quick template, filled in, becomes share.mp4 and leaves no frames."""
-    import agent.team_orchestrator as team_module
-    from security import sandbox
+    import brain.agent.team_orchestrator as team_module
+    from brain.security import sandbox
 
     monkeypatch.setattr(team_module, "free_bytes", lambda path: shutil.disk_usage(path).free)   # the real disk
     try:

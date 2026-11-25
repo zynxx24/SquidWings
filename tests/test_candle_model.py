@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 import torch
 
-from trading.quant import candle_lm, candle_view, papersim
-from trading.quant.papersim import CANDLE, PaperSim
+from addons.trading.quant import candle_lm, candle_view, papersim
+from addons.trading.quant.papersim import CANDLE, PaperSim
 
 
 class Clock:
@@ -167,7 +167,7 @@ def test_predict_works_on_bars_from_any_source():
 def test_lab_settings_are_checked_and_round_trip(tmp_path):
     import pytest
 
-    from trading.quant import candle_lm
+    from addons.trading.quant import candle_lm
 
     clean = candle_lm.clean_settings({"lr": "0.002", "batch": 32, "compile": None, "hours": 0, "d_model": 256, "heads": 8}, "base")
     assert clean == {"lr": 0.002, "batch": 32, "compile": None, "hours": 0.0, "d_model": 256, "heads": 8}
@@ -186,7 +186,7 @@ def test_lab_settings_are_checked_and_round_trip(tmp_path):
 def test_lab_control_is_taken_once(tmp_path):
     import pytest
 
-    from trading.quant import candle_lm
+    from addons.trading.quant import candle_lm
 
     candle_lm.send_control(tmp_path, "reset_lr")
     assert candle_lm._take_control(tmp_path) == "reset_lr"
@@ -199,7 +199,7 @@ def test_live_settings_reach_the_running_model():
     from torch import nn
     from torch.optim.swa_utils import AveragedModel
 
-    from trading.quant import candle_lm
+    from addons.trading.quant import candle_lm
 
     cfg = candle_lm.make_config("fast")
     stats = {"median": [0.0] * (cfg.horizon * 3), "scale": [1.0] * (cfg.horizon * 3)}
@@ -216,7 +216,7 @@ def test_live_settings_reach_the_running_model():
 def test_lab_status_and_history_read_a_run(tmp_path, monkeypatch):
     import json
 
-    from trading.quant import candle_lm, candle_view
+    from addons.trading.quant import candle_lm, candle_view
 
     monkeypatch.setattr(candle_lm, "RUNS", tmp_path)
     monkeypatch.setattr(candle_view, "trainer_runs", lambda: [])
@@ -242,7 +242,7 @@ def test_a_short_run_takes_saved_settings(tmp_path, monkeypatch):
 
     import numpy as np
 
-    from trading.quant import candle_lm
+    from addons.trading.quant import candle_lm
 
     rng = np.random.default_rng(1)
     n = 3000

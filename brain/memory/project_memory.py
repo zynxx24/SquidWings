@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from brain.classifier.continuation import continuation_hint
-from utils.logger import get_logger
+from brain.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from model.router import pricing
-from model.router.pricing import Price, PriceBook, builtin, canonical, from_listing
-from model.router.usage import UsageLog
+from brain.model.router import pricing
+from brain.model.router.pricing import Price, PriceBook, builtin, canonical, from_listing
+from brain.model.router.usage import UsageLog
 
 
 def test_model_ids_are_read_the_way_resellers_write_them():
@@ -80,7 +80,7 @@ def test_summary_counts_dollars_and_lists_models_without_a_price(tmp_path):
 
 
 def test_router_api_prices_and_usage(monkeypatch, tmp_path):
-    from model.router import usage as usage_log
+    from brain.model.router import usage as usage_log
     from web.server import app
 
     monkeypatch.setattr(pricing, "_book", PriceBook(tmp_path / "prices.json"))

@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from tool.execute.execute_toolbox import CATALOG
-from tool.execute.execute_toolbox import media_tools as media
-from utils import toolkit, whisper_stt
+from brain.utils import toolkit, whisper_stt
+from tools.toolbox import CATALOG
+from tools.toolbox import media_tools as media
 
 
 def call(tool: str, **kwargs: Any) -> Any:

@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-import pytest
-
 from dataclasses import replace
 
-from agent.harness.tiers import scaffold_for
+import pytest
+
+from brain.harness.tiers import scaffold_for
 
 
 def _capped(model: str):
     """The priority-ordered list a run with a tool cap gets (tiers themselves no longer cap)."""
     return replace(scaffold_for(model), max_tools=16)
-from agent.harness.tool_select import select_tools
 from brain.classifier.intent_classifier import IntentClassifier
-from config.constants import TaskType
+from brain.config.constants import TaskType
+from brain.harness.tool_select import select_tools
 from tests.routing_eval import INTENT_FLOOR, check_intent, check_routing, intent_accuracy, load
-from tool.execute import execute_toolbox
-from tool.register_tools import register_all_tools
+from tools import toolbox
+from tools.register_tools import register_all_tools
 
 
 def _params(cases: list[dict]) -> list:
@@ -67,7 +67,7 @@ def test_hidden_toolbox_never_rides_along(text: str) -> None:
     task = IntentClassifier().classify(text).task_type
     offered = {s["function"]["name"] for s in select_tools(register_all_tools().get_all_schemas(), task, text, _capped("x-flash"))}
     # The design tools come with the built-in aislop gate on purpose.
-    assert not offered & (execute_toolbox.deferred_names() - {"style_pick", "contrast_check"}), offered & execute_toolbox.deferred_names()
+    assert not offered & (toolbox.deferred_names() - {"style_pick", "contrast_check"}), offered & toolbox.deferred_names()
 
 
 @pytest.mark.parametrize("text", ["halo", "perbaiki bug login di auth.py", "buat presentasi pptx tentang AI"])

@@ -18,7 +18,7 @@ Panel juga tersedia di Web UI lewat tautan Trading di sidebar: ia terbuka di dal
 | Backend | Cara kerja | Kebutuhan |
 |---|---|---|
 | `sim` | Pasar simulasi untuk mencoba panel, tanpa broker | Tidak ada |
-| `mt4` | EA `trading/mt4/Mt4Bridge.mq4` mengirim harga lewat HTTP dan menerima perintah order | MT4, juga bisa lewat Wine. Tekan **Hubungkan EA** untuk langkah pemasangannya |
+| `mt4` | EA `addons/trading/mt4/Mt4Bridge.mq4` mengirim harga lewat HTTP dan menerima perintah order | MT4, juga bisa lewat Wine. Tekan **Hubungkan EA** untuk langkah pemasangannya |
 | `mt5` | Terhubung langsung lewat paket Python `MetaTrader5` | Windows dengan terminal MT5. Paket ini tidak jalan di Linux, dan belum ada EA bridge untuk MT5 |
 
 Panel memakai warna, huruf, dan pengaturan tema yang sama dengan Web UI (`web/static/css/tokens.css`). Panel memenuhi layar dan mengikuti ukuran jendela. Di chart: roda mouse untuk zoom, seret untuk geser, seret sumbu harga untuk meregangkan, klik dua kali untuk reset. Tombol keyboard: `F` fokus chart, `+` dan `-` zoom, panah untuk geser, `0` kembali ke bar terbaru, `Esc` keluar. Garis antara chart dan tabel bisa diseret. Klik baris posisi untuk membuka simbolnya. Di backend `mt4`, timeframe 15m sampai 1D dibangun dari bar M5.
@@ -36,7 +36,7 @@ Target 1,5R, atau 2R bila setup kuat (timeframe besar searah, ADX minimal 25, ti
 
 Pada 5.079 bar M5 XAUUSDcheck yang terekam (November 2026), aturan lama menghasilkan 3 trade dan aturan baru juga 3 trade. Break-even di 1R atau trailing 2–3 ATR menurunkan total R pada data itu, jadi setelan di atas sengaja longgar. Tiga trade tidak membuktikan apa pun. Nilai strateginya setelah minimal 100 trade.
 
-Usulan ini berbasis aturan, bukan model AI, dan tidak menjamin profit. `trading/advisor.py` baru menyusun teks untuk ditinjau LLM dan belum memanggil model. Uji dulu di akun demo.
+Usulan ini berbasis aturan, bukan model AI, dan tidak menjamin profit. `addons/trading/advisor.py` baru menyusun teks untuk ditinjau LLM dan belum memanggil model. Uji dulu di akun demo.
 
 Tidak ada order yang terkirim otomatis. Setiap order melewati preview dan konfirmasi, batas volume, dan stop loss wajib. Akun real ditolak kecuali `MT5_ALLOW_LIVE=1`. EA MT4 juga tidak mengirim order kecuali `AllowTrading=true`.
 
@@ -44,7 +44,7 @@ Tidak ada order yang terkirim otomatis. Setiap order melewati preview dan konfir
 
 ```bash
 python main.py trading --tunnel      # mencetak URL publik .../trading
-./tunnel.sh start 80                 # atau: tunnel terpisah untuk server trading yang sudah jalan
+scripts/tunnel.sh start 80                 # atau: tunnel terpisah untuk server trading yang sudah jalan
 ```
 
 Data EA hanya ada di proses server trading (port 80), jadi tunnel harus ke port itu, bukan ke Web UI di 8080. Kalau EA sedang mengirim data dan belum ada yang login, panel langsung menempel ke EA, jadi halaman dari HP langsung menampilkan akun.
@@ -62,7 +62,7 @@ Pengunjung tunnel dibedakan dari browser di mesin ini per request: cloudflared d
 
 Tool `trading_snapshot` membaca server trading lokal (`TRADING_SERVER_URL`, default `http://127.0.0.1`) lewat endpoint baca saja: akun, posisi, usulan beserta alasannya, saran stop, status risiko, dan backtest. Tool ini tidak bisa mengirim order. Skill `analis-trading` bangun saat percakapan memang soal trading, dan menyuruh agent memakai data itu, menghitung risiko lebih dulu, dan tidak menjanjikan profit.
 
-EA menyimpan secret di `MQL4/Files/mt4_bridge_secret.txt` bila input `BridgeSecret` kosong. Isi file itu sama dengan `trading/data/bridge_secret`.
+EA menyimpan secret di `MQL4/Files/mt4_bridge_secret.txt` bila input `BridgeSecret` kosong. Isi file itu sama dengan `addons/trading/data/bridge_secret`.
 
 ## Prosedur praktik
 
@@ -111,7 +111,7 @@ Hasil pada 12.534 bar M1 XAUUSDcheck dan USDCHF dari Mei sampai Juni 2026, denga
 
 Target 8 dari 10 bisa didekati dengan target sempit dan stop lebar, tetapi tiap kekalahan lebih besar dari beberapa kemenangan, jadi hasil akhirnya rugi. Belum ada setelan yang untung pada data uji, jadi strategi ini jangan dipakai di akun riil.
 
-Bar M1 tidak bisa menunjukkan isi 30 detik. EA terbaru dan server merekam tick ke `trading/data/ticks/`, dan backtest otomatis memakainya setelah ada minimal 400 bar 5 detik, sekitar 35 menit data. Matikan rekaman dengan `MT4_RECORD_TICKS=0`.
+Bar M1 tidak bisa menunjukkan isi 30 detik. EA terbaru dan server merekam tick ke `addons/trading/data/ticks/`, dan backtest otomatis memakainya setelah ada minimal 400 bar 5 detik, sekitar 35 menit data. Matikan rekaman dengan `MT4_RECORD_TICKS=0`.
 
 ## Simulasi live (tanpa order)
 
@@ -139,7 +139,7 @@ Selain delapan aturan dan ensemble, ada dua kandidat lagi:
 
 Di bawah tabel aturan ada **Matematika gabungan**: P(naik), kejelasan, hasil uji, ukuran yang paling mendorong arah, dan rezim pasar. Lalu **Per sesi**: catatan aturan yang dipilih di setiap sesi. Sesi dihitung dari jam lokal tiap kota, jadi ikut daylight saving: Sydney 07–16, Tokyo 09–18, London 08–17, New York 08–17, termasuk tumpang tindihnya seperti London + New York. Terakhir **Perhitungan per siklus**: 10 siklus terakhir dengan jam, sesi, P(naik), suara matematika, skor ensemble, dan spread.
 
-Setiap siklus disimpan ke `trading/data/sim/<waktu>-<simbol>.jsonl`: satu baris per siklus (harga, suara semua aturan, hasil matematika beserta kontribusi tiap ukuran, sesi, kondisi pasar, mood berita), satu baris per jawaban LLM, dan satu baris per trade yang tutup. Tautan **unduh log** ada di panel. `GET /api/quant/sim/logs` mendaftar semua log, dan `SIM_LOG_DIR` memindahkan foldernya.
+Setiap siklus disimpan ke `addons/trading/data/sim/<waktu>-<simbol>.jsonl`: satu baris per siklus (harga, suara semua aturan, hasil matematika beserta kontribusi tiap ukuran, sesi, kondisi pasar, mood berita), satu baris per jawaban LLM, dan satu baris per trade yang tutup. Tautan **unduh log** ada di panel. `GET /api/quant/sim/logs` mendaftar semua log, dan `SIM_LOG_DIR` memindahkan foldernya.
 
 Di chart, posisi virtual ditandai seperti di aplikasi trading. BUY diberi badge ▲ di bawah candle dan SELL diberi badge ▼ di atas candle, dengan garis ke harga entry yang tepat. Sebelumnya panah BUY digambar di atas badan candle hijau dengan warna yang sama, jadi tidak terlihat. Posisi yang masih terbuka diberi garis level entry dan label di kanan (`BUY 12s`).
 
@@ -162,11 +162,11 @@ Setiap judul diberi topik dari daftar kata kunci: **influencer & tokoh**, **tekn
 
 MT4 tidak bisa mengirim berita: MQL4 tidak punya akses ke tab News atau kalender terminal. Yang diambil dari MT4 adalah **kondisi pasar** dari harganya: ramai, normal, atau sepi (range 10 bar terakhir dibanding sebelumnya), gerak 30 bar, dan spread dibanding range bar. Ada peringatan bila spread lebih dari separuh gerak bar.
 
-Kalender ini juga dipakai filter berita pada **Usulan kuantitatif**: entry dilewati 30 menit sebelum dan sesudah berita berdampak besar untuk mata uang simbol. Ini berlaku otomatis bila `TRADE_NEWS_FILE` kosong. Matikan dengan `TRADE_NEWS_AUTO=0`. Sumber yang gagal tetap memakai salinan terakhirnya, dan cache di `trading/data/news/` bertahan setelah restart. Tombol **Muat ulang** memaksa semua sumber diambil lagi, dan dari luar mesin ini tombol itu butuh token.
+Kalender ini juga dipakai filter berita pada **Usulan kuantitatif**: entry dilewati 30 menit sebelum dan sesudah berita berdampak besar untuk mata uang simbol. Ini berlaku otomatis bila `TRADE_NEWS_FILE` kosong. Matikan dengan `TRADE_NEWS_AUTO=0`. Sumber yang gagal tetap memakai salinan terakhirnya, dan cache di `addons/trading/data/news/` bertahan setelah restart. Tombol **Muat ulang** memaksa semua sumber diambil lagi, dan dari luar mesin ini tombol itu butuh token.
 
 ## LLM trading
 
-Satu model dipakai untuk semua bagian trading. Pilih model di kotak **LLM trading** pada Simulasi live. Daftarnya berisi model yang sedang dilayani setiap provider di halaman Router, dikelompokkan per provider, dengan model yang baru dipakai di atas. Daftar ini disimpan 5 menit, dan tombol **Muat ulang daftar** mengambilnya lagi. Pilihan **Default Router** memakai model default halaman Router atau `DEFAULT_MODEL`, tapi hanya bila model itu masih dilayani. Model yang tidak ada di daftar ditolak saat simulasi atau forward test dimulai, jadi id lama di `.env` tidak lagi gagal di tengah jalan dengan "not found". Setelan disimpan di `trading/data/llm.json`, dan `TRADING_LLM_MODEL` bisa mengisinya dari `.env`.
+Satu model dipakai untuk semua bagian trading. Pilih model di kotak **LLM trading** pada Simulasi live. Daftarnya berisi model yang sedang dilayani setiap provider di halaman Router, dikelompokkan per provider, dengan model yang baru dipakai di atas. Daftar ini disimpan 5 menit, dan tombol **Muat ulang daftar** mengambilnya lagi. Pilihan **Default Router** memakai model default halaman Router atau `DEFAULT_MODEL`, tapi hanya bila model itu masih dilayani. Model yang tidak ada di daftar ditolak saat simulasi atau forward test dimulai, jadi id lama di `.env` tidak lagi gagal di tengah jalan dengan "not found". Setelan disimpan di `addons/trading/data/llm.json`, dan `TRADING_LLM_MODEL` bisa mengisinya dari `.env`.
 
 | Dipakai di | Cara kerja |
 |---|---|
@@ -183,7 +183,7 @@ Panel **LLM Analyst Trade** di kolom kanan memberi rencana trade lengkap dengan 
 
 Di belakangnya ada tiga lapis:
 
-1. **Memori** (`trading/quant/memory.py`). Setiap bar M15, M30, H1, atau H4 yang sudah tutup disimpan bersama 109 ukuran:
+1. **Memori** (`addons/trading/quant/memory.py`). Setiap bar M15, M30, H1, atau H4 yang sudah tutup disimpan bersama 109 ukuran:
    - tiga candle terakhir (badan, sumbu, range dalam ATR);
    - gerak 1 sampai 55 bar, jarak ke EMA 9 sampai 200 dan kemiringannya, RSI, stochastic, Bollinger, perubahan volatilitas;
    - high/low 20, 50, dan 100 bar, open/high/low hari ini dan kemarin;
@@ -195,8 +195,8 @@ Di belakangnya ada tiga lapis:
    - **jam pasar dan kalender** (9 ukuran): jam New York, jam ke berapa sejak London dan New York buka, kedekatan ke rollover, posisi dalam bulan, akhir bulan, fase bulan;
    - **musiman dan siklus** (5 ukuran): apa yang dilakukan jam berikutnya di hari-hari sebelumnya (arah dan lebar), dan fase serta kekuatan siklus terkuat di 128 bar terakhir.
 
-   Untuk setiap bar dicatat juga apa yang terjadi pada **24 rencana**: BUY atau SELL, SL 1, 1,5, atau 2 ATR, TP 1, 1,5, 2, atau 3 ATR. Rencana dibuka di harga close (ask untuk BUY, bid untuk SELL), dan dicatat mana yang kena duluan, TP atau SL, dibaca dari bar M5 di dalamnya. Kalau keduanya kena di satu bar M5, yang dihitung SL, jadi memori tidak pernah memoles hasil. Sumbernya semua bar M5 yang pernah dikirim EA (`trading/data/bars/`), jadi memori bertambah sendiri setiap hari selama server trading dan EA hidup.
-2. **Jaringan saraf** (`trading/quant/neural.py`, numpy murni).
+   Untuk setiap bar dicatat juga apa yang terjadi pada **24 rencana**: BUY atau SELL, SL 1, 1,5, atau 2 ATR, TP 1, 1,5, 2, atau 3 ATR. Rencana dibuka di harga close (ask untuk BUY, bid untuk SELL), dan dicatat mana yang kena duluan, TP atau SL, dibaca dari bar M5 di dalamnya. Kalau keduanya kena di satu bar M5, yang dihitung SL, jadi memori tidak pernah memoles hasil. Sumbernya semua bar M5 yang pernah dikirim EA (`addons/trading/data/bars/`), jadi memori bertambah sendiri setiap hari selama server trading dan EA hidup.
+2. **Jaringan saraf** (`addons/trading/quant/neural.py`, numpy murni).
    - Lima jaringan dengan dua lapis tersembunyi. Ukurannya ikut tumbuh bersama memori: 64-32 neuron di bawah 3.000 bar, 128-64 di bawah 20.000, lalu 256-128.
    - Setiap jaringan menebak, untuk ke-24 rencana sekaligus, peluang kena TP dulu, kena SL dulu, atau habis waktu. Dari situ dihitung nilai harapannya dalam ATR setelah spread.
    - Urutan waktu tidak pernah diacak. 70% bar terlama untuk belajar, 15% berikutnya untuk menghentikan belajar sebelum ia menghafal, mengkalibrasi peluang, dan memilih **ambang masuk**. 15% bar terbaru adalah **ujian** yang tidak pernah dipakai memilih apa pun.
@@ -206,11 +206,11 @@ Di belakangnya ada tiga lapis:
    - Otak **lulus** hanya kalau di ujian ia untung, mengalahkan "selalu rencana yang sama" (rencana terbaik di data latih, yang menangkap tren yang kebetulan berlanjut), mengalahkan acak, dan peluangnya lebih tepat dari frekuensi dasar.
    - Tiga kelompok ukuran baru (level harga, jam pasar, musiman dan siklus) bersifat pilihan. Menambah rumus di memori yang pendek kebanyakan menambah cara untuk salah, jadi otak dilatih lima kali dengan susunan berbeda dan memakai yang paling tepat menebak data validasi. Susunan yang lebih kaya harus mengalahkan ukuran dasar dengan selisih log loss minimal 0,002. Ujian diambil sesudah pilihan itu, di bar yang tidak ikut memilih. Panel **Otak neural** menampilkan kelompok mana yang dipakai.
    - Sesudah ujian, jaringan dilatih ulang di seluruh memori.
-3. **Pembanding** (`trading/quant/brain.py`):
+3. **Pembanding** (`addons/trading/quant/brain.py`):
    - 40 momen paling mirip di masa lalu, beserta hasil rencana BUY dan SELL terbaik setelahnya (juga khusus di sesi yang sama). Jaraknya menimbang tiap ukuran menurut seberapa besar jaringan mengandalkannya (norma bobot lapis pertama), dan hasilnya juga dirata-ratakan dengan kernel Gaussian pada jarak, jadi momen yang paling mirip paling berbicara (`weighted_p_target`, `weighted_avg_r_atr`);
    - tabel kondisi untuk rencana acuan SL 1,5 / TP 2 ATR: per sesi, per jam, per hari, dan dekat atau jauh dari berita besar.
 
-**LLM Analyst** (`trading/quant/analyst.py`) membaca semua itu, ditambah candle terakhir, berita, dan **jurnal rencananya sendiri**. Jurnal itu yang membuatnya belajar lintas run dan restart:
+**LLM Analyst** (`addons/trading/quant/analyst.py`) membaca semua itu, ditambah candle terakhir, berita, dan **jurnal rencananya sendiri**. Jurnal itu yang membuatnya belajar lintas run dan restart:
 - Setiap rencana diikuti di bar M5 sampai kena TP, kena SL, atau habis waktu.
 - Saat ia memilih tunggu, rencana terbaik otak di momen itu juga diikuti, jadi kelihatan kapan menunggu itu benar dan kapan ia melewatkan yang menang.
 - Aturannya: ambil arah hanya kalau minimal dua dari tiga (EV otak, situasi mirip, kondisi sekarang) condong ke arah yang sama, dan jangan masuk 30 menit sebelum rilis high-impact.
@@ -227,13 +227,13 @@ Cara melatihnya lewat simulasi live:
 5. **Belajar dari waktu ke waktu** menunjukkan hasil ujian setiap pelatihan, jadi kelihatan apakah otak membaik seiring memori bertambah.
 
 Yang perlu diketahui:
-- **Kalender berita.** Kalender ForexFactory hanya memberi minggu ini, jadi setiap minggu yang diambil disimpan ke `trading/data/news/calendar-archive.json`. Ukuran berita baru dipakai jaringan setelah arsip menutup minimal 30% memori. Sebelum itu baris "sekarang", yang punya data berita, terlihat sangat beda dari semua baris yang dipelajari, dan tebakannya jadi liar. Selama itu berita tetap dibaca LLM langsung.
+- **Kalender berita.** Kalender ForexFactory hanya memberi minggu ini, jadi setiap minggu yang diambil disimpan ke `addons/trading/data/news/calendar-archive.json`. Ukuran berita baru dipakai jaringan setelah arsip menutup minimal 30% memori. Sebelum itu baris "sekarang", yang punya data berita, terlihat sangat beda dari semua baris yang dipelajari, dan tebakannya jadi liar. Selama itu berita tetap dibaca LLM langsung.
 - **Ukuran memori.** Dengan history M5 sekitar 3 minggu, H1 baru punya sekitar 370 bar dengan hasil. H4 belum cukup (butuh 300).
 - **Hasil di data asli (10 November 2026).** M15 belum lulus. Ia untung di ujian, tapi peluangnya belum lebih tepat dari frekuensi dasar. H1 tidak menemukan ambang yang untung, jadi sangat pemilih.
 - **Dengan ukuran baru (11 November 2026, 29 hari data XAUUSDcheck).** Di M15 otak memilih level harga dan jam pasar (log loss validasi 0,967 lawan 0,984 dengan ukuran dasar) dan membuang musiman dan siklus. Di H1 ia memilih level harga saja (1,047 lawan 1,052). Ujiannya tetap belum lulus di kedua timeframe: tebakan validasi membaik, bukti untung belum ada.
 - **Otak lama dilatih ulang sendiri.** Otak yang dilatih sebelum ukuran ini ada tidak bisa menjawab untuk memori yang baru. Begitu ditanya, ia melatih ulang di latar (M15 sekitar 20 detik) dan panel mengatakannya.
 - **Hasil di data buatan.** Di data buatan yang naik setiap pagi London, otak lulus dengan +0,3 sampai +1,6 ATR per trade, dan hanya mau BUY di jam itu. Artinya otak bisa menemukan pola kalau polanya memang ada. Apakah XAUUSD punya pola seperti itu, hanya ujian yang bisa menjawab.
-- **Lokasi data.** Semua ada di `trading/data/brain/`: model `<simbol>-<tf>.npz`, ringkasan `<simbol>-<tf>.json`, konteks live, dan jurnal `analyst-<simbol>.json`. `TRADING_BRAIN_DIR` memindahkannya.
+- **Lokasi data.** Semua ada di `addons/trading/data/brain/`: model `<simbol>-<tf>.npz`, ringkasan `<simbol>-<tf>.json`, konteks live, dan jurnal `analyst-<simbol>.json`. `TRADING_BRAIN_DIR` memindahkannya.
 
 API: `GET /api/quant/brain?symbol=&timeframe=`, `POST /api/quant/brain/train`, `GET /api/quant/analyst?symbol=`, `POST /api/quant/analyst/run` (satu panggilan model).
 
@@ -241,14 +241,14 @@ API: `GET /api/quant/brain?symbol=&timeframe=`, `POST /api/quant/brain/train`, `
 
 Sebelum memilih arah, LLM trading (di simulasi live, di Analyst, dan di auto trade) membaca checklist yang sama dengan yang digambar di panel **Level, waktu & siklus**. Semua dihitung dari bar yang sudah tutup, jadi tidak ada yang mengintip ke depan. Level adalah zona untuk bertindak, bukan ramalan.
 
-**Level harga** (`trading/quant/levels.py`)
+**Level harga** (`addons/trading/quant/levels.py`)
 
 - **Fibonacci** dari leg swing terakhir yang sudah selesai. Retracement uptrend `High − (High − Low) × rasio` untuk 0,236, 0,382, 0,5, 0,618, 0,786. Ekstensi `Low + (High − Low) × rasio` untuk 1,272, 1,618, 2,618. Downtrend dicerminkan. Swing baru diakui setelah harga berbalik 3 ATR darinya (zigzag), jadi puncak tidak pernah ditebak.
 - **Pivot** dari high, low, dan close hari trading sebelumnya, empat jenis: Klasik (`P = (H+L+C)/3`, `R1 = 2P − L`, `S1 = 2P − H`, `R2 = P + (H−L)`, `S2 = P − (H−L)`, `R3 = H + 2(P−L)`, `S3 = L − 2(H−P)`), Fibonacci (`P ± 0,382 / 0,618 / 1,0 × (H−L)`), Camarilla (`C ± (H−L) × 1,1/4` dan `× 1,1/2`), dan Woodie (`P = (H+L+2C)/4`).
 - **Hari trading** dihitung dari 17:00 ke 17:00 New York, bukan hari UTC. Itu high, low, dan close yang dipakai pasar, dan batasnya ikut bergeser saat daylight saving.
 - **Zona confluence.** Level yang berjarak kurang dari 0,25 ATR digabung jadi satu zona. Kekuatannya 1 sampai 4: berapa *jenis* level yang bertemu di situ (pivot, Fibonacci swing, range kemarin dan minggu lalu, angka bulat). Empat rumus pivot berasal dari tiga angka yang sama, jadi dua pivot yang berimpit dihitung satu. Zona kuat berarti 2 jenis atau lebih, misalnya Fibo 61,8% berimpit dengan S1.
 
-**Waktu** (`trading/quant/cycles.py`)
+**Waktu** (`addons/trading/quant/cycles.py`)
 
 - **Jam pasar** dibaca dari jam tiap kota: pembukaan Sydney, Tokyo, London, New York, menit rilis data AS (08:30 New York), pembukaan bursa saham AS (09:30), fix emas LBMA (10:30 dan 15:00 London), fix London 16:00, dan rollover 17:00 New York. London buka 07:00 UTC di musim panas dan 08:00 UTC di musim dingin. Beberapa minggu tiap Maret dan musim gugur, London dan New York terpaut 4 jam, bukan 5, dan panel menyebutnya.
 - **Kebiasaan tiap jam.** Bar dikelompokkan per jam New York. Tiap jam punya rata-rata gerak dalam ATR, t-statistik, p-value, dan lebar bar dibanding rata-rata. Dua puluh empat jam berarti dua puluh empat percobaan, jadi p-value dikoreksi (Benjamini-Hochberg) dan satu jam baru dihitung sebagai temuan bila q di bawah 0,10. Lebar bar per jam itu nyata dan stabil. Arahnya jarang lolos uji, dan panel mengatakannya.
@@ -256,14 +256,14 @@ Sebelum memilih arah, LLM trading (di simulasi live, di Analyst, dan di auto tra
 - **Waktu Fibonacci.** Jumlah bar sejak swing terakhir dan hitungan Fibonacci terdekat (8, 13, 21, 34, ...). Hitungan ini ditampilkan tapi tidak diuji sendiri; otak menilainya lewat umur swing.
 - **Kalender lambat.** Posisi dalam bulan, akhir bulan, dan fase bulan ikut diukur, tapi otak baru membacanya setelah memori mencakup 90 hari. Di bawah itu "tanggal" hanya jam yang terus naik dan akan mengajari otak tren beberapa minggu itu.
 
-**Matematika risiko** (`trading/quant/riskmath.py`)
+**Matematika risiko** (`addons/trading/quant/riskmath.py`)
 
 - Dasar: ukuran posisi `(modal × %risiko) / (jarak SL × nilai per poin)` yang dibulatkan ke bawah, R:R, win rate impas `1/(1+RR)` dan `(1+biaya)/(1+RR)` dengan spread, expectancy, Kelly, drawdown dan `Recovery = DD/(1−DD)`, nilai pip, margin, compounding.
 - Yang membuat akun bertahan: win rate dari sedikit trade diganti angka hati-hati (posterior Beta, rata-rata dikurangi satu simpangan), Kelly dihitung setengah dari angka hati-hati itu dan dibatasi 2%, peluang rugi beruntun dihitung eksak, dan risk of ruin diselesaikan dari persamaan gambler's ruin untuk menang dan kalah yang tidak sama besar.
 - Rata-rata hasil diuji dengan t-test. Kalau beberapa aturan dicoba sekaligus, p-value dikoreksi (Šidák), jadi "terbaik dari 12" dinilai sebagai terbaik dari 12.
 - `GET /api/quant/riskmath?win_rate=0.45&rr=2&risk_pct=1&trades=100` memberi semua angka itu. Panel punya **Kalkulator risiko** yang memakainya.
 
-**Cara LLM belajar dari checklist** (`trading/quant/playbook.py`)
+**Cara LLM belajar dari checklist** (`addons/trading/quant/playbook.py`)
 
 1. Prompt membawa blok `levels` (zona di atas dan di bawah harga, ruang ke zona kuat, leg Fibonacci, pivot), `time` (jam, event berikutnya, kebiasaan jam ini, siklus bila lolos uji), dan `plan_math` (R:R, tingkat TP yang baru impas, selisih peluang otak dari titik itu).
 2. Setiap rencana dan setiap posisi simulasi diberi **tag kondisi**: bagian hari, masuk "dari zona" atau "menuju zona dekat" atau di "ruang terbuka", searah atau melawan pivot, searah atau melawan leg dan sedalam apa koreksinya, searah atau melawan siklus.
@@ -277,10 +277,10 @@ API: `GET /api/quant/considerations?symbol=&timeframe=` (M5 sampai H4). Agent ch
 ## Laporan walk-forward di data harian
 
 ```bash
-python -m trading.quant.wf_report --symbol XAUUSD      # sekitar 5 detik, hanya paper
+python -m addons.trading.quant.wf_report --symbol XAUUSD      # sekitar 5 detik, hanya paper
 ```
 
-Membaca `trading/data/bars/XAUUSD1440.csv` dan menguji jaringan harian (`forecast.oos_predictions`): tiap prediksi dibuat oleh jaringan yang dilatih hanya dengan hari yang hasilnya sudah diketahui saat itu. Laporannya (`reports/trading/walkforward-XAUUSD-D1-<tanggal>.md` dan `.json`) berisi, per horizon 1 dan 5 hari:
+Membaca `addons/trading/data/bars/XAUUSD1440.csv` dan menguji jaringan harian (`forecast.oos_predictions`): tiap prediksi dibuat oleh jaringan yang dilatih hanya dengan hari yang hasilnya sudah diketahui saat itu. Laporannya (`reports/trading/walkforward-XAUUSD-D1-<tanggal>.md` dan `.json`) berisi, per horizon 1 dan 5 hari:
 
 - hit rate melawan tebakan konstan terbaik, dengan interval 99% dan p-value binomial eksak;
 - skor Brier melawan "selalu tebak base rate", dan hit rate per refit, supaya satu periode beruntung tidak membawa rata-ratanya;
@@ -294,26 +294,26 @@ Tombol **Bagikan** di setiap posisi terbuka dan riwayat trade, **Bagikan portofo
 
 ## Forward test demo
 
-`POST /api/quant/forward/start` dengan `{"symbol": "...", "minutes": 30}` menjalankan ensemble scalp dengan posisi sungguhan: 5 posisi 0,01 lot tiap 30 detik, dengan SL dan TP. Status ada di `GET /api/quant/forward/status`, dan `POST /api/quant/forward/stop` menghentikannya. Tiap basket dicatat di `trading/data/forward/`.
+`POST /api/quant/forward/start` dengan `{"symbol": "...", "minutes": 30}` menjalankan ensemble scalp dengan posisi sungguhan: 5 posisi 0,01 lot tiap 30 detik, dengan SL dan TP. Status ada di `GET /api/quant/forward/status`, dan `POST /api/quant/forward/stop` menghentikannya. Tiap basket dicatat di `addons/trading/data/forward/`.
 
 Runner ini mengirim order tanpa konfirmasi, jadi ia menolak akun riil, berhenti sendiri di batas waktu (paling lama 120 menit), saat rugi 2% ekuitas awal, atau setelah 3 kali gagal berturut-turut. Posisi lain tidak disentuh.
 
 ## Auto trade: otak dan LLM mengirim order, trailing stop sebagai jalan keluar
 
-Panel **Auto trade** (`trading/quant/autotrade.py`) membuat otak neural, atau LLM Analyst, membuka order sungguhan di akun yang terhubung. Satu simbol, satu timeframe intraday (M15 sampai H4), satu posisi sekaligus.
+Panel **Auto trade** (`addons/trading/quant/autotrade.py`) membuat otak neural, atau LLM Analyst, membuka order sungguhan di akun yang terhubung. Satu simbol, satu timeframe intraday (M15 sampai H4), satu posisi sekaligus.
 
 Cara kerjanya:
 - Di setiap bar yang tutup, otak ditanya (`brain.analyse`). Mode **Otak neural** mengambil rencana terbaik otak bila otak mau masuk. Mode **LLM Analyst** menanyai LLM dengan bukti yang sama seperti tombol Analisa sekarang, dan memakai sisi, stop, target, dan `trail_atr` jawabannya. Mode **Otak & LLM sepakat** hanya masuk bila keduanya memilih sisi yang sama.
 - Order dikirim dengan **SL asli di terminal dan tanpa TP**. Level target hanya mempersenjatai trailing: begitu harga menyentuhnya, SL dikunci `lock_atr` ATR di belakang target (bawaan 0,3), lalu mengikuti harga terbaik sejauh `trail_atr` ATR (bawaan 1,0) dan tidak pernah dilonggarkan. Tiap pergeseran dikirim ke terminal lewat `modify`. Posisi ditutup oleh SL saat harga berbalik, atau oleh runner saat waktu tahan habis.
-- Matematika trailing ada di `trading/quant/trail.py`, dan dipakai sama persis di simulasi live (isian **Trailing × ATR** di gaya Harian, untuk posisi otak dan LLM) dan di jurnal Analyst: rencana dengan `exit_style: trail` diikuti di bar M5 dengan aturan yang sama, dan selesai dengan status `trail`. Jadi yang dipelajari LLM dari jurnalnya adalah gaya keluar yang benar-benar dipakai.
+- Matematika trailing ada di `addons/trading/quant/trail.py`, dan dipakai sama persis di simulasi live (isian **Trailing × ATR** di gaya Harian, untuk posisi otak dan LLM) dan di jurnal Analyst: rencana dengan `exit_style: trail` diikuti di bar M5 dengan aturan yang sama, dan selesai dengan status `trail`. Jadi yang dipelajari LLM dari jurnalnya adalah gaya keluar yang benar-benar dipakai.
 - Batas yang tidak bisa dilepas: akun live ditolak kecuali **izinkan akun live** dicentang saat mulai; lot paling besar 1; berhenti sendiri di batas jam, saat rugi hari ini menyentuh **rugi harian maks. %** dari ekuitas awal hari, atau setelah 3 order ditolak berturut-turut. Posisi yang bukan dibukanya tidak disentuh, dan posisinya sendiri ditutup saat run berhenti.
-- API: `POST /api/quant/auto/start` (`symbol`, `timeframe`, `mode`, `lots`, `trail_atr`, `lock_atr`, `max_daily_loss_pct`, `max_hours`, `allow_live`), `POST /api/quant/auto/stop`, `GET /api/quant/auto/status`. Log per run di `trading/data/autotrade/`, dan tiap order serta penutupan masuk jurnal trade dengan `source: auto`.
+- API: `POST /api/quant/auto/start` (`symbol`, `timeframe`, `mode`, `lots`, `trail_atr`, `lock_atr`, `max_daily_loss_pct`, `max_hours`, `allow_live`), `POST /api/quant/auto/stop`, `GET /api/quant/auto/status`. Log per run di `addons/trading/data/autotrade/`, dan tiap order serta penutupan masuk jurnal trade dengan `source: auto`.
 
 Otak harus sudah dilatih untuk simbol dan timeframe itu; kalau belum, start memulai pelatihan di latar dan minta coba lagi. Mulai dari akun demo dan lot kecil: ujian otak di data asli belum lulus, dan trailing di akun sungguhan menanggung slippage yang tidak ada di simulasi.
 
 ## Data yang tersimpan
 
-Semua ada di `trading/data/` dan tidak ikut Git: `journal.jsonl` (order dan close, termasuk SL, TP, dan tutup manual di MT4 lewat EA terbaru), `bars/`, `ticks/`, `forward/`, `sim/` (perhitungan per siklus simulasi live), `news/` (cache dan arsip kalender berita), `brain/` (otak neural dan jurnal Analyst), dan `llm.json` (setelan LLM trading). Folder ini hanya ada di mesin ini, jadi cadangkan sendiri.
+Semua ada di `addons/trading/data/` dan tidak ikut Git: `journal.jsonl` (order dan close, termasuk SL, TP, dan tutup manual di MT4 lewat EA terbaru), `bars/`, `ticks/`, `forward/`, `sim/` (perhitungan per siklus simulasi live), `news/` (cache dan arsip kalender berita), `brain/` (otak neural dan jurnal Analyst), dan `llm.json` (setelan LLM trading). Folder ini hanya ada di mesin ini, jadi cadangkan sendiri.
 
 ## Status fitur
 
@@ -324,7 +324,7 @@ Semua ada di `trading/data/` dan tidak ikut Git: `journal.jsonl` (order dan clos
 | Lot lintas mata uang memakai tick value dari EA | Sudah dibuat, butuh EA versi terbaru |
 | LLM mengatur setelan backtest scalp setelah rugi | Sudah dibuat, belum dicoba dengan model sungguhan |
 | Eksekusi otomatis scalp 30 detik | Belum ada. Hanya backtest |
-| Tinjauan LLM atas usulan (`trading/advisor.py`) | Belum, baru menyusun teksnya |
+| Tinjauan LLM atas usulan (`addons/trading/advisor.py`) | Belum, baru menyusun teksnya |
 | LLM trading di simulasi live dan forward test | Sudah dibuat, baru diuji dengan model tiruan. Belum dicoba dengan model sungguhan |
 | Matematika gabungan 14 ukuran | Sudah dibuat. Belum ada bukti keunggulan di data live |
 | Berita dan kondisi pasar | Sudah jalan dengan sumber gratis. Berita dari MT4 tidak mungkin di MQL4 |

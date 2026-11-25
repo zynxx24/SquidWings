@@ -37,6 +37,9 @@ python-pptx>=1.0          # slides_create: PowerPoint files
 # === CLI & Display ===
 rich>=13.0                    # Beautiful terminal output
 
+# === Windows ===
+pywinpty>=2.0; sys_platform == "win32"   # panel Terminal di Windows (ConPTY); Linux/macOS pakai pty bawaan
+
 # === Resilience ===
 tenacity>=8.2                 # Retry with backoff
 

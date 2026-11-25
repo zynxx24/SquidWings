@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from trading import advisor, journal, strategy
-from trading.mt4_backend import Mt4BridgeBackend
-from trading.mt5_adapter import TradingError
-from web import mt4_bridge
+from addons.trading import advisor, journal, strategy
+from addons.trading.mt4_backend import Mt4BridgeBackend
+from addons.trading.mt5_adapter import TradingError
+from addons.trading.web import mt4_bridge
 from web.server import app
 
 SECRET = "bridge-secret-xyz"
@@ -31,7 +31,7 @@ def _reset(monkeypatch, tmp_path):
     monkeypatch.setenv("TRADE_JOURNAL", str(tmp_path / "journal.jsonl"))
     monkeypatch.setattr(mt4_bridge, "store", mt4_bridge.Store())
     monkeypatch.setattr(mt4_bridge, "SECRET_FILE", tmp_path / "bridge_secret")
-    monkeypatch.setattr("trading.mt4_backend.store", mt4_bridge.store)
+    monkeypatch.setattr("addons.trading.mt4_backend.store", mt4_bridge.store)
     yield
 
 
@@ -247,7 +247,7 @@ def test_pairing_creates_a_secret_once_and_writes_a_preset(monkeypatch, tmp_path
 
 
 def test_bridge_status_reports_paired_and_online(monkeypatch):
-    from web import quant_api  # noqa: F401
+    from addons.trading.web import quant_api  # noqa: F401
     monkeypatch.setenv("MT5_TRADE_TOKEN", "pair-token")
     c = TestClient(app)
     b = c.get("/api/quant/bridge", headers={"X-MT5-Token": "pair-token"}).json()
@@ -259,8 +259,8 @@ def test_bridge_status_reports_paired_and_online(monkeypatch):
 
 
 def test_backtest_endpoint_runs_on_history_and_places_no_orders(monkeypatch):
-    from trading.mt5_adapter import SimBackend
-    from web import mt5_api
+    from addons.trading.mt5_adapter import SimBackend
+    from addons.trading.web import mt5_api
     monkeypatch.setenv("MT5_TRADE_TOKEN", "bt-token")
     monkeypatch.setenv("TRADE_JOURNAL", str(Path(mt4_bridge.SECRET_FILE).parent / "j.jsonl"))
     b = SimBackend()
@@ -283,8 +283,8 @@ def test_backtest_endpoint_runs_on_history_and_places_no_orders(monkeypatch):
 
 
 def _bridge_with_ea():
-    from trading import mt4_backend as backend_module
-    from web import mt4_bridge as bridge
+    from addons.trading import mt4_backend as backend_module
+    from addons.trading.web import mt4_bridge as bridge
 
     store = bridge.Store()
     store.ingest([{"type": "account", "login": 1, "positions": [], "orders": [
@@ -333,7 +333,7 @@ def _bar(t, close=1.0):
 
 
 def test_a_restarted_server_asks_the_ea_for_its_history_a_few_times():
-    from web import mt4_bridge as bridge
+    from addons.trading.web import mt4_bridge as bridge
 
     store = bridge.Store()
     store.ingest([{"type": "tick", "symbol": "EURUSD", "bid": 1, "ask": 1}])
@@ -347,7 +347,7 @@ def test_a_restarted_server_asks_the_ea_for_its_history_a_few_times():
 
 
 def test_enough_bars_stops_the_requests():
-    from web import mt4_bridge as bridge
+    from addons.trading.web import mt4_bridge as bridge
 
     store = bridge.Store()
     store.ingest([{"type": "tick", "symbol": "EURUSD", "bid": 1, "ask": 1}])
@@ -357,7 +357,7 @@ def test_enough_bars_stops_the_requests():
 
 def test_history_that_arrives_after_newer_bars_is_kept_in_order():
     """The bug behind the 422: older bars from a late EA were thrown away."""
-    from web import mt4_bridge as bridge
+    from addons.trading.web import mt4_bridge as bridge
 
     store = bridge.Store()
     store.ingest([_bar(1000), _bar(1300)])
@@ -366,7 +366,7 @@ def test_history_that_arrives_after_newer_bars_is_kept_in_order():
 
 
 def test_a_resent_bar_replaces_the_old_values():
-    from web import mt4_bridge as bridge
+    from addons.trading.web import mt4_bridge as bridge
 
     store = bridge.Store()
     store.ingest([_bar(100, 1.0)])
@@ -375,8 +375,8 @@ def test_a_resent_bar_replaces_the_old_values():
 
 
 def test_saved_bars_come_back_after_a_restart(tmp_path, monkeypatch):
-    from trading.quant import ticks
-    from web import mt4_bridge as bridge
+    from addons.trading.quant import ticks
+    from addons.trading.web import mt4_bridge as bridge
 
     monkeypatch.setenv("MT4_RECORD_TICKS", "1")
     monkeypatch.setattr(ticks, "TICK_DIR", tmp_path / "ticks")
@@ -390,23 +390,23 @@ def test_saved_bars_come_back_after_a_restart(tmp_path, monkeypatch):
 
 
 def test_a_cut_off_line_in_the_saved_bars_is_skipped(tmp_path):
-    from trading.quant import ticks
+    from addons.trading.quant import ticks
 
     (tmp_path / "EURUSD-M5.csv").write_text("100,1,1,1,1,5\n400,1,1", encoding="utf-8")
     assert [b["t"] for b in ticks.load_saved_bars(tmp_path)[("EURUSD", "M5")]] == [100]
 
 
 def test_the_backtest_says_how_to_get_more_bars(monkeypatch):
-    from web import quant_api
+    from addons.trading.web import quant_api
 
     assert "pasang lagi" in quant_api._short_history(27, 1610) and "27" in quant_api._short_history(27, 1610)
 
 
 def test_an_old_ea_is_reported():
-    from web import mt4_bridge as bridge
+    from addons.trading.web import mt4_bridge as bridge
 
     assert bridge.EA_VERSION == 2
-    assert '\\"ver\\":2' in (Path(bridge.__file__).resolve().parent.parent / "trading/mt4/Mt4Bridge.mq4").read_text(encoding="utf-8")
+    assert '\\"ver\\":2' in (Path(bridge.__file__).resolve().parent.parent / "mt4/Mt4Bridge.mq4").read_text(encoding="utf-8")
 
 
 
@@ -417,7 +417,7 @@ def _account(live: bool) -> dict:
 
 @pytest.fixture()
 def clean_panel(monkeypatch):
-    from web import mt5_api
+    from addons.trading.web import mt5_api
     monkeypatch.delenv("MT5_ALLOW_LIVE", raising=False)
     mt5_api._state.update(backend=None, live=False, view_only="")
     yield mt5_api
@@ -447,7 +447,7 @@ def test_an_attached_real_account_is_view_only_until_allowed(client, clean_panel
 
 def test_an_order_the_ea_never_picked_up_is_withdrawn_and_never_runs_later(monkeypatch):
     """Told it failed, the sender may send again; the old order must not run when the EA comes back."""
-    from web import mt4_bridge
+    from addons.trading.web import mt4_bridge
 
     store = mt4_bridge.Store()
     cid = store.enqueue({"action": "order", "symbol": "XAUUSD", "side": "buy", "volume": 0.01})
@@ -456,7 +456,7 @@ def test_an_order_the_ea_never_picked_up_is_withdrawn_and_never_runs_later(monke
 
 
 def test_a_command_older_than_the_wait_is_never_handed_to_the_ea(monkeypatch):
-    from web import mt4_bridge
+    from addons.trading.web import mt4_bridge
 
     store = mt4_bridge.Store()
     store.enqueue({"action": "order", "symbol": "XAUUSD", "side": "buy", "volume": 0.01})
@@ -467,8 +467,8 @@ def test_a_command_older_than_the_wait_is_never_handed_to_the_ea(monkeypatch):
 def test_a_command_the_ea_took_gets_more_time_and_then_an_unknown_answer(monkeypatch):
     import threading
 
-    from trading import mt4_backend
-    from web import mt4_bridge
+    from addons.trading import mt4_backend
+    from addons.trading.web import mt4_bridge
 
     monkeypatch.setattr(mt4_bridge, "IN_FLIGHT_WAIT", 0.3)
     store = mt4_bridge.Store()

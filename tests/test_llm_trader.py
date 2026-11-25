@@ -12,9 +12,9 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from model.router import pricing
-from trading.quant import llm_trader, papersim
-from trading.quant.llm_trader import LLMTrader, parse_decision
+from addons.trading.quant import llm_trader, papersim
+from addons.trading.quant.llm_trader import LLMTrader, parse_decision
+from brain.model.router import pricing
 
 
 class FakeClient:
@@ -169,9 +169,9 @@ def test_without_an_llm_there_is_no_llm_rule():
 
 # ── the LLM as the forward test's gate ─────────────────────────────────────
 def test_forward_confirm_mode_skips_when_the_llm_disagrees(tmp_path, monkeypatch):
+    from addons.trading.quant.forward import ForwardTest
     from tests.test_forward import Backend, _bars
     from tests.test_forward import Clock as FClock
-    from trading.quant.forward import ForwardTest
 
     monkeypatch.setenv("TRADE_JOURNAL", str(tmp_path / "journal.jsonl"))
     clock = FClock()
@@ -183,9 +183,9 @@ def test_forward_confirm_mode_skips_when_the_llm_disagrees(tmp_path, monkeypatch
 
 
 def test_forward_decide_mode_trades_the_llm_side(tmp_path, monkeypatch):
+    from addons.trading.quant.forward import ForwardTest
     from tests.test_forward import Backend, _bars
     from tests.test_forward import Clock as FClock
-    from trading.quant.forward import ForwardTest
 
     monkeypatch.setenv("TRADE_JOURNAL", str(tmp_path / "journal.jsonl"))
     clock = FClock()
@@ -201,7 +201,7 @@ def test_forward_decide_mode_trades_the_llm_side(tmp_path, monkeypatch):
 
 
 def test_llm_api(monkeypatch, tmp_path):
-    from web import quant_api
+    from addons.trading.web import quant_api
     from web.server import app
 
     monkeypatch.setattr(llm_trader, "CONFIG_PATH", tmp_path / "llm.json")
@@ -236,7 +236,7 @@ def test_llm_api(monkeypatch, tmp_path):
 
 # ── only models the Router serves ──────────────────────────────────────────
 def test_the_model_must_be_one_the_router_serves(monkeypatch):
-    from config import settings as settings_module
+    from brain.config import settings as settings_module
 
     served = ["vky/gemini/gemini-3.8-flash", "9R/kg/claude-haiku-5-5"]
     assert llm_trader.resolve_model("vky/gemini/gemini-3.8-flash", served) == ("vky/gemini/gemini-3.8-flash", "")
@@ -255,7 +255,7 @@ def test_the_model_must_be_one_the_router_serves(monkeypatch):
 
 
 def test_a_simulation_with_a_model_the_router_does_not_serve_is_refused(monkeypatch, tmp_path):
-    from web import quant_api
+    from addons.trading.web import quant_api
     from web.server import app
 
     monkeypatch.setattr(llm_trader, "CONFIG_PATH", tmp_path / "llm.json")
@@ -272,8 +272,8 @@ def test_a_simulation_with_a_model_the_router_does_not_serve_is_refused(monkeypa
 def test_the_picker_lists_models_by_provider(monkeypatch):
     import asyncio
 
-    from model.router import dispatch
-    from model.router.store import get_store
+    from brain.model.router import dispatch
+    from brain.model.router.store import get_store
 
     store = get_store()
     provider = store.add_provider({"name": "Picker Test", "base_url": "http://127.0.0.1:9/v1", "prefix": "pk/", "kind": "openai"})
@@ -295,8 +295,8 @@ def test_the_picker_lists_models_by_provider(monkeypatch):
 def test_router_clients_are_not_shared_between_event_loops():
     import asyncio
 
-    from model.router import dispatch
-    from model.router.store import Account, ProviderConfig
+    from brain.model.router import dispatch
+    from brain.model.router.store import Account, ProviderConfig
 
     provider = ProviderConfig(id="loop-test", name="Loop", kind="openai", base_url="http://127.0.0.1:9/v1", prefix="lt/")
     account = Account(id="a1", label="a", api_key="sk-x")

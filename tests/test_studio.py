@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from utils import studio_doc
+from addons.studio import studio_doc
 
 
 def test_the_template_is_valid_and_bad_documents_say_where_they_are_wrong() -> None:
@@ -37,7 +37,7 @@ def test_a_save_over_a_newer_change_is_refused(tmp_path: Path) -> None:
 
 
 def test_agent_tools_create_save_and_close_notes(tmp_path: Path) -> None:
-    from tool.execute.execute_toolbox import studio_tools as st
+    from tools.toolbox import studio_tools as st
 
     created = st.studio_create("Promo Kopi", workspace_path=str(tmp_path))
     name = created["name"]
@@ -95,11 +95,11 @@ def test_check_sees_what_a_viewer_would_see(tmp_path: Path) -> None:
 
 
 def test_a_studio_turn_brings_its_protocol_context_and_tools(tmp_path: Path) -> None:
-    from agent.harness.tiers import scaffold_for
-    from agent.harness.tool_select import select_tools
-    from config.constants import TaskType
-    from tool.register_tools import register_all_tools
-    from utils import studio_context
+    from addons.studio import studio_context
+    from brain.config.constants import TaskType
+    from brain.harness.tiers import scaffold_for
+    from brain.harness.tool_select import select_tools
+    from tools.register_tools import register_all_tools
 
     studio_doc.save(tmp_path, "promo", studio_doc.template(title="Kopi Senja"))
     assert studio_context.clean({"project": "../x"}) is None
@@ -118,8 +118,8 @@ def test_a_studio_turn_brings_its_protocol_context_and_tools(tmp_path: Path) -> 
 
 
 def test_tools_end_the_answer_with_a_studio_button(tmp_path: Path) -> None:
-    from tool.execute.execute_toolbox import studio_tools as st
-    from utils.workspace_context import _active_session
+    from brain.utils.workspace_context import _active_session
+    from tools.toolbox import studio_tools as st
 
     token = _active_session.set("run-abc123")
     try:
@@ -131,7 +131,7 @@ def test_tools_end_the_answer_with_a_studio_button(tmp_path: Path) -> None:
 
 
 def test_a_team_result_gets_a_button_for_the_video_it_made(tmp_path: Path) -> None:
-    from agent.team_orchestrator import TeamOrchestrator, TeamRun
+    from brain.agent.team_orchestrator import TeamOrchestrator, TeamRun
 
     studio_doc.save(tmp_path, "intro", studio_doc.template())
     run = TeamRun(id="run-xyz", team_id="t", task="buat intro")

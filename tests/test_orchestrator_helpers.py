@@ -1,4 +1,4 @@
-from agent.orchestrator import Orchestrator
+from brain.agent.orchestrator import Orchestrator
 
 
 def test_attach_images_converts_last_user_message():
@@ -10,7 +10,7 @@ def test_attach_images_converts_last_user_message():
 
 
 def test_inject_vault_memory_appends_to_system(monkeypatch):
-    from tool.execute.execute_local_memory import user_profile, vault_context
+    from tools.local_memory import user_profile, vault_context
 
     monkeypatch.setattr(vault_context, "build_context", lambda: "\nMEM")
     monkeypatch.setattr(vault_context, "build_global_context", lambda: "")

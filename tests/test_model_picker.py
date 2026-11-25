@@ -12,12 +12,12 @@ from collections import Counter
 import pytest
 import yaml
 
-from config.constants import TaskType
-from config.settings import get_settings
-from model.registry.model_info import ModelInfo
-from model.registry.model_registry import ModelRegistry
-from model.settings.model_picker import ModelPicker, discover, is_chat_model, is_cheap
-from model.settings.routing_type import Difficulty, RoutingType
+from brain.config.constants import TaskType
+from brain.config.settings import get_settings
+from brain.model.registry.model_info import ModelInfo
+from brain.model.registry.model_registry import ModelRegistry
+from brain.model.settings.model_picker import ModelPicker, discover, is_chat_model, is_cheap
+from brain.model.settings.routing_type import Difficulty, RoutingType
 
 
 def _picker(seed: int = 3) -> ModelPicker:

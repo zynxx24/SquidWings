@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from utils import local_ocr
+from brain.utils import local_ocr
 
 
 def png(image: Image.Image) -> bytes:

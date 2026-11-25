@@ -10,9 +10,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from config.constants import TaskType
-from utils.logger import get_logger
-from utils.workspace_context import get_active_ponytail
+from brain.config.constants import TaskType
+from brain.utils.cache import FileWatch
+from brain.utils.logger import get_logger
+from brain.utils.workspace_context import get_active_ponytail
 
 logger = get_logger(__name__)
 
@@ -30,7 +31,9 @@ _PROMPT_FILES: dict[TaskType, str] = {
 # Ponytail minimal-code ruleset. Customize without editing code:
 #   PONYTAIL_MODE  = off | lite | full (default) | ultra
 #   PONYTAIL_TASKS = comma-separated task types (default "code")
-# Edit brain/system_prompt/ponytail*.txt to change the wording itself.
+# The wording is the original Ponytail skill (DietrichGebert/ponytail, cloned through
+# skills/sources.json) with our adapter in skills/adapters/ponytail.md in front. The
+# ponytail*.txt files here are the offline fallback until that clone exists.
 _PONYTAIL_FILES = {
     "lite": "ponytail_lite.txt",
     "full": "ponytail.txt",
@@ -67,6 +70,9 @@ class SystemPromptManager:
         else:
             self._dir = Path(__file__).parent
         self._cache: dict[str, str] = {}
+        # A prompt .txt edited, or the Ponytail skill pulled from GitHub: rebuilt on the next request.
+        state = Path(__file__).resolve().parents[2] / "skills" / ".sources" / ".state.json"
+        self._watch = FileWatch(lambda: [*sorted(self._dir.glob("*.txt")), state], interval=3.0)
 
     def get_system_prompt(self, task_type: TaskType) -> str:
         """Get the system prompt for a task type.
@@ -85,15 +91,30 @@ class SystemPromptManager:
         pony = _ponytail_file()
         # Sessions choose their own mode, so the mode is part of the cache key.
         key = f"{filename}:{pony}"
+        if self._watch.changed():
+            self._cache.clear()
         if key in self._cache:
             return self._cache[key]
 
         base_prompt = self._load_file("_base.txt")
         task_prompt = self._load_file(filename)
-        extra = self._load_file(pony) if pony and task_type in _ponytail_tasks() else ""
+        extra = self._ponytail(pony) if pony and task_type in _ponytail_tasks() else ""
         prompt = "\n\n".join(part for part in (base_prompt, task_prompt, extra) if part)
         self._cache[key] = prompt
         return prompt
+
+    def _ponytail(self, filename: str) -> str:
+        """The Ponytail rules for this chat's level: the upstream skill plus our adapter, else the local copy."""
+        level = next((mode for mode, name in _PONYTAIL_FILES.items() if name == filename), "full")
+        try:
+            from skills import load_all
+
+            skill = load_all().get("ponytail")
+        except Exception:  # noqa: BLE001 - the skills package must never take the prompt down
+            skill = None
+        if skill is not None and skill.upstream_file is not None:
+            return f"{skill.body}\n\nPonytail level for this chat: {level}."
+        return self._load_file(filename)
 
     def _load_file(self, filename: str) -> str:
         """Load a prompt file from disk.

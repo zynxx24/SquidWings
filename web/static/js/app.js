@@ -259,7 +259,7 @@
     const options = Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)).map(([label, list]) =>
       `<optgroup label="${esc(label)}">${list.map(m =>
         `<option value="${esc(m.id)}" ${m.id === selected ? 'selected' : ''}>${esc(m.display_name)}</option>`).join('')}</optgroup>`).join('');
-    select.innerHTML = (withAuto ? `<option value="auto" ${selected === 'auto' ? 'selected' : ''}>Auto (pilih sesuai tugas)</option>` : '') + options;
+    select.innerHTML = (withAuto ? `<option value="auto" ${selected === 'auto' ? 'selected' : ''}>Auto (hemat: model termurah yang andal)</option>` : '') + options;
   }
 
   async function loadModels(retries = 3) {
@@ -425,6 +425,7 @@
       closeDrawers();
       renderSessions();
       loadStack();
+      attachLive(id).catch(() => {});   // an answer still being written there (another tab, a phone that slept)
     } catch (e) { toast(e.message); }
   }
 
@@ -471,6 +472,7 @@
     };
     row.appendChild(actions);
     $('thread').appendChild(row);
+    return row;
   }
 
   /* The prompt that produced an answer: the user message right before it. */
@@ -771,7 +773,13 @@
       },
       progress(event) {
         if (event.kind === 'route') {
-          setStatus(`Menunggu ${shortModel(event.model)}`, true);
+          setStatus(`Menunggu ${event.locked ? '🔒 ' : ''}${shortModel(event.model)}`, true);
+          if (event.reason) {
+            // Auto: why the autopilot picked this model (tier, success rate, cost).
+            stepList.insertAdjacentHTML('beforeend',
+              `<li class="step step-note">Auto memilih ${esc(shortModel(event.model))}: ${esc(String(event.reason).replace(/^Auto:\s*/, ''))}</li>`);
+            steps.classList.remove('hidden');
+          }
         } else if (event.kind === 'status') {
           if (event.note) {
             stepList.insertAdjacentHTML('beforeend', `<li class="step step-note">${esc(event.text)}</li>`);
@@ -914,47 +922,111 @@
     input.value = '';
     autosize();
 
-    addUser(label);
+    S.liveUserRow = addUser(label);
     if ($('chat-title').textContent === 'Chat baru') $('chat-title').textContent = label.replace(/\s+/g, ' ').slice(0, 70);
     const turn = createTurn();
     scrollDown(true);
     setBusy(true);
 
-    const settle = () => {
-      setBusy(false);
-      S.stopTurn = null;
-      if (S.ws) { S.ws.onmessage = null; S.ws.onclose = null; }
-      loadSessions();
-      loadStack();
-      // The code graph rebuilds in the background after files change.
-      setTimeout(loadStack, 5000);
-    };
-
     try {
       const ws = await connect();
-      S.stopTurn = () => ws.send(JSON.stringify({ type: 'stop' }));
-      ws.onclose = () => { S.ws = null; turn.error('Koneksi terputus.'); turn.finish(); settle(); };
-      ws.onmessage = event => {
-        const m = JSON.parse(event.data);
-        if (m.type === 'content') turn.content(m.content);
-        else if (m.type === 'thinking') turn.thinking(m.content);
-        else if (m.type === 'reset') turn.reset();
-        else if (m.type === 'progress') turn.progress(m);
-        else if (m.type === 'meta' && m.event === 'title' && m.session_id === S.session) showTitle(m.title);
-        else if (m.type === 'done') {
-          turn.finish();
-          turn.foot({ model: m.model_used, tokens: m.total_tokens, ms: m.latency_ms, harness: m.harness });
-          settle();
-        } else if (m.type === 'stopped') { turn.finish(); turn.stopped(); settle(); }
-        else if (m.type === 'error') { turn.finish(); turn.error(m.content); settle(); }
-      };
+      followTurn(ws, turn);
       ws.send(JSON.stringify({ message: full, session_id: S.session, images }));
     } catch (err) {
       turn.finish();
       turn.error(err.message);
-      settle();
+      settleTurn();
     }
   }
+
+  function settleTurn() {
+    setBusy(false);
+    S.stopTurn = null;
+    S.liveDrop = null;
+    if (S.ws) { S.ws.onmessage = null; S.ws.onclose = null; }
+    loadSessions();
+    loadStack();
+    // The code graph rebuilds in the background after files change.
+    setTimeout(loadStack, 5000);
+  }
+
+  // Stream one turn from this socket into `turn`. The answer is written by the server whether or not
+  // this page stays connected: a dropped connection (phone screen off, app in the background) only
+  // means following it again later, never losing it.
+  function followTurn(ws, turn) {
+    S.stopTurn = () => ws.send(JSON.stringify({ type: 'stop' }));
+    ws.onclose = () => { S.ws = null; dropped(turn); };
+    ws.onmessage = event => {
+      const m = JSON.parse(event.data);
+      if (m.type === 'content') turn.content(m.content);
+      else if (m.type === 'thinking') turn.thinking(m.content);
+      else if (m.type === 'reset') turn.reset();
+      else if (m.type === 'progress') turn.progress(m);
+      else if (m.type === 'meta' && m.event === 'title' && m.session_id === S.session) showTitle(m.title);
+      else if (m.type === 'done') {
+        turn.finish();
+        turn.foot({ model: m.model_used, tokens: m.total_tokens, ms: m.latency_ms, harness: m.harness });
+        settleTurn();
+      } else if (m.type === 'stopped') { turn.finish(); turn.stopped(); settleTurn(); }
+      else if (m.type === 'error') { turn.finish(); turn.error(m.content); settleTurn(); }
+    };
+  }
+
+  function dropped(turn) {
+    S.liveDrop = { session: S.session, turn };
+    turn.progress({ kind: 'status', note: true, text: 'Koneksi terputus. Jawaban tetap dikerjakan di server; menyambung lagi...' });
+    reattach();
+  }
+
+  // Follow the answer still being written in `session` (after a drop, or when the chat is opened).
+  async function attachLive(session, afterDrop = false) {
+    if (!session) return false;
+    const ws = await connect();
+    return new Promise(resolve => {
+      ws.onmessage = event => {
+        const m = JSON.parse(event.data);
+        if (m.type !== 'attach') return;
+        if (!m.running) { ws.onmessage = null; resolve(false); return; }
+        if (afterDrop && S.liveDrop) {
+          // The record replays from the start: drop the half-shown copy first.
+          S.liveDrop.turn.row.remove();
+          if (S.liveUserRow) S.liveUserRow.remove();
+        }
+        S.session = session;
+        store.set('session', session);
+        S.liveUserRow = addUser(userLabel(m.message));
+        const turn = createTurn();
+        setBusy(true);
+        followTurn(ws, turn);
+        scrollDown(true);
+        resolve(true);
+      };
+      ws.send(JSON.stringify({ type: 'attach', session_id: session, include_finished: afterDrop }));
+    });
+  }
+
+  let reattaching = false;
+  async function reattach() {
+    if (reattaching || !S.liveDrop) return;
+    if (document.hidden) return;   // tried again when the page is visible (visibilitychange)
+    reattaching = true;
+    try {
+      const { session, turn } = S.liveDrop;
+      const following = await attachLive(session, true);
+      if (!following && S.liveDrop) {
+        // Finished while away and already saved: show the chat as it is now.
+        turn.finish();
+        settleTurn();
+        if (session === S.session) await openSession(session);
+      }
+    } catch {
+      setTimeout(() => { reattaching = false; reattach(); }, 3000);
+      return;
+    }
+    reattaching = false;
+  }
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) reattach(); });
+  window.addEventListener('online', () => reattach());
 
   function autosize() {
     const input = $('input');
@@ -1570,7 +1642,11 @@
       await loadSessions();
       const last = store.get('session');
       if (last && S.sessions.some(s => s.session_id === last)) await openSession(last);
-      else await newChat();
+      else {
+        await newChat();
+        // Its first answer may still be running on the server: follow it instead of losing it.
+        if (last) await attachLive(last).catch(() => false);
+      }
     } catch (e) {
       toast(e.message);
     } finally {

@@ -1,0 +1,4 @@
+# Add-on trading: dipasang oleh `python main.py addon install trading`.
+# numpy, fastapi, httpx, dan yang lain sudah ada di requirements.txt inti.
+torch>=2.3                    # model candle (candle_lm); versi CPU sudah cukup
+MetaTrader5>=5.0; sys_platform == "win32"   # jembatan MT5, hanya ada untuk Windows

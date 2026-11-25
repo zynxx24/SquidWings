@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from brain.memory.conversation_store import ConversationStore, Message
-from utils import daily_brief
+from brain.utils import daily_brief
 
 NOW = dt.datetime(2026, 11, 12, 8, 0, tzinfo=dt.UTC)
 

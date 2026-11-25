@@ -1,0 +1,88 @@
+# How tasks use models. No model is named here: the list comes from your endpoint's /models.
+#
+# Connect a provider in .env with API_BASE_URL and API_KEY. Nothing else is needed. Auto mode then
+# picks among the models the endpoint lists, and learns which ones work.
+#
+# To fix the choice for a task, add easy, medium or hard to it, with an id your endpoint lists:
+#
+#   code:
+#     medium: "gpt-5"
+#     fallback_chain: ["gpt-5", "claude-sonnet-5"]
+
+routing:
+  code:
+    default_difficulty: medium
+    temperature: 0.2
+    enable_thinking: true
+    enable_tools: true
+  math:
+    default_difficulty: medium
+    temperature: 0.1
+    enable_thinking: true
+    enable_tools: false
+  activity:
+    default_difficulty: easy
+    temperature: 0.7
+    enable_thinking: false
+    enable_tools: false
+  school_task:
+    default_difficulty: medium
+    temperature: 0.3
+    enable_thinking: true
+    enable_tools: false
+  generate_img:
+    default_difficulty: easy
+    temperature: 0.8
+    enable_thinking: false
+    enable_tools: true
+  reason:
+    default_difficulty: hard
+    temperature: 0.1
+    enable_thinking: true
+    enable_tools: false
+  multimodal:
+    default_difficulty: easy
+    temperature: 0.5
+    enable_thinking: true
+    enable_tools: true
+
+# Set this, or DEFAULT_MODEL in .env, to pick the model used when routing has no better answer.
+default_model: ""
+
+token_limits:
+  code:
+    min_output: 100
+    default_max_output: 16384
+  math:
+    min_output: 50
+    default_max_output: 4096
+  activity:
+    min_output: 20
+    default_max_output: 8192
+  school_task:
+    min_output: 100
+    default_max_output: 16384
+  generate_img:
+    min_output: 10
+    default_max_output: 4096
+  reason:
+    min_output: 200
+    default_max_output: 32768
+  multimodal:
+    min_output: 20
+    default_max_output: 8192
+
+thinking_handlers:
+  gemini-level: "brain.model.parser.gemini_parser.GeminiParser"
+  claude-adaptive: "brain.model.parser.claude_parser.ClaudeAdaptiveParser"
+  claude-budget: "brain.model.parser.claude_parser.ClaudeBudgetParser"
+  openai: "brain.model.parser.openai_parser.OpenAIParser"
+  deepseek: "brain.model.parser.deepseek_parser.DeepSeekParser"
+
+# Models your endpoint does not list, or whose limits it does not report:
+#
+#   my-model:
+#     context_window: 128000
+#     max_output: 8192
+#     capabilities: {tools: true}
+models: {}

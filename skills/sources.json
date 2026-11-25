@@ -1,0 +1,439 @@
+{
+  "_doc": "Skills cloned from GitHub. Each source is cloned (shallow, sparse when 'paths' is set) into skills/.sources/ at start-up and pulled once a day. Skills listed under 'active' join the harness with the header given here; every other SKILL.md in the source is 'stored': out of the index and the prompt, loadable by exact name with load_skill. 'claude_code': true also links the skill into ~/.claude/skills so Claude Code can use it without this harness. See skills/sources.py. Skills Claude Code already has from a plugin (anthropic-skills: docx, pdf, pptx, xlsx, skill-creator) are not linked again. Our own adjustment for a skill lives in skills/adapters/<name>.md (see skills/adapters.py); the upstream text is never edited. 'file' names the upstream file when it is not SKILL.md.",
+  "claude_code_builtin": [
+    "aislop",
+    "redhat",
+    "humanizer-indonesia",
+    "design-ui",
+    "clean-code",
+    "laravel"
+  ],
+  "sources": [
+    {
+      "repo": "blader/humanizer",
+      "active": [
+        {
+          "name": "humanizer",
+          "path": ".",
+          "required": true,
+          "description": "Menyunting teks bahasa Inggris yang terdengar seperti AI (kontras not-X-but-Y, penutup satu baris, triad paksa, kata AI, klaim berlebihan) tanpa mengubah isinya. Untuk teks Indonesia pakai humanizer-indonesia.",
+          "triggers": "humanizer, humanize, humanise, sounds like ai, ai-sounding, ai tells, rewrite naturally, de-ai, terdengar ai, bahasa inggris kaku, english text, teks inggris, tulisan inggris",
+          "companion": "buat-dokumen, jawab-tugas, humanizer-indonesia",
+          "tasks": "activity, reason, school_task",
+          "tools": "load_skill, read_file, file_write, file_patch",
+          "claude_code": true,
+          "scope": "contextual"
+        }
+      ]
+    },
+    {
+      "repo": "obra/superpowers",
+      "paths": [
+        "skills"
+      ],
+      "active": [
+        {
+          "name": "systematic-debugging",
+          "path": "skills/systematic-debugging",
+          "description": "Cari akar masalah bug, test gagal, atau perilaku aneh dengan empat fase sebelum mengusulkan perbaikan.",
+          "triggers": "bug, error, debug, debugging, traceback, exception, crash, test gagal, failing test, flaky, tidak jalan, ga jalan, rusak, akar masalah, root cause",
+          "companion": "fix-bug",
+          "tasks": "code, activity",
+          "claude_code": true,
+          "scope": "contextual"
+        },
+        {
+          "name": "verification-before-completion",
+          "path": "skills/verification-before-completion",
+          "description": "Jalankan perintah verifikasi dan baca hasilnya sebelum menyatakan pekerjaan selesai, lulus, atau beres.",
+          "triggers": "sudah selesai, udah beres, sudah jalan, verifikasi, verify, pastikan jalan, cek lagi",
+          "companion": "fix-bug, add-feature, build-web, build-backend",
+          "tasks": "code, activity",
+          "claude_code": true,
+          "scope": "contextual"
+        },
+        {
+          "name": "test-driven-development",
+          "path": "skills/test-driven-development",
+          "description": "TDD: tulis test yang gagal dulu, lalu kode secukupnya sampai lulus, lalu rapikan.",
+          "triggers": "tdd, test driven, test-driven, test dulu, tulis test, bikin test, buat test, unit test, pest, pytest, jest, vitest, phpunit",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "writing-plans",
+          "path": "skills/writing-plans",
+          "description": "Menyusun rencana implementasi bertahap dari spesifikasi sebelum menyentuh kode.",
+          "triggers": "rencana implementasi, implementation plan, buat plan, bikin plan, buat rencana, bikin rencana, plan dulu, rencanakan, susun rencana, langkah implementasi",
+          "context": "fitur, kode, aplikasi, proyek, project, sistem, implementasi, refactor, migrasi, api, web",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "executing-plans",
+          "path": "skills/executing-plans",
+          "description": "Menjalankan rencana implementasi yang sudah tertulis, per tahap, dengan titik cek.",
+          "triggers": "jalankan rencana, eksekusi rencana, execute plan, kerjakan plan, ikuti rencana, lanjutkan rencana",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "brainstorming",
+          "path": "skills/brainstorming",
+          "description": "Menggali ide jadi desain matang lewat tanya jawab sebelum mulai membangun.",
+          "triggers": "brainstorm, brainstorming, diskusi ide, gali ide, ide fitur, rancang fitur, matangkan ide, desain fitur",
+          "scope": "contextual",
+          "tasks": "code, activity, reason",
+          "claude_code": true
+        }
+      ]
+    },
+    {
+      "repo": "anthropics/skills",
+      "paths": [
+        "skills"
+      ],
+      "active": [
+        {
+          "name": "pdf",
+          "path": "skills/pdf",
+          "description": "Mengolah file PDF yang sudah ada: gabung, pisah, putar, watermark, isi formulir, ekstrak teks dan tabel, OCR.",
+          "triggers": "gabung pdf, gabungkan pdf, merge pdf, pisah pdf, split pdf, putar pdf, rotate pdf, watermark, form pdf, formulir pdf, isi pdf, ekstrak pdf, tabel pdf, enkripsi pdf, password pdf",
+          "scope": "contextual",
+          "tasks": "activity, school_task, reason, code",
+          "claude_code": false
+        },
+        {
+          "name": "docx",
+          "path": "skills/docx",
+          "description": "Menyunting dokumen Word yang sudah ada: tracked changes, komentar, ganti isi, pakai template .docx/.dotx.",
+          "triggers": "tracked changes, track changes, lacak perubahan, komentar word, edit docx, ubah docx, revisi word, template docx, dotx, isi template word",
+          "scope": "contextual",
+          "tasks": "activity, school_task, reason, code",
+          "claude_code": false
+        },
+        {
+          "name": "pptx",
+          "path": "skills/pptx",
+          "description": "Menyunting atau membaca file PowerPoint yang sudah ada, termasuk template .potx dan catatan pembicara.",
+          "triggers": "edit pptx, ubah pptx, revisi slide, template pptx, potx, catatan pembicara, speaker notes, baca pptx",
+          "scope": "contextual",
+          "tasks": "activity, school_task, reason, code",
+          "claude_code": false
+        },
+        {
+          "name": "xlsx",
+          "path": "skills/xlsx",
+          "description": "Spreadsheet serius: rumus yang dihitung ulang, format, grafik, pembersihan data di .xlsx/.csv.",
+          "triggers": "rumus excel, formula excel, edit xlsx, ubah xlsx, pivot, recalc, hitung ulang excel, bersihkan data excel, model keuangan excel",
+          "scope": "contextual",
+          "tasks": "activity, school_task, reason, code",
+          "claude_code": false
+        },
+        {
+          "name": "webapp-testing",
+          "path": "skills/webapp-testing",
+          "description": "Menguji aplikasi web lokal dengan Playwright: klik, isi form, screenshot, baca log browser.",
+          "triggers": "playwright, e2e, end to end, uji web, test web, tes web, tes halaman, uji halaman, klik-klik, screenshot halaman, browser test",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "mcp-builder",
+          "path": "skills/mcp-builder",
+          "description": "Membangun server MCP (Model Context Protocol) yang rapi di Python atau TypeScript.",
+          "triggers": "mcp, mcp server, server mcp, model context protocol, fastmcp",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "skill-creator",
+          "path": "skills/skill-creator",
+          "description": "Membuat, memperbaiki, dan menguji SKILL.md baru.",
+          "triggers": "buat skill, bikin skill, skill baru, create skill, skill.md, perbaiki skill, evaluasi skill",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": false
+        }
+      ]
+    },
+    {
+      "repo": "remotion-dev/skills",
+      "paths": [
+        "skills"
+      ],
+      "active": [
+        {
+          "name": "remotion-best-practices",
+          "path": "skills/remotion-best-practices",
+          "description": "Panduan utama Remotion (video dari kode React): arahkan ke skill Remotion yang tepat.",
+          "triggers": "remotion",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "remotion-create",
+          "path": "skills/remotion-create",
+          "description": "Membuat proyek dan komposisi Remotion baru.",
+          "triggers": "remotion",
+          "context": "buat, bikin, baru, new, create, mulai, proyek, project, komposisi",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "remotion-render",
+          "path": "skills/remotion-render",
+          "description": "Merender video Remotion ke MP4 dan format lain.",
+          "triggers": "remotion",
+          "context": "render, export, ekspor, mp4, hasilkan, output",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        }
+      ]
+    },
+    {
+      "repo": "greensock/gsap-skills",
+      "paths": [
+        "skills"
+      ],
+      "active": [
+        {
+          "name": "gsap-core",
+          "path": "skills/gsap-core",
+          "description": "API inti GSAP: to/from/fromTo, easing, stagger, matchMedia dan reduced motion.",
+          "triggers": "gsap, greensock, tween",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "gsap-timeline",
+          "path": "skills/gsap-timeline",
+          "description": "Timeline GSAP: urutan, label, posisi, kontrol putar.",
+          "triggers": "gsap, greensock",
+          "context": "timeline, urutan, sequence, berurutan",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "gsap-scrolltrigger",
+          "path": "skills/gsap-scrolltrigger",
+          "description": "ScrollTrigger GSAP: animasi saat scroll, pin, scrub, parallax.",
+          "triggers": "scrolltrigger, scroll trigger, animasi scroll, scroll animation, parallax, pin section, scrub",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "gsap-react",
+          "path": "skills/gsap-react",
+          "description": "GSAP di React dan Next.js: useGSAP, scope, cleanup.",
+          "triggers": "usegsap, gsap react, gsap next, @gsap/react",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        }
+      ]
+    },
+    {
+      "repo": "nextlevelbuilder/ui-ux-pro-max-skill",
+      "paths": [
+        ".claude/skills"
+      ],
+      "active": [
+        {
+          "name": "ui-ux-pro-max",
+          "path": ".claude/skills/ui-ux-pro-max",
+          "description": "Basis data desain UI/UX (gaya, palet, pasangan font, pola UX, stack) dengan skrip pencarian untuk menyusun sistem desain.",
+          "triggers": "ui ux pro max, ui-ux-pro-max, design system, sistem desain, palet warna, color palette, pasangan font, font pairing, ux guideline, pedoman ux",
+          "scope": "contextual",
+          "tasks": "code, activity, generate_img",
+          "requires": "python3",
+          "claude_code": true,
+          "pool": "design"
+        }
+      ]
+    },
+    {
+      "repo": "pbakaus/impeccable",
+      "paths": [
+        ".claude/skills/impeccable"
+      ],
+      "active": [
+        {
+          "name": "impeccable",
+          "path": ".claude/skills/impeccable",
+          "description": "Kritik, audit, dan poles antarmuka frontend: tipografi, layout, warna, gerak, keadaan, dengan perintah per aspek.",
+          "triggers": "impeccable, audit desain, audit ui, kritik desain, critique, polish, poles tampilan, rapikan tampilan, perhalus ui, desain ulang, redesign",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true,
+          "pool": "design"
+        }
+      ]
+    },
+    {
+      "repo": "addyosmani/web-quality-skills",
+      "paths": [
+        "skills"
+      ],
+      "active": [
+        {
+          "name": "web-quality-audit",
+          "path": "skills/web-quality-audit",
+          "description": "Audit kualitas web menyeluruh ala Lighthouse: performa, aksesibilitas, SEO, best practice.",
+          "triggers": "audit web, web quality, kualitas web, lighthouse, cek kualitas web, audit situs, audit website",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "seo",
+          "path": "skills/seo",
+          "description": "SEO teknis: meta tag, canonical, sitemap, robots, structured data, Open Graph.",
+          "triggers": "seo, meta tag, meta description, sitemap, robots.txt, structured data, schema.org, json-ld, open graph, search console, masuk google, muncul di google, index google",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        },
+        {
+          "name": "accessibility",
+          "path": "skills/accessibility",
+          "description": "Aksesibilitas web (WCAG 2.2): kontras, keyboard, fokus, label, pembaca layar.",
+          "triggers": "a11y, accessibility, aksesibilitas, wcag, screen reader, pembaca layar, aria, keyboard navigation",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true,
+          "pool": "design"
+        },
+        {
+          "name": "performance",
+          "path": "skills/performance",
+          "description": "Performa web: ukuran bundle, gambar, cache, render blocking, waktu muat.",
+          "triggers": "performa web, web performance, page speed, pagespeed, lambat dimuat, loading lama, bundle size, ukuran bundle, core web vitals, lcp, cls, inp",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": true
+        }
+      ]
+    },
+    {
+      "repo": "thedotmack/claude-mem",
+      "paths": [
+        "plugin/skills"
+      ],
+      "active": []
+    },
+    {
+      "repo": "DietrichGebert/ponytail",
+      "paths": [
+        "skills"
+      ],
+      "active": [
+        {
+          "name": "ponytail",
+          "path": "skills/ponytail",
+          "description": "Mode lazy senior dev: perubahan terkecil yang menyelesaikan tugas sepenuhnya. Levelnya diatur per chat dengan /ponytail; aturannya juga masuk system prompt tugas kode.",
+          "triggers": "ponytail, mode malas, lazy senior, yagni, solusi paling sederhana, simplest solution, over-engineering, overengineering, kebanyakan abstraksi",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": false
+        },
+        {
+          "name": "ponytail-review",
+          "path": "skills/ponytail-review",
+          "description": "Review diff ala Ponytail: bug, keamanan, test yang hilang, dan kode yang tidak perlu ada.",
+          "triggers": "ponytail review, ponytail-review, review diff, review perubahan, cek diff",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "claude_code": false
+        }
+      ]
+    },
+    {
+      "repo": "kepano/obsidian-skills",
+      "paths": [
+        "plugins/obsidian/skills"
+      ],
+      "active": [
+        {
+          "name": "obsidian-markdown",
+          "path": "plugins/obsidian/skills/obsidian-markdown",
+          "description": "Menulis dan menyunting Markdown khas Obsidian: wikilink, embed, callout, properti, tag.",
+          "triggers": "obsidian, wikilink, wiki link, callout, catatan obsidian, obsidian note, obsidian vault, vault obsidian, embed catatan, frontmatter obsidian",
+          "scope": "contextual",
+          "tasks": "code, activity, reason, school_task",
+          "tools": "load_skill, read_file, file_write, file_patch, file_search, vault_write, vault_read, vault_search, vault_neighbours",
+          "claude_code": false
+        },
+        {
+          "name": "json-canvas",
+          "path": "plugins/obsidian/skills/json-canvas",
+          "description": "Membuat dan menyunting file .canvas (JSON Canvas) untuk peta pikiran dan diagram di Obsidian.",
+          "triggers": "json canvas, json-canvas, .canvas, obsidian canvas, canvas obsidian, mind map obsidian, peta pikiran obsidian",
+          "scope": "contextual",
+          "tasks": "code, activity, reason",
+          "tools": "load_skill, read_file, file_write, file_patch, vault_neighbours, vault_graph_build",
+          "claude_code": false
+        },
+        {
+          "name": "obsidian-bases",
+          "path": "plugins/obsidian/skills/obsidian-bases",
+          "description": "Membuat file .base Obsidian Bases: tampilan tabel atau kartu, filter, rumus, ringkasan.",
+          "triggers": "obsidian bases, obsidian base, .base, bases obsidian, database obsidian",
+          "scope": "contextual",
+          "tasks": "code, activity",
+          "tools": "load_skill, read_file, file_write, file_patch, vault_read",
+          "claude_code": false
+        }
+      ]
+    },
+    {
+      "repo": "safishamsi/graphify",
+      "paths": [
+        "graphify"
+      ],
+      "active": [
+        {
+          "name": "graphify",
+          "path": "graphify",
+          "file": "skill.md",
+          "description": "Graf pengetahuan dari kode atau dokumen: siapa memanggil apa, bagian paling sentral, dampak perubahan, laporan graf.",
+          "triggers": "graphify, graf kode, code graph, knowledge graph, graf pengetahuan, peta kode, arsitektur kode, siapa yang memanggil, who calls, dampak perubahan, god node, graph report",
+          "scope": "contextual",
+          "tasks": "code, activity, reason",
+          "tools": "load_skill, code_graph, read_file, file_search, execute_command, share_file",
+          "requires": "graphify",
+          "claude_code": false
+        }
+      ]
+    },
+    {
+      "repo": "googlemaps/agent-skills",
+      "paths": [
+        "skills/google-maps-platform"
+      ],
+      "active": [
+        {
+          "name": "google-maps",
+          "path": "skills/google-maps-platform",
+          "description": "Mengolah data tempat dari Google Maps (hasil scraper atau ekspor) dan pertanyaan lokasi - impor, saring, rangking, jarak, tempat terdekat, link peta, dan daftar leads - dengan kontak pribadi dibuang kecuali diminta.",
+          "triggers": "google maps, gmaps, peta, scrape maps, scraper maps, google-maps-scraper, gosom, hasil scrape, hasil scraping, data tempat, daftar tempat, tempat terdekat, terdekat, lokasi, koordinat, jarak, rute, leads, nearby, near me, dekat sini, sekitar sini, tempat makan, rekomendasi tempat, kuliner, restoran terbaik, kafe terbaik, cafe terbaik, seafood, warung makan, tempat nongkrong, tempat wisata, penginapan murah, hotel murah",
+          "scope": "contextual",
+          "context": "google maps, seafood, kuliner, makan, nongkrong, wisata, penginapan, jimbaran, kuta, ubud, seminyak, canggu, denpasar, bandung, jakarta, jogja, yogyakarta, surabaya, malang, semarang, medan, makassar, bali, di daerah, di sekitar, area, gmaps, maps, peta, map, scrape, scraper, scraping, tempat, alamat, address, koordinat, latitude, longitude, km, kilometer, sekitar, dekat, rute, route, kota, kecamatan, bisnis, usaha, umkm, toko, klinik, dokter, restoran, rumah makan, kafe, cafe, hotel, apotek, bengkel, salon, laundry, sekolah, kampus, masjid, gereja, spbu, atm, rumah sakit, rating, ulasan, leads, kompetitor, competitor",
+          "tools": "gmaps_import, places_search, places_stats, places_export, osm_nearby, geocode, maps_link, geo_distance, load_skill",
+          "claude_code": false
+        }
+      ]
+    }
+  ]
+}

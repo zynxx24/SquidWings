@@ -8,9 +8,9 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from brain.memory.conversation_store import ConversationStore
-from security import web_access
-from security.web_access import WebSecurityMiddleware
-from utils.helpers import is_valid_session_id
+from brain.security import web_access
+from brain.security.web_access import WebSecurityMiddleware
+from brain.utils.helpers import is_valid_session_id
 
 
 def make_client(**options) -> TestClient:
@@ -99,7 +99,7 @@ def test_chat_stream_carries_progress_and_reset(monkeypatch: pytest.MonkeyPatch)
     """Regression: the event's own "type" used to overwrite "progress"."""
     from unittest.mock import MagicMock
 
-    from agent.orchestrator import AgentResponse
+    from brain.agent.orchestrator import AgentResponse
     from web import server
 
     async def process(**kwargs):
@@ -134,7 +134,7 @@ def test_chat_routes_by_what_was_typed_not_by_the_attached_document(monkeypatch:
     classify the typed request, not the document pasted in front of it."""
     from unittest.mock import MagicMock
 
-    from agent.orchestrator import AgentResponse
+    from brain.agent.orchestrator import AgentResponse
     from web import server
 
     async def process(**kwargs):

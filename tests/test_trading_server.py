@@ -6,7 +6,7 @@ import socket
 
 from fastapi.testclient import TestClient
 
-from web import trading_server
+from addons.trading.web import trading_server
 
 
 def test_serves_the_panel_and_the_trading_apis():

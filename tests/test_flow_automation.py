@@ -9,10 +9,10 @@ from typing import Any
 
 import pytest
 
-from agent import team_flow, team_orchestrator, team_outputs
-from agent.team_orchestrator import TeamOrchestrator, TeamStore, team_templates
-from agent.team_outputs import OutputError
-from config.settings import get_settings
+from brain.agent import team_flow, team_orchestrator, team_outputs
+from brain.agent.team_orchestrator import TeamOrchestrator, TeamStore, team_templates
+from brain.agent.team_outputs import OutputError
+from brain.config.settings import get_settings
 from tests.test_team_nodes import FakeOrchestrator, agent, node
 
 MONDAY_8 = datetime(2026, 11, 2, 8, 0)
@@ -333,7 +333,7 @@ async def test_reminder_wakes_in_the_morning_then_rings_again(tmp_path: Path, se
 
 
 def test_folder_skills_load_with_guides_and_requirements(monkeypatch: pytest.MonkeyPatch) -> None:
-    from brain import skills
+    import skills
 
     skills.load_all.cache_clear()
     animate = skills.load_all()["animate"]
@@ -351,8 +351,8 @@ def test_folder_skills_load_with_guides_and_requirements(monkeypatch: pytest.Mon
 
 
 async def test_load_skill_reads_only_listed_guides_and_installs_once_per_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from brain import skills
-    from tool.execute.execute_skills import skill_tool
+    import skills
+    from tools.skills import skill_tool
 
     skills.load_all.cache_clear()
     escape = await skill_tool.load_skill("animate", file="../../../.env")
@@ -375,8 +375,8 @@ async def test_load_skill_reads_only_listed_guides_and_installs_once_per_session
 
 
 async def test_web_page_cache_is_kept_per_session(monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_web_search import web_reader
-    from utils.workspace_context import set_active_session
+    from brain.utils.workspace_context import set_active_session
+    from tools.web_search import web_reader
 
     downloads: list[str] = []
 
@@ -385,7 +385,7 @@ async def test_web_page_cache_is_kept_per_session(monkeypatch: pytest.MonkeyPatc
         return url, "text/plain", f"isi untuk unduhan {len(downloads)}".encode()
 
     monkeypatch.setattr(web_reader, "_download", fake_download)
-    monkeypatch.setattr(web_reader, "_cache", {})
+    monkeypatch.setattr(web_reader, "_cache", web_reader.cache("test.web.pages", max_entries=10))
 
     async def read_as(session: str) -> str:
         set_active_session(session)
@@ -397,7 +397,7 @@ async def test_web_page_cache_is_kept_per_session(monkeypatch: pytest.MonkeyPatc
 
 
 def test_contextual_skills_stay_dormant_without_context() -> None:
-    from brain import skills
+    import skills
 
     skills.load_all.cache_clear()
     assert skills.load_all()["animate"].scope == "contextual"
@@ -415,8 +415,8 @@ def test_contextual_skills_stay_dormant_without_context() -> None:
 
 
 def test_a_woken_skill_stays_for_that_session_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent.harness import briefing
-    from config.constants import TaskType
+    from brain.config.constants import TaskType
+    from brain.harness import briefing
 
     chat_a, chat_b = tmp_path / "a", tmp_path / "b"
     current = {"workspace": str(chat_a)}
@@ -432,8 +432,8 @@ def test_a_woken_skill_stays_for_that_session_only(tmp_path: Path, monkeypatch: 
 
 
 async def test_loading_a_dormant_skill_by_name_wakes_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_skills import skill_tool
-    from utils import session_settings
+    from brain.utils import session_settings
+    from tools.skills import skill_tool
 
     monkeypatch.setattr(skill_tool, "get_active_workspace", lambda: str(tmp_path))
     assert (await skill_tool.load_skill("animate"))["ok"]
@@ -444,7 +444,7 @@ async def test_loading_a_dormant_skill_by_name_wakes_it(tmp_path: Path, monkeypa
 
 
 async def test_video_mode_gives_long_limits_and_wakes_animate(tmp_path: Path, settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    from utils import session_settings
+    from brain.utils import session_settings
 
     monkeypatch.setattr(team_orchestrator.session_stack, "session_workspace", lambda run_id, create=True: tmp_path / run_id)
     manager, fake = make(tmp_path)
@@ -485,8 +485,8 @@ def test_video_studio_template_is_valid(tmp_path: Path, settings: Any) -> None:
 async def test_a_video_shared_mid_run_survives_a_lead_that_leaves_it_out(
     tmp_path: Path, settings: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from utils import shared_files
-    from utils.workspace_context import get_active_workspace
+    from brain.utils import shared_files
+    from brain.utils.workspace_context import get_active_workspace
 
     monkeypatch.setattr(team_orchestrator.session_stack, "session_workspace", lambda run_id, create=True: tmp_path / run_id)
     manager, fake = make(tmp_path)

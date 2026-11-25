@@ -1,7 +1,7 @@
 """Guard the web UI against CSP violations.
 
 The server ships a strict `script-src 'self'` policy (see
-`security/headers.py`). Any CDN `<script>`, or any inline `<script>` block,
+`brain/security/headers.py`). Any CDN `<script>`, or any inline `<script>` block,
 breaks the UI without breaking the Python code, so it needs a test.
 
 Keep every reference in these files local. If a vendor library is needed,
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from security.headers import DEFAULT_CSP
+from brain.security.headers import DEFAULT_CSP
 
 STATIC = Path(__file__).resolve().parent.parent / "web" / "static"
 INDEX = STATIC / "index.html"
@@ -82,7 +82,7 @@ def test_voice_script_and_mic_button_are_wired(index_html: str) -> None:
 
 
 def test_microphone_is_allowed_for_this_site_only() -> None:
-    from security.headers import DEFAULT_HEADERS
+    from brain.security.headers import DEFAULT_HEADERS
 
     policy = DEFAULT_HEADERS["Permissions-Policy"]
     assert "microphone=(self)" in policy

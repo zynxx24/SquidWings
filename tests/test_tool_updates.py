@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tool.execute.execute_code_intel import tool_updates
+from tools.code_intel import tool_updates
 
 
 @pytest.mark.parametrize(

@@ -8,7 +8,7 @@ import random
 import numpy as np
 import pytest
 
-from trading.quant import confluence, sessions
+from addons.trading.quant import confluence, sessions
 
 
 def trending_bars(n: int = 700, seed: int = 2) -> list[dict[str, float]]:

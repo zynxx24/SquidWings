@@ -55,11 +55,11 @@ def check_intent(case: dict[str, Any]) -> Verdict:
 
 def check_routing(case: dict[str, Any]) -> Verdict:
     """One routing case: the tools offered to a small model and the skills this request wakes."""
-    from agent.harness.tiers import scaffold_for
-    from agent.harness.tool_select import select_tools
-    from brain import skills
+    import skills
     from brain.classifier.intent_classifier import IntentClassifier
-    from tool.register_tools import register_all_tools
+    from brain.harness.tiers import scaffold_for
+    from brain.harness.tool_select import select_tools
+    from tools.register_tools import register_all_tools
 
     _quiet()
     text = case["text"]

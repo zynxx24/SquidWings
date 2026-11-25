@@ -12,13 +12,13 @@ from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw, ImageFont
 
 import web.server as server
-from agent.harness.briefing import skill_guidance
-from agent.harness.tiers import scaffold_for
 from brain.classifier.intent_classifier import IntentClassifier
-from config.constants import TaskType
-from utils import extract as extract_module
-from utils import local_ocr
-from utils.extract import extract, intent_of
+from brain.config.constants import TaskType
+from brain.harness.briefing import skill_guidance
+from brain.harness.tiers import scaffold_for
+from brain.utils import extract as extract_module
+from brain.utils import local_ocr
+from brain.utils.extract import extract, intent_of
 
 # The real OCR engine is optional on a dev box; the fake-OCR tests above still cover the flow.
 needs_ocr = pytest.mark.skipif(_ilu.find_spec("rapidocr_onnxruntime") is None, reason="rapidocr-onnxruntime not installed")
@@ -67,7 +67,7 @@ def test_every_line_stays_in_order_with_nothing_filtered():
 
 
 def test_lines_survive_compaction():
-    from utils.markdown_compact import compact_markdown
+    from brain.utils.markdown_compact import compact_markdown
 
     text = compact_markdown(extract(_pdf(WORKSHEET), "soal.pdf").markdown)
     assert [line.strip() for line in text.split("\n")][5:8] == ["A. Bandung", "B. Jakarta", "C. Medan"]
@@ -238,7 +238,7 @@ def _workspace_with_documents(tmp_path):
 
 
 def test_extract_files_handles_the_whole_workspace(tmp_path):
-    from tool.execute.execute_upload_file.extract_tool import extract_files
+    from tools.upload_file.extract_tool import extract_files
 
     root = _workspace_with_documents(tmp_path)
     out = asyncio.run(extract_files(workspace_path=str(root)))
@@ -248,7 +248,7 @@ def test_extract_files_handles_the_whole_workspace(tmp_path):
 
 
 def test_extract_files_skips_what_has_not_changed(tmp_path):
-    from tool.execute.execute_upload_file.extract_tool import extract_files
+    from tools.upload_file.extract_tool import extract_files
 
     root = _workspace_with_documents(tmp_path)
     asyncio.run(extract_files(workspace_path=str(root)))
@@ -258,14 +258,14 @@ def test_extract_files_skips_what_has_not_changed(tmp_path):
 
 
 def test_extract_files_stays_inside_the_workspace(tmp_path):
-    from tool.execute.execute_upload_file.extract_tool import extract_files
+    from tools.upload_file.extract_tool import extract_files
 
     out = asyncio.run(extract_files(path="../..", workspace_path=str(tmp_path)))
     assert out["success"] is False
 
 
 def test_extract_files_reports_a_broken_file_and_continues(tmp_path):
-    from tool.execute.execute_upload_file.extract_tool import extract_files
+    from tools.upload_file.extract_tool import extract_files
 
     (tmp_path / "rusak.xlsx").write_bytes(b"bukan excel")
     (tmp_path / "soal.pdf").write_bytes(_pdf(WORKSHEET))
@@ -275,7 +275,7 @@ def test_extract_files_reports_a_broken_file_and_continues(tmp_path):
 
 
 def test_read_file_saves_the_images_of_a_document(tmp_path):
-    from tool.execute.execute_upload_file.read_file_tool import read_file
+    from tools.upload_file.read_file_tool import read_file
 
     path = tmp_path / "scan.pdf"
     path.write_bytes(_scan())
@@ -412,7 +412,7 @@ def test_ocr_reads_the_lossless_copy_and_not_the_saved_jpeg(monkeypatch):
 
 
 def test_ocr_lines_stay_lines_after_compaction(monkeypatch):
-    from utils.markdown_compact import compact_markdown
+    from brain.utils.markdown_compact import compact_markdown
 
     monkeypatch.setenv("DOCUMENT_OCR", "true")
     monkeypatch.setattr(local_ocr, "read_images", lambda images: ["baris satu  \nbaris dua"] * len(images))

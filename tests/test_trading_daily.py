@@ -7,8 +7,8 @@ import math
 import numpy as np
 import pytest
 
-from trading.quant import analyst, daily, forecast, memory
-from trading.quant.daily import DAY
+from addons.trading.quant import analyst, daily, forecast, memory
+from addons.trading.quant.daily import DAY
 
 D0 = 1_700_006_400 // DAY * DAY          # a UTC midnight in 2023
 
@@ -122,7 +122,7 @@ def test_the_analyst_prompt_carries_the_daily_block_only_when_there_is_a_file(tm
 
 
 def test_a_synthetic_day_is_the_candle_it_was_drawn_from(tmp_path):
-    from trading.quant import synth
+    from addons.trading.quant import synth
 
     days = walk(40, seed=9)
     profile = np.linspace(0.5, 1.5, 24)
@@ -143,7 +143,7 @@ def test_a_synthetic_day_is_the_candle_it_was_drawn_from(tmp_path):
 
 
 def test_the_hour_profile_follows_where_the_moves_are():
-    from trading.quant import synth
+    from addons.trading.quant import synth
 
     bars = [{"t": float(D0 + i * 300), "o": 100.0, "h": 102.0, "l": 99.0, "c": 100.0 + (2.0 if (i * 300 % 86400) // 3600 == 8 else 0.1),
              "v": 1.0} for i in range(288 * 5)]
@@ -153,7 +153,7 @@ def test_the_hour_profile_follows_where_the_moves_are():
 
 
 def test_every_row_counts_equally_unless_recency_is_switched_on(monkeypatch):
-    from trading.quant import neural
+    from addons.trading.quant import neural
 
     calls: list[int] = []
     real = neural.recency_weights

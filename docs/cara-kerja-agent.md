@@ -1,6 +1,6 @@
 # Cara kerja agent
 
-`agent/harness/` memindahkan disiplin kerja dari model ke loop:
+`brain/harness/` memindahkan disiplin kerja dari model ke loop:
 
 | Lapisan | Fungsi |
 |---|---|
@@ -11,7 +11,7 @@
 | `advisor.py` | Meminta saran model lebih kuat saat macet, lalu menyerahkan tugasnya bila perlu |
 | `playbooks.py`, `briefing.py` | Menyimpan cara kerja yang berhasil dan memakainya lagi |
 
-Panduan kerja ada di `brain/skills/`: `fix-bug`, `add-feature`, `clean-code`, `web-research`, `design-ui`, `build-web`, `build-backend`, `teman-curhat`, `jawab-tugas`, `baca-dokumen`, `google-maps`, `buat-dokumen`, `humanizer-indonesia`, dan `animate`. Tiap panduan utama berisi bagian alur berpikir, supaya model murah tahu urutan menalarnya, bukan cuma aturannya. `teman-curhat` dipakai saat orang butuh didengar, dan `jawab-tugas` membuat jawaban tugas terdengar seperti tulisan orang. Baris `tasks:` membatasi skill ke jenis tugas tertentu, jadi kata "bingung" di permintaan coding tidak memuat panduan curhat, dan daftar skill di prompt hanya memuat skill utama untuk jenis tugas itu: chat curhat tidak membawa daftar skill backend.
+Panduan kerja ada di `skills/`: `fix-bug`, `add-feature`, `clean-code`, `web-research`, `design-ui`, `build-web`, `build-backend`, `teman-curhat`, `jawab-tugas`, `baca-dokumen`, `google-maps`, `buat-dokumen`, `humanizer-indonesia`, dan `animate`. Tiap panduan utama berisi bagian alur berpikir, supaya model murah tahu urutan menalarnya, bukan cuma aturannya. `teman-curhat` dipakai saat orang butuh didengar, dan `jawab-tugas` membuat jawaban tugas terdengar seperti tulisan orang. Baris `tasks:` membatasi skill ke jenis tugas tertentu, jadi kata "bingung" di permintaan coding tidak memuat panduan curhat, dan daftar skill di prompt hanya memuat skill utama untuk jenis tugas itu: chat curhat tidak membawa daftar skill backend.
 
 Skill besar berupa folder dengan `SKILL.md` dan file pendamping. `animate` (diadaptasi dari [cth9191/animate](https://github.com/cth9191/animate), MIT) membuat video animasi pendek sepenuhnya dari kode, dengan gaya cut paper, crosshatch, riso, sketchbook, math, pixel, atau isometric. Agent memasang kit-nya ke `.skills/<sesi>/animate/`, satu salinan per sesi supaya dua chat di proyek yang sama tidak saling campur, lalu bertanya soal cerita, tampilan, dan storyboard sebelum merender. Butuh Node 18+, ffmpeg, dan Chromium untuk Playwright (`npx playwright install chromium`).
 
@@ -34,7 +34,7 @@ Skill tambahan bisa ditaruh di folder `SKILLS_DIR`, dan skill yang tidak dipakai
 
 ### Skill dari GitHub
 
-`brain/skills/sources.json` berisi daftar repo skill di GitHub. Begitu skill dimuat dari pintu mana pun (`chat`, `web`, `ask`, atau run tim), repo yang belum ada di-clone otomatis ke `brain/skills/.sources/` di background. Setiap 10 menit loop yang sama memeriksa lagi, jadi repo yang baru ditambahkan ke `sources.json` ikut ter-download tanpa restart. Clone-nya dangkal (`--depth 1`), dan sparse bila entri punya `paths`, jadi repo 100 MB hanya memakan beberapa MB. Sekali sehari semua clone ditarik ke commit terbaru. Folder itu di-gitignore: skill diambil, tidak ikut di-commit.
+`skills/sources.json` berisi daftar repo skill di GitHub. Begitu skill dimuat dari pintu mana pun (`chat`, `web`, `ask`, atau run tim), repo yang belum ada di-clone otomatis ke `skills/.sources/` di background. Setiap 10 menit loop yang sama memeriksa lagi, jadi repo yang baru ditambahkan ke `sources.json` ikut ter-download tanpa restart. Clone-nya dangkal (`--depth 1`), dan sparse bila entri punya `paths`, jadi repo 100 MB hanya memakan beberapa MB. Sekali sehari semua clone ditarik ke commit terbaru. Folder itu di-gitignore: skill diambil, tidak ikut di-commit.
 
 Tiap repo memilih skill mana yang penting:
 
@@ -82,7 +82,7 @@ Pengaturan: `SKILL_SOURCES=0` mematikan semuanya, `SKILL_SOURCES_UPDATE_HOURS` m
 
 ## Toolbox: tool tepat yang tersembunyi
 
-Model murah sering salah kalau menghitung atau mengonversi di kepala. `tool/execute/execute_toolbox/` berisi 127 tool kecil yang jawabannya pasti, dalam 16 grup:
+Model murah sering salah kalau menghitung atau mengonversi di kepala. `tools/toolbox/` berisi 127 tool kecil yang jawabannya pasti, dalam 16 grup:
 
 | Grup | Contoh tool |
 |---|---|
@@ -94,7 +94,7 @@ Model murah sering salah kalau menghitung atau mengonversi di kepala. `tool/exec
 | `finance`, `indonesia` | `loan_payment` (anuitas, bunga flat, efektif), `compound_interest`, `npv_irr`, `zakat_calc`, `terbilang`, `rupiah`, `phone_id`, `plat_nomor` |
 | `maps` | `gmaps_import`, `places_search`, `places_stats`, `places_export`, `geo_distance`, `maps_link`, `geocode`, `osm_nearby`, `gmaps_scrape` |
 | `office` | `doc_create` (Word dari Markdown: judul, daftar, tabel, gambar, nomor halaman, margin akademik), `slides_create` (PowerPoint 16:9 dengan catatan pembicara), `sheet_create` (Excel dengan format Rupiah, total, rumus; atau CSV), `office_to_pdf` (lewat LibreOffice). Ketiganya memakai 20 tema (warna, font, gaya judul, dekorasi slide) plus `formal`; tanpa `theme`, setiap file memakai tema yang belum dipakai di chat itu maupun di chat lain akhir-akhir ini |
-| `design` | `style_pick`: satu arah desain untuk web, slide, gambar, video, atau dokumen dari 31 arah di `brain/styles/styles.yaml` (palet hex, Google Fonts, tata letak, motif, gerak, resep gambar, yang dihindari). Memilih yang cocok dengan subjek dan melewati arah yang dipakai chat-chat terakhir (`.agent_memory/style_history.json`), jadi dua permintaan yang sama tampil beda |
+| `design` | `style_pick`: satu arah desain untuk web, slide, gambar, video, atau dokumen dari 31 arah di `input/styles/styles.yaml` (palet hex, Google Fonts, tata letak, motif, gerak, resep gambar, yang dihindari). Memilih yang cocok dengan subjek dan melewati arah yang dipakai chat-chat terakhir (`.agent_memory/style_history.json`), jadi dua permintaan yang sama tampil beda |
 | `voice` | `voice_list` (suara di akun ElevenLabs dan sisa kuota), `voice_speak` (teks jadi MP3 di workspace, misalnya voice-over video). Butuh ElevenLabs API key di tab Kredensial atau `ELEVENLABS_API_KEY`; tanpa itu keduanya menjelaskan cara menyambungkan |
 | `tradecalc`, `health`, `live` | `position_size`, `risk_reward`, `drawdown_stats`, `bmi_calc`, `weather`, `currency_convert`, `public_holidays`, `wiki_summary` |
 

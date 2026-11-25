@@ -11,7 +11,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from config.settings import Settings
+from brain.config.settings import Settings
 from web import server, team_api
 
 

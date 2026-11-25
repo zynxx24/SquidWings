@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from tool.execute.execute_toolbox import CATALOG, match
-from utils import datastore
-from utils.datastore import access, registry
+from brain.utils import datastore
+from brain.utils.datastore import access, registry
+from tools.toolbox import CATALOG, match
 
 
 def call(name: str, **kwargs: Any) -> dict[str, Any]:
@@ -161,7 +161,7 @@ def test_notifying_the_owner_is_limited_and_names_the_customer(monkeypatch: pyte
         sent.append(text)
         return 1
 
-    monkeypatch.setattr("agent.team_outputs.send_telegram", fake_send)
+    monkeypatch.setattr("brain.agent.team_outputs.send_telegram", fake_send)
     with access.restrict(access.Access(public=True, context="Budi (@budi), chat 5")):
         for _ in range(3):
             ok("owner_notify", message="Pelanggan minta nego harga")

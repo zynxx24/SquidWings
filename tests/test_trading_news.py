@@ -8,8 +8,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from trading import news
-from trading.news import NewsDesk
+from addons.trading import news
+from addons.trading.news import NewsDesk
 
 RSS = b"""<?xml version="1.0"?>
 <rss version="2.0"><channel>
@@ -125,7 +125,7 @@ def test_cache_ttl_and_a_failing_source_keeps_its_last_copy(tmp_path):
 
 
 def test_calendar_feeds_the_proposal_news_filter(tmp_path):
-    from trading import strategy
+    from addons.trading import strategy
 
     desk = NewsDesk(get=fake_get(), folder=tmp_path, clock=lambda: NOW)
     events = strategy.load_news(desk.calendar_events())
@@ -144,7 +144,7 @@ def test_market_condition_from_the_mt4_price():
 
 
 def test_news_api(monkeypatch, tmp_path):
-    from web import quant_api
+    from addons.trading.web import quant_api
     from web.server import app
 
     desk = NewsDesk(get=fake_get(), folder=tmp_path, clock=lambda: NOW)

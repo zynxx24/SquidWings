@@ -77,10 +77,10 @@ def test_continuation_hint_is_non_empty_instruction() -> None:
 
 
 async def test_continuation_turn_reuses_previous_model(tmp_path) -> None:
-    from agent.orchestrator import Orchestrator
+    from brain.agent.orchestrator import Orchestrator
+    from brain.config.settings import Settings
     from brain.memory.conversation_store import ConversationStore
-    from config.settings import Settings
-    from model.registry.model_info import ModelInfo
+    from brain.model.registry.model_info import ModelInfo
 
     good = {"choices": [{"message": {"content": "lanjutan"}, "finish_reason": "stop"}], "usage": {}}
     calls: list[str] = []

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from config import edition
+from brain.config import edition
 
 
 @pytest.fixture
@@ -35,13 +35,14 @@ def test_trading_is_on_only_with_every_file(fresh, monkeypatch, tmp_path):
 
 
 def test_the_switch_turns_an_installed_module_off(fresh, monkeypatch):
+    monkeypatch.delenv("ADDON_TRADING", raising=False)
     monkeypatch.setenv("ENTERPRISE_TRADING", "0")
     assert edition.trading_enabled() is False
 
 
 def test_the_tool_registry_skips_the_trading_tool_without_the_module(monkeypatch):
-    from tool import register_tools
-    from tool.registry.tool_registry import ToolRegistry
+    from tools import register_tools
+    from tools.registry.tool_registry import ToolRegistry
 
     monkeypatch.setattr(ToolRegistry, "_instance", None)   # a fresh registry, not the shared one
     monkeypatch.setattr(register_tools, "trading_enabled", lambda: False)
@@ -73,3 +74,36 @@ def test_the_trading_command_explains_the_edition(monkeypatch):
     with pytest.raises(SystemExit) as stop:
         main.main()
     assert stop.value.code == 2
+
+
+def test_addons_are_off_until_switched_on(fresh, monkeypatch, tmp_path):
+    monkeypatch.delenv("ADDON_TRADING", raising=False)
+    monkeypatch.delenv("ENTERPRISE_TRADING", raising=False)
+    monkeypatch.setattr(edition, "STATE_FILE", tmp_path / "enabled.json")
+    assert edition.files_complete("trading")
+    assert edition.trading_enabled() is False, "a fresh clone has trading off"
+    edition.write_state("trading", True)
+    assert edition.trading_enabled() is True
+    monkeypatch.setenv("ADDON_TRADING", "0")
+    edition.clear_cache()
+    assert edition.trading_enabled() is False, "the environment wins over the saved switch"
+
+
+def test_addon_manager_switches_on_and_off_without_touching_files(fresh, monkeypatch, tmp_path):
+    from addons import manager
+
+    monkeypatch.delenv("ADDON_STUDIO", raising=False)
+    monkeypatch.setattr(edition, "STATE_FILE", tmp_path / "enabled.json")
+    result = manager.install("studio", deps=False)
+    assert result["ok"] and result["on"] and result["manual"], result
+    assert manager.remove("studio")["on"] is False
+    assert edition.files_complete("studio")
+    assert manager.install("nope")["ok"] is False
+
+
+def test_every_addon_manifest_lists_real_files():
+    assert set(edition.names()) >= {"trading", "studio"}
+    for name in edition.names():
+        spec = edition.manifest(name)
+        assert spec["files"] and all((edition.ROOT / f).is_file() for f in spec["files"]), name
+        assert set(spec["manual"]) == {"windows", "linux", "macos"}, name

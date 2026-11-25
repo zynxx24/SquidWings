@@ -8,8 +8,8 @@ from typing import Any
 import httpx
 import pytest
 
-from config import credentials
-from tool.execute.execute_toolbox import CATALOG, match, voice_tools
+from brain.config import credentials
+from tools.toolbox import CATALOG, match, voice_tools
 
 KEY = "sk_test_0123456789abcdefghijklmnop"
 VOICES = {"voices": [
@@ -57,7 +57,7 @@ def api(monkeypatch, tmp_path):
 
 @pytest.fixture()
 def ws(tmp_path):
-    from utils import workspace_context
+    from brain.utils import workspace_context
 
     token = workspace_context._active_workspace.set(str(tmp_path))
     yield tmp_path
@@ -145,7 +145,7 @@ def test_the_credentials_test_button_checks_elevenlabs(api):
 
 
 def test_the_credentials_test_button_says_how_to_connect(no_key):
-    from agent.team_outputs import OutputError
+    from brain.agent.team_outputs import OutputError
     from web.team_api import _test_voice
 
     with pytest.raises(OutputError, match="belum tersambung"):

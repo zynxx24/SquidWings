@@ -8,8 +8,8 @@ import os
 import numpy as np
 import pytest
 
-from trading.quant import analyst, confluence, neural
-from trading.quant.memory import PLANS, SL, TIMEOUT, TP
+from addons.trading.quant import analyst, confluence, neural
+from addons.trading.quant.memory import PLANS, SL, TIMEOUT, TP
 
 os.environ.setdefault("TRADING_BRAIN_SIZE", "kecil")   # tests train the small networks; the machine's size is for real use
 

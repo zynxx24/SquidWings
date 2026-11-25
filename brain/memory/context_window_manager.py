@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from brain.generate_efficient_token.token_counter import TokenCounter
-from brain.generate_efficient_token.token_optimizer import TokenOptimizer
-from config.constants import TOKEN_BUFFER
-from utils.logger import get_logger
+from brain.config.constants import TOKEN_BUFFER
+from brain.utils.logger import get_logger
+from input.generate_efficient_token.token_counter import TokenCounter
+from input.generate_efficient_token.token_optimizer import TokenOptimizer
 
 logger = get_logger(__name__)
 

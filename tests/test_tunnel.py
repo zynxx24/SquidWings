@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from utils.tunnel import (
+from brain.utils.tunnel import (
     CloudflareTunnel,
     find_cloudflared_binary,
     get_current_tunnel,

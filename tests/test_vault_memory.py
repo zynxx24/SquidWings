@@ -32,10 +32,10 @@ from typing import Any
 
 import pytest
 
-from tool.execute.execute_local_memory import vault_context
-from tool.execute.execute_local_memory import vault_tool as V
-from tool.execute.execute_local_memory.vault import constants as C
-from tool.execute.execute_local_memory.vault.index import VaultIndex
+from tools.local_memory import vault_context
+from tools.local_memory import vault_tool as V
+from tools.local_memory.vault import constants as C
+from tools.local_memory.vault.index import VaultIndex
 
 FOLDERS = (
     "00-inbox",

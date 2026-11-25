@@ -60,7 +60,7 @@ def test_a_broken_store_never_breaks_the_turn() -> None:
 
 
 def test_standing_preferences_are_saved_but_ordinary_sentences_are_not() -> None:
-    from tool.execute.execute_local_memory.user_profile import _preference
+    from tools.local_memory.user_profile import _preference
 
     assert _preference("mulai sekarang jawab pakai bahasa santai ya") == "mulai sekarang jawab pakai bahasa santai ya"
     assert _preference("tolong jangan pakai bullet point lagi. Buat ringkasan bab 3") == "tolong jangan pakai bullet point lagi"

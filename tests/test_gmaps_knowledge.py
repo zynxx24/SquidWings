@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from knowledge import gmaps_import as gmaps
+from tools.knowledge import gmaps_import as gmaps
 
 CSV = (
     "title,category,address,website,phone,emails,review_rating,review_count,latitude,longitude,place_id\n"
@@ -22,7 +22,7 @@ CSV = (
 
 @pytest.fixture()
 def workspace(tmp_path, monkeypatch):
-    from tool.execute.execute_local_memory import vault_tool
+    from tools.local_memory import vault_tool
     monkeypatch.setattr(vault_tool, "get_active_workspace", lambda: str(tmp_path))
     return tmp_path
 

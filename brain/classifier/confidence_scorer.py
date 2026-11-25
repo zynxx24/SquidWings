@@ -7,8 +7,8 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
-from config.constants import TaskType
-from utils.logger import get_logger
+from brain.config.constants import TaskType
+from brain.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

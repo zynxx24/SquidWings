@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from brain import skills
-from brain.skills import sources
+import skills
+from skills import sources
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -97,7 +97,7 @@ def test_loader_merges_active_keeps_builtins_and_hides_stored(setup: Path):
 
 
 def test_load_skill_opens_stored_skills_and_suggests_close_ones(setup: Path):
-    from tool.execute.execute_skills.skill_tool import load_skill
+    from tools.skills.skill_tool import load_skill
 
     sources.sync()
     opened = asyncio.run(load_skill("beta"))
@@ -164,7 +164,7 @@ def test_runnable_installs_code_skills_and_rewrites_paths(setup: Path, monkeypat
 
 
 def test_load_skill_search_and_claude_style_names(setup: Path):
-    from tool.execute.execute_skills.skill_tool import load_skill
+    from tools.skills.skill_tool import load_skill
 
     sources.sync()
     found = asyncio.run(load_skill(search="beta things"))

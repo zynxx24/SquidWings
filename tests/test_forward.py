@@ -8,9 +8,9 @@ import random
 import pytest
 from fastapi.testclient import TestClient
 
-from trading import journal
-from trading.quant import forward
-from trading.quant.forward import ForwardTest
+from addons.trading import journal
+from addons.trading.quant import forward
+from addons.trading.quant.forward import ForwardTest
 
 
 class Backend:
@@ -165,7 +165,7 @@ def test_a_thin_tick_history_waits_instead_of_trading(tmp_path):
 
 
 def test_closes_made_in_the_terminal_reach_the_journal_once(monkeypatch):
-    from web import mt4_bridge
+    from addons.trading.web import mt4_bridge
 
     monkeypatch.setenv("MT4_RECORD_TICKS", "1")
     monkeypatch.setattr(mt4_bridge.ticks, "append_bars", lambda *a: None)
@@ -178,7 +178,7 @@ def test_closes_made_in_the_terminal_reach_the_journal_once(monkeypatch):
 
 
 def test_trade_history_survives_a_restart(monkeypatch):
-    from web import mt4_bridge
+    from addons.trading.web import mt4_bridge
 
     monkeypatch.setenv("MT4_RECORD_TICKS", "1")
     monkeypatch.setattr(mt4_bridge.ticks, "load_saved_bars", dict)
@@ -205,14 +205,14 @@ def test_the_report_shows_what_the_balance_did(tmp_path):
 
 
 def test_a_stop_too_far_to_protect_anything_is_refused():
-    from trading import mt5_rules
+    from addons.trading import mt5_rules
 
     assert mt5_rules.check_risk({"pct_of_equity": 22.0}) and "MT5_MAX_RISK_PCT" in mt5_rules.check_risk({"pct_of_equity": 22.0})[0]
     assert mt5_rules.check_risk({"pct_of_equity": 1.0}) == [] and mt5_rules.check_risk(None) == []
 
 
 def test_the_api_refuses_a_live_account(monkeypatch):
-    from web import quant_api, trading_server
+    from addons.trading.web import quant_api, trading_server
 
     monkeypatch.setattr(quant_api, "_backend", lambda: Backend(live=True))
     monkeypatch.setattr(quant_api, "_forward", None)

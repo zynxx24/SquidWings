@@ -13,9 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from agent.team_orchestrator import team_templates
-from agent.team_outputs import OutputError, check_database, database_options, send_telegram
-from config import credentials
+from brain.agent.team_orchestrator import team_templates
+from brain.agent.team_outputs import OutputError, check_database, database_options, send_telegram
+from brain.config import credentials
 from web.router_api import admin
 
 router = APIRouter(prefix="/api/teams", tags=["AI teams"])
@@ -139,7 +139,7 @@ async def _test_search() -> list[str]:
 
 async def _test_voice() -> str:
     """List the account's voices: proves the key works without spending a character."""
-    from tool.execute.execute_toolbox import voice_tools
+    from tools.toolbox import voice_tools
 
     out = await voice_tools.voice_list(engine="elevenlabs")
     if not out.get("ok"):
@@ -154,8 +154,8 @@ async def _test_voice() -> str:
 
 def _test_google() -> str:
     """Ask Google for a token with the saved key: proves the key is real, without touching any spreadsheet."""
-    from utils.datastore import DataError
-    from utils.datastore.sheets import SheetsBackend, parse_service_account
+    from brain.utils.datastore import DataError
+    from brain.utils.datastore.sheets import SheetsBackend, parse_service_account
 
     try:
         email = SheetsBackend("", parse_service_account(credentials.get("google_service_account"))).verify_account()

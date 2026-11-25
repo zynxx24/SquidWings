@@ -7,10 +7,10 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from trading.quant import analyst, autotrade, llm_trader, papersim, trail
-from trading.quant.autotrade import AutoTrader
-from trading.quant.memory import PLANS
-from trading.quant.trail import TrailState
+from addons.trading.quant import analyst, autotrade, llm_trader, papersim, trail
+from addons.trading.quant.autotrade import AutoTrader
+from addons.trading.quant.memory import PLANS
+from addons.trading.quant.trail import TrailState
 
 
 # ── the math ────────────────────────────────────────────────────────────────
@@ -205,7 +205,7 @@ class Broker:
 
 
 def test_the_auto_trade_opens_on_the_bar_moves_the_stop_in_the_terminal_and_closes_at_the_trail(tmp_path, monkeypatch):
-    from trading import journal
+    from addons.trading import journal
 
     monkeypatch.setattr(journal, "path", lambda: tmp_path / "journal.jsonl")
     clock = Clock()
@@ -240,7 +240,7 @@ def test_the_auto_trade_opens_on_the_bar_moves_the_stop_in_the_terminal_and_clos
 
 
 def test_a_close_made_by_the_broker_is_noticed_and_the_hold_ends_a_position(tmp_path, monkeypatch):
-    from trading import journal
+    from addons.trading import journal
 
     monkeypatch.setattr(journal, "path", lambda: tmp_path / "journal.jsonl")
     clock = Clock()
@@ -264,7 +264,7 @@ def test_a_close_made_by_the_broker_is_noticed_and_the_hold_ends_a_position(tmp_
 
 
 def test_the_run_refuses_a_live_account_unless_allowed_and_stops_at_the_daily_loss(tmp_path, monkeypatch):
-    from trading import journal
+    from addons.trading import journal
 
     monkeypatch.setattr(journal, "path", lambda: tmp_path / "journal.jsonl")
     clock = Clock()
@@ -294,8 +294,8 @@ def test_bad_settings_are_refused(kw, tmp_path):
 
 
 def test_the_agree_mode_needs_the_brain_and_the_llm_on_one_side(tmp_path, monkeypatch):
-    from trading import journal
-    from trading.quant import memory
+    from addons.trading import journal
+    from addons.trading.quant import memory
 
     monkeypatch.setattr(journal, "path", lambda: tmp_path / "journal.jsonl")
     clock = Clock()
@@ -331,7 +331,7 @@ def test_the_agree_mode_needs_the_brain_and_the_llm_on_one_side(tmp_path, monkey
 
 def test_an_order_without_an_answer_is_found_and_managed_never_sent_twice(tmp_path, monkeypatch):
     """The EA took the order but its answer was lost: the position may be open, so the run looks for it."""
-    from trading import journal
+    from addons.trading import journal
 
     monkeypatch.setattr(journal, "path", lambda: tmp_path / "journal.jsonl")
     clock = Clock()
@@ -369,7 +369,7 @@ def test_an_order_without_an_answer_and_no_position_is_given_up(tmp_path):
 
 
 def test_a_close_that_fails_at_the_end_leaves_the_position_reported_open(tmp_path, monkeypatch):
-    from trading import journal
+    from addons.trading import journal
 
     monkeypatch.setattr(journal, "path", lambda: tmp_path / "journal.jsonl")
     clock = Clock()
@@ -387,7 +387,7 @@ def test_a_close_that_fails_at_the_end_leaves_the_position_reported_open(tmp_pat
 
 
 def test_a_run_started_in_the_middle_of_a_bar_waits_for_the_next_close(tmp_path, monkeypatch):
-    from trading import journal
+    from addons.trading import journal
 
     monkeypatch.setattr(journal, "path", lambda: tmp_path / "journal.jsonl")
     clock = Clock()
@@ -406,7 +406,7 @@ def test_a_run_started_in_the_middle_of_a_bar_waits_for_the_next_close(tmp_path,
 
 
 def test_a_refused_stop_move_is_tried_again_later_without_waiting_for_the_trail(tmp_path, monkeypatch):
-    from trading import journal
+    from addons.trading import journal
 
     monkeypatch.setattr(journal, "path", lambda: tmp_path / "journal.jsonl")
     clock = Clock()
@@ -461,7 +461,7 @@ def test_the_env_limits_bind_the_auto_trade_too(tmp_path, monkeypatch):
 
 
 def test_the_api_starts_stops_and_reports_the_auto_trade(monkeypatch, tmp_path):
-    from web import quant_api
+    from addons.trading.web import quant_api
     from web.server import app
 
     clock = Clock()

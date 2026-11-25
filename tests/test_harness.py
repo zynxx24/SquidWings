@@ -8,9 +8,10 @@ from typing import Any
 
 import pytest
 
-from agent.agent_loop import AgentLoop
-from agent.harness import Harness, Tier, playbooks, scaffold_for, tier_for
-from agent.harness.guards import (
+from brain.agent.agent_loop import AgentLoop
+from brain.config.constants import TaskType
+from brain.harness import Harness, Tier, playbooks, scaffold_for, tier_for
+from brain.harness.guards import (
     LoopGuard,
     clip_text,
     compact_messages,
@@ -18,11 +19,10 @@ from agent.harness.guards import (
     repair_json_arguments,
     tool_failed,
 )
-from agent.harness.tool_select import select_tools
-from agent.harness.verifier import changed_files, verify_turn
-from config.constants import TaskType
-from tool.registry.tool_registry import ToolRegistry
-from tool.registry.tool_schema import ParamType, ToolParameter, ToolSchema
+from brain.harness.tool_select import select_tools
+from brain.harness.verifier import changed_files, verify_turn
+from tools.registry.tool_registry import ToolRegistry
+from tools.registry.tool_schema import ParamType, ToolParameter, ToolSchema
 
 
 def reply(content: str = "", calls: list[tuple[str, Any]] | None = None) -> dict[str, Any]:
@@ -138,7 +138,7 @@ def test_cheaper_tiers_get_more_supervision() -> None:
 
 
 def test_tool_selection_offers_every_core_tool_to_every_tier() -> None:
-    from tool.register_tools import register_all_tools
+    from tools.register_tools import register_all_tools
 
     schemas = register_all_tools().get_all_schemas()
     lite = scaffold_for("x-flash")
@@ -151,7 +151,7 @@ def test_tool_selection_offers_every_core_tool_to_every_tier() -> None:
     assert "vault_write" in wants_vault
 
     # A frontier model gets every core tool, but the hidden toolbox stays hidden until asked for.
-    from tool.execute.execute_toolbox import deferred_names
+    from tools.toolbox import deferred_names
 
     frontier = {s["function"]["name"] for s in select_tools(schemas, TaskType.CODE, "x", scaffold_for("x-opus"))}
     assert frontier == {s["function"]["name"] for s in schemas} - deferred_names()
@@ -388,7 +388,7 @@ async def test_disabled_tool_is_refused_even_if_named_directly(registry, tmp_pat
 
 
 async def test_a_run_held_to_a_list_refuses_everything_else(registry, tmp_path) -> None:
-    from agent.harness import RunLimits
+    from brain.harness import RunLimits
 
     limits = RunLimits(max_rounds=10, tokens=10_000_000, deadline=time.time() + 600, only_tools=frozenset({"read_file"}))
     harness = make_harness(registry, tmp_path, limits=limits)
@@ -399,8 +399,8 @@ async def test_a_run_held_to_a_list_refuses_everything_else(registry, tmp_path) 
 
 
 def test_a_list_means_exactly_that_list_and_extra_tools_are_added() -> None:
-    from agent.harness import RunLimits
-    from tool.register_tools import register_all_tools
+    from brain.harness import RunLimits
+    from tools.register_tools import register_all_tools
 
     schemas = register_all_tools().get_all_schemas()
     lite = scaffold_for("x-flash")
@@ -491,8 +491,8 @@ def test_prompt_rendering_is_bounded_and_marked_as_data() -> None:
 
 
 async def test_reasoning_lockout_is_waited_out_with_a_bigger_budget(registry, tmp_path, monkeypatch) -> None:
-    from agent import agent_loop
-    from utils.exceptions import ReasoningBudgetError
+    from brain.agent import agent_loop
+    from brain.utils.exceptions import ReasoningBudgetError
 
     waits: list[float] = []
 
@@ -617,7 +617,7 @@ async def test_failure_after_tool_work_hands_over_to_the_stronger_model(registry
 
 def test_topic_tools_do_not_push_out_the_ability_to_run_things() -> None:
     """Regression: mentioning memory dropped execute_command and run_checks."""
-    from tool.register_tools import register_all_tools
+    from tools.register_tools import register_all_tools
 
     schemas = register_all_tools().get_all_schemas()
     names = {
@@ -631,7 +631,7 @@ def test_topic_tools_do_not_push_out_the_ability_to_run_things() -> None:
 
 
 async def test_out_of_budget_run_writes_its_result_instead_of_continuing(registry, tmp_path) -> None:
-    from agent.harness import RunLimits
+    from brain.harness import RunLimits
 
     client = FakeClient(
         reply(calls=[("file_write", {"path": "a.txt", "content": "x"})]),
@@ -648,7 +648,7 @@ async def test_out_of_budget_run_writes_its_result_instead_of_continuing(registr
 
 async def test_a_member_is_told_to_write_while_tools_are_still_offered(registry, tmp_path) -> None:
     """Regression: team members learned the budget was gone only after the tools were taken away."""
-    from agent.harness import RunLimits
+    from brain.harness import RunLimits
 
     client = FakeClient(*[reply(calls=[("file_write", {"path": f"f{i}.txt", "content": "x"})]) for i in range(9)],
                         reply("selesai"))
@@ -664,7 +664,7 @@ async def test_a_member_is_told_to_write_while_tools_are_still_offered(registry,
 
 
 async def test_a_member_that_only_reads_is_asked_for_its_first_file(registry, tmp_path) -> None:
-    from agent.harness import RunLimits
+    from brain.harness import RunLimits
 
     client = FakeClient(*[reply(calls=[("read_file", {"file_path": f"f{i}.txt"})]) for i in range(5)],
                         reply(calls=[("file_write", {"path": "a.txt", "content": "x"})]), reply("selesai"))
@@ -678,7 +678,7 @@ async def test_a_member_that_only_reads_is_asked_for_its_first_file(registry, tm
 
 
 async def test_a_member_that_already_wrote_is_not_nagged(registry, tmp_path) -> None:
-    from agent.harness import RunLimits
+    from brain.harness import RunLimits
 
     client = FakeClient(reply(calls=[("file_write", {"path": "a.txt", "content": "x"})]),
                         *[reply(calls=[("read_file", {"file_path": f"f{i}.txt"})]) for i in range(4)], reply("selesai"))
@@ -690,7 +690,7 @@ async def test_a_member_that_already_wrote_is_not_nagged(registry, tmp_path) -> 
 
 
 async def test_past_the_deadline_the_first_answer_is_final(registry, tmp_path) -> None:
-    from agent.harness import RunLimits
+    from brain.harness import RunLimits
 
     client = FakeClient(reply("cepat"))
     harness = make_harness(registry, tmp_path, limits=RunLimits(10, 100_000, deadline=0.0))
@@ -699,7 +699,7 @@ async def test_past_the_deadline_the_first_answer_is_final(registry, tmp_path) -
 
 
 def test_limits_cap_rounds_but_never_what_a_model_sees() -> None:
-    from agent.harness import RunLimits
+    from brain.harness import RunLimits
 
     limits = RunLimits(max_rounds=10, tokens=1, deadline=0.0)
     for model in ("x-flash", "prov/claude-sonnet-4-6", "prov/openai/gpt-6-sol"):
@@ -718,7 +718,7 @@ def test_limits_cap_rounds_but_never_what_a_model_sees() -> None:
 
 
 def test_on_demand_keywords_match_whole_words_only() -> None:
-    from agent.harness.tool_select import _ON_DEMAND_RE
+    from brain.harness.tool_select import _ON_DEMAND_RE
 
     git = next(pattern for pattern, names in _ON_DEMAND_RE if "git_status" in names)
     assert git.search("lihat git status") and git.search("commitnya belum masuk")
@@ -728,7 +728,7 @@ def test_on_demand_keywords_match_whole_words_only() -> None:
 
 
 def test_verifier_runs_only_the_tests_tied_to_the_change(tmp_path) -> None:
-    from agent.harness.verifier import related_tests
+    from brain.harness.verifier import related_tests
 
     (tmp_path / "tests").mkdir()
     (tmp_path / "pricing.py").write_text("x = 1\n")

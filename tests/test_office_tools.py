@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from PIL import Image
 
-from tool.execute.execute_toolbox import CATALOG
+from tools.toolbox import CATALOG
 
 
 def run(name: str, **kwargs: Any) -> dict[str, Any]:
@@ -30,7 +30,7 @@ def ok(name: str, **kwargs: Any) -> dict[str, Any]:
 @pytest.fixture()
 def chat(tmp_path):
     """A chat session with its own folder, as the web server sets up."""
-    from utils import workspace_context
+    from brain.utils import workspace_context
 
     t1 = workspace_context._active_workspace.set(str(tmp_path))
     t2 = workspace_context._active_session.set("s_office")
@@ -187,7 +187,7 @@ def test_sheet_create_csv_for_indonesian_excel(chat):
 
 
 def test_office_files_appear_in_the_chat_and_only_once(chat):
-    from utils import shared_files
+    from brain.utils import shared_files
 
     out = ok("doc_create", output="surat.docx", markdown="Halo", title="Surat Izin")
     assert out["markdown"] == "[Unduh Surat Izin](/api/session/s_office/files/surat.docx)"
@@ -196,14 +196,14 @@ def test_office_files_appear_in_the_chat_and_only_once(chat):
 
 
 def test_share_false_only_saves(chat):
-    from utils import shared_files
+    from brain.utils import shared_files
 
     out = ok("sheet_create", output="x.xlsx", sheets=[{"rows": [[1]]}], share=False)
     assert "shared" not in out and "share_file" in out["next"] and shared_files.shared(chat) == []
 
 
 def test_a_file_over_the_share_limit_is_kept_but_not_shared(chat, monkeypatch):
-    from utils import shared_files
+    from brain.utils import shared_files
 
     monkeypatch.setattr(shared_files, "MAX_SHARE_BYTES", 1000)
     out = ok("doc_create", output="besar.docx", markdown="isi")
@@ -214,7 +214,7 @@ def test_a_file_over_the_share_limit_is_kept_but_not_shared(chat, monkeypatch):
 def test_share_limit_is_configurable(monkeypatch):
     import importlib
 
-    from utils import shared_files
+    from brain.utils import shared_files
 
     monkeypatch.setenv("SHARE_MAX_MB", "100")
     assert importlib.reload(shared_files).MAX_SHARE_BYTES == 100 * 1024 * 1024
@@ -230,7 +230,7 @@ def test_office_files_stay_inside_the_workspace(chat):
 
 
 def test_without_a_session_the_file_is_saved_but_not_shown(tmp_path):
-    from utils import workspace_context
+    from brain.utils import workspace_context
 
     token = workspace_context._active_workspace.set(str(tmp_path))
     try:
@@ -241,8 +241,8 @@ def test_without_a_session_the_file_is_saved_but_not_shown(tmp_path):
 
 
 def test_the_agent_loop_attaches_a_file_a_tool_shared_itself(chat):
-    from agent.agent_loop import AgentLoop
-    from tool.register_tools import register_all_tools
+    from brain.agent.agent_loop import AgentLoop
+    from tools.register_tools import register_all_tools
 
     loop = AgentLoop(object(), register_all_tools())  # type: ignore[arg-type]
     calls = [{"name": "doc_create", "arguments": {"output": "r.docx", "markdown": "# Hai"}}]
@@ -293,11 +293,11 @@ def test_office_to_pdf_refuses_other_files(chat):
 
 
 def test_document_requests_wake_the_skill_and_its_tools():
-    from agent.harness import scaffold_for
-    from agent.harness.tool_select import select_tools
-    from brain import skills
-    from config.constants import TaskType
-    from tool.register_tools import register_all_tools
+    import skills
+    from brain.config.constants import TaskType
+    from brain.harness import scaffold_for
+    from brain.harness.tool_select import select_tools
+    from tools.register_tools import register_all_tools
 
     schemas = register_all_tools().get_all_schemas()
     for text, task in (("buatkan makalah tentang banjir dalam bentuk word", TaskType.SCHOOL_TASK),
@@ -314,7 +314,7 @@ def test_document_requests_wake_the_skill_and_its_tools():
 
 
 def test_files_in_a_row_never_repeat_a_look(chat):
-    from tool.execute.execute_toolbox import _themes
+    from tools.toolbox import _themes
 
     seen = [ok("doc_create", output=f"d{i}.docx", markdown="# A\n\nisi")["theme"] for i in range(_themes.RECENT_KEEP)]
     assert len(set(seen)) == len(seen), seen
@@ -337,7 +337,7 @@ def test_theme_colours_reach_the_files(chat):
     from openpyxl import load_workbook
     from pptx import Presentation
 
-    from tool.execute.execute_toolbox._themes import THEMES
+    from tools.toolbox._themes import THEMES
 
     t = THEMES["hutan"]
     ok("doc_create", output="h.docx", markdown="# Bab\n\n| a | b |\n|---|---|\n| 1 | 2 |\n", title="Judul", theme="hutan")
@@ -368,7 +368,7 @@ def test_slide_text_boxes_keep_their_place_on_16_9(chat):
 
 
 def test_light_accents_are_darkened_for_text():
-    from tool.execute.execute_toolbox.office_tools import _luminance, _readable
+    from tools.toolbox.office_tools import _luminance, _readable
 
     darker = _readable("F2C14E")                            # grafit's yellow, unreadable on white as is
     assert darker != "F2C14E"

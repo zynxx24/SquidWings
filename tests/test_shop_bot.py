@@ -9,14 +9,14 @@ from typing import Any
 
 import pytest
 
-from agent import team_orchestrator
-from agent.harness import RunLimits
-from agent.orchestrator import AgentResponse
-from agent.team_orchestrator import TeamOrchestrator, TeamStore, team_templates
-from config.constants import ResponseStatus
-from config.settings import get_settings
+from brain.agent import team_orchestrator
+from brain.agent.orchestrator import AgentResponse
+from brain.agent.team_orchestrator import TeamOrchestrator, TeamStore, team_templates
+from brain.config.constants import ResponseStatus
+from brain.config.settings import get_settings
+from brain.harness import RunLimits
+from brain.utils.datastore import access as data_access
 from tests.test_team_nodes import FakeOrchestrator, agent, node
-from utils.datastore import access as data_access
 
 GRANTS = [{"source": "katalog", "access": "write", "hide": ["deskripsi"]}, {"source": "pesanan", "access": "append", "hide": []}]
 

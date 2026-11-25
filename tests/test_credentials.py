@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from config import credentials
-from config.credentials import CredentialError, CredentialStore
+from brain.config import credentials
+from brain.config.credentials import CredentialError, CredentialStore
 
 STATIC = Path(__file__).resolve().parent.parent / "web" / "static"
 
@@ -21,7 +21,7 @@ def private_file(tmp_path, monkeypatch):
     monkeypatch.setenv("CREDENTIALS_FILE", str(tmp_path / "credentials.json"))
     for spec in credentials.FIELDS:
         monkeypatch.delenv(spec.env, raising=False)
-    from config.settings import get_settings
+    from brain.config.settings import get_settings
 
     get_settings.cache_clear()
     yield
@@ -29,7 +29,7 @@ def private_file(tmp_path, monkeypatch):
 
 
 def test_a_value_typed_on_the_page_beats_env_and_clearing_it_brings_env_back(monkeypatch):
-    from config.settings import get_settings
+    from brain.config.settings import get_settings
 
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "111")
     get_settings.cache_clear()
@@ -65,8 +65,8 @@ def test_the_page_never_gets_a_secret_back():
 
 @pytest.mark.asyncio
 async def test_telegram_and_search_read_the_page_values():
-    from agent.team_outputs import OutputError, database_options, send_telegram
-    from tool.execute.execute_web_search.web_search_tool import _get_config
+    from brain.agent.team_outputs import OutputError, database_options, send_telegram
+    from tools.web_search.web_search_tool import _get_config
 
     with pytest.raises(OutputError, match="Kredensial"):
         await send_telegram("hi")
@@ -98,10 +98,10 @@ def test_credentials_api(monkeypatch):
 
 
 def test_share_file_comes_with_any_tool_that_makes_files():
-    from agent.harness.tiers import scaffold_for
-    from agent.harness.tool_select import select_tools
-    from config.constants import TaskType
-    from tool.register_tools import register_all_tools
+    from brain.config.constants import TaskType
+    from brain.harness.tiers import scaffold_for
+    from brain.harness.tool_select import select_tools
+    from tools.register_tools import register_all_tools
 
     schemas = register_all_tools().get_all_schemas()
     lite = scaffold_for("x-flash")
@@ -166,8 +166,8 @@ def test_the_google_key_is_set_on_the_page_only_and_the_page_sees_just_the_email
 
 
 def test_team_limits_and_the_sqlite_path_are_set_on_the_page_and_nothing_needs_env(monkeypatch, tmp_path) -> None:
-    from agent.team_orchestrator import TeamOrchestrator
-    from config.settings import get_settings
+    from brain.agent.team_orchestrator import TeamOrchestrator
+    from brain.config.settings import get_settings
 
     # Untouched: the built-in numbers apply and the page says so.
     assert credentials.number("team_run_seconds") == 600
@@ -184,7 +184,7 @@ def test_team_limits_and_the_sqlite_path_are_set_on_the_page_and_nothing_needs_e
     video = TeamOrchestrator._budget(type("Team", (), {"mode": "video"})())
     assert video["rounds"] == 55 and video["run_seconds"] == 3600
 
-    from agent.team_outputs import _save_sqlite
+    from brain.agent.team_outputs import _save_sqlite
 
     _save_sqlite("catatan", {"run_id": "r1", "content": "halo"})
     assert (tmp_path / "hasil" / "toko.sqlite3").exists()

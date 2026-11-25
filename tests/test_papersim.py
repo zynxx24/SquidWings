@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from trading.quant import papersim
-from trading.quant.papersim import COIN, PaperSim, wilson_low
+from addons.trading.quant import papersim
+from addons.trading.quant.papersim import COIN, PaperSim, wilson_low
 
 
 class Clock:
@@ -116,7 +116,7 @@ def test_bad_settings_are_refused(kw):
 def test_the_sim_backend_moves_inside_a_minute(monkeypatch):
     import time as time_module
 
-    from trading.mt5_adapter import SimBackend
+    from addons.trading.mt5_adapter import SimBackend
 
     sim = SimBackend()
     now = [1_800_000_000.0]
@@ -129,7 +129,7 @@ def test_the_sim_backend_moves_inside_a_minute(monkeypatch):
 
 
 def test_api_runs_a_simulation_without_orders(monkeypatch):
-    from web import mt5_api, quant_api
+    from addons.trading.web import mt5_api, quant_api
     from web.server import app
 
     clock = Clock()
@@ -247,7 +247,7 @@ def test_a_scalping_run_cannot_take_a_week_but_an_intraday_one_can():
 
 
 def test_the_api_starts_the_intraday_style_and_refuses_settings_it_does_not_know(monkeypatch):
-    from web import quant_api
+    from addons.trading.web import quant_api
     from web.server import app
 
     clock = Clock()
@@ -274,13 +274,13 @@ def test_the_api_starts_the_intraday_style_and_refuses_settings_it_does_not_know
 
 
 def test_the_server_says_when_its_code_changed_on_disk(monkeypatch):
-    from web import quant_api
+    from addons.trading.web import quant_api
     from web.server import app
 
     client = TestClient(app, client=("127.0.0.1", 50000))
     body = client.get("/api/quant/server").json()
     assert "sim_timeframe" in body["features"] and isinstance(body["stale"], bool)
-    path = "trading/quant/papersim.py"
+    path = "addons/trading/quant/papersim.py"
     monkeypatch.setitem(quant_api._loaded, path, quant_api._loaded.get(path, 0.0) - 60)   # as if edited after loading
     body = client.get("/api/quant/server").json()
     assert body["stale"] and path in body["changed"]

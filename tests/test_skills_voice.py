@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from agent.harness.briefing import skill_guidance
-from agent.harness.tiers import scaffold_for
-from brain import skills
-from config.constants import TaskType
+import skills
+from brain.config.constants import TaskType
+from brain.harness.briefing import skill_guidance
+from brain.harness.tiers import scaffold_for
 
 LITE = scaffold_for("prov/glm-5-3-flash")
 

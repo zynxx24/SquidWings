@@ -7,7 +7,7 @@ import socket
 import pytest
 
 import main
-from utils import ports
+from brain.utils import ports
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ def test_no_free_port_left(busy, monkeypatch):
 def test_web_starts_the_trading_server_when_port_80_is_allowed(monkeypatch):
     import subprocess
 
-    from web import trading_server
+    from addons.trading.web import trading_server
 
     started = []
     monkeypatch.setattr(trading_server, "port_problem", lambda host, port: None)
@@ -91,7 +91,7 @@ def test_web_starts_the_trading_server_when_port_80_is_allowed(monkeypatch):
 
 @pytest.mark.enterprise
 def test_web_explains_a_forbidden_port_80(monkeypatch):
-    from web import trading_server
+    from addons.trading.web import trading_server
 
     monkeypatch.setattr(trading_server, "port_problem", lambda host, port: trading_server.PORT_HINT.format(port=80))
     proc, line = main._start_trading_backend()
@@ -100,7 +100,8 @@ def test_web_explains_a_forbidden_port_80(monkeypatch):
 
 @pytest.mark.enterprise
 def test_web_reuses_a_running_trading_server(monkeypatch):
-    from web import server, trading_server
+    from addons.trading.web import trading_server
+    from web import server
 
     async def running() -> bool:
         return True
@@ -116,7 +117,8 @@ def test_web_reuses_a_running_trading_server(monkeypatch):
 def test_web_replaces_a_trading_server_running_old_code(monkeypatch):
     import subprocess
 
-    from web import server, trading_server
+    from addons.trading.web import trading_server
+    from web import server
 
     async def running() -> bool:
         return True
@@ -133,8 +135,8 @@ def test_web_replaces_a_trading_server_running_old_code(monkeypatch):
 
 @pytest.mark.enterprise
 def test_trading_replaces_its_own_older_copy_but_not_another_program(monkeypatch):
-    from utils import ports
-    from web import trading_server
+    from addons.trading.web import trading_server
+    from brain.utils import ports
 
     stopped = []
     monkeypatch.setattr(trading_server, "port_problem", lambda host, port: "Port 80 is already in use. Stop whatever is listening there first.")
@@ -151,7 +153,7 @@ def test_trading_replaces_its_own_older_copy_but_not_another_program(monkeypatch
 def test_a_forbidden_port_80_is_opened_once_with_sudo_in_the_terminal(monkeypatch):
     import subprocess
 
-    from web import trading_server
+    from addons.trading.web import trading_server
 
     allowed = []
     monkeypatch.setattr(trading_server, "port_problem",

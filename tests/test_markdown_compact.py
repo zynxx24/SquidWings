@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tool.execute.execute_upload_file.read_file_tool import read_file
-from utils.markdown_compact import compact_markdown, fit_markdown
+from brain.utils.markdown_compact import compact_markdown, fit_markdown
+from tools.upload_file.read_file_tool import read_file
 
 
 def test_code_blocks_stay_byte_for_byte() -> None:

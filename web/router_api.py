@@ -17,12 +17,12 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
-from model.router import dispatch, pricing, sync
-from model.router import usage as usage_log
-from model.router.groups import grouped, provider_labels
-from model.router.rotation import get_rotator
-from model.router.store import AUTH_MODES, KINDS, STRATEGIES, StoreError, get_store
-from security.web_access import is_local_request
+from brain.model.router import dispatch, pricing, sync
+from brain.model.router import usage as usage_log
+from brain.model.router.groups import grouped, provider_labels
+from brain.model.router.rotation import get_rotator
+from brain.model.router.store import AUTH_MODES, KINDS, STRATEGIES, StoreError, get_store
+from brain.security.web_access import is_local_request
 
 router = APIRouter(prefix="/api/router", tags=["router"])
 

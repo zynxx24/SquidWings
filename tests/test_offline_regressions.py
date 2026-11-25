@@ -6,11 +6,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent.agent_loop import AgentLoop
-from agent.team_orchestrator import Team, TeamMember, TeamOrchestrator, TeamRun, TeamStore
-from model.connection.response_handler import ParsedResponse
-from tool.registry.tool_registry import ToolRegistry
-from tool.registry.tool_schema import ToolSchema
+from brain.agent.agent_loop import AgentLoop
+from brain.agent.team_orchestrator import Team, TeamMember, TeamOrchestrator, TeamRun, TeamStore
+from brain.model.connection.response_handler import ParsedResponse
+from tools.registry.tool_registry import ToolRegistry
+from tools.registry.tool_schema import ToolSchema
 
 
 @pytest.fixture(autouse=True)
@@ -128,7 +128,7 @@ async def test_thinking_only_turns_do_not_consume_tool_budget() -> None:
     so a reasoning model that "thinks twice" before acting still gets its
     full complement of tool rounds.
     """
-    from config.constants import MAX_THINKING_ONLY_ITERATIONS
+    from brain.config.constants import MAX_THINKING_ONLY_ITERATIONS
 
     loop = AgentLoop(FakeClient(), ToolRegistry(), max_iterations=2)
     calls = 0
@@ -185,7 +185,7 @@ async def test_tool_call_resets_thinking_only_streak() -> None:
 
 def test_append_system_handles_str_and_cached_blocks() -> None:
     """Appending must not disturb a cached block, or the provider cache is lost."""
-    from agent.orchestrator import Orchestrator
+    from brain.agent.orchestrator import Orchestrator
 
     plain = [{"role": "system", "content": "Initial"}]
     Orchestrator._append_system(plain, " more")
@@ -200,11 +200,11 @@ def test_append_system_handles_str_and_cached_blocks() -> None:
 
 async def test_fallback_moves_past_failing_models_to_one_that_answers(tmp_path) -> None:
     """A failing primary and a failing first fallback must not end the request."""
-    from agent.orchestrator import Orchestrator
+    from brain.agent.orchestrator import Orchestrator
+    from brain.config.constants import ResponseStatus
+    from brain.config.settings import Settings
     from brain.memory.conversation_store import ConversationStore
-    from config.constants import ResponseStatus
-    from config.settings import Settings
-    from model.registry.model_info import ModelInfo
+    from brain.model.registry.model_info import ModelInfo
 
     good = {"choices": [{"message": {"content": "Berhasil"}, "finish_reason": "stop"}], "usage": {}}
     calls: list[str] = []
@@ -245,21 +245,21 @@ async def test_fallback_moves_past_failing_models_to_one_that_answers(tmp_path) 
 
 
 def _retries(error, attempt):
-    from model.connection.api_client import APIClient
-    from model.connection.providers import Provider
+    from brain.model.connection.api_client import APIClient
+    from brain.model.connection.providers import Provider
 
     return APIClient._should_retry_transient(Provider(id="x", transient_retries=3), error, attempt)
 
 
 def test_a_provider_never_retries_a_request_that_cannot_succeed():
-    from utils.exceptions import ModelError
+    from brain.utils.exceptions import ModelError
 
     assert not _retries(ModelError("bad", status_code=401), 1)
     assert not _retries(ModelError("bad", status_code=400), 1)
 
 
 def test_a_provider_retries_transient_errors_up_to_the_cap():
-    from utils.exceptions import ModelError, RateLimitError
+    from brain.utils.exceptions import ModelError, RateLimitError
 
     assert _retries(ModelError("boom", status_code=503), 1)
     assert _retries(RateLimitError("slow"), 2)
@@ -270,7 +270,7 @@ def test_a_provider_retries_transient_errors_up_to_the_cap():
 def test_empty_model_list_does_not_wipe_the_registry():
     import asyncio
 
-    from model.connection.api_client import APIClient
+    from brain.model.connection.api_client import APIClient
 
     class Registry:
         model_ids = ["prov/a", "extra/b"]
@@ -294,8 +294,8 @@ def test_empty_model_list_does_not_wipe_the_registry():
 
 
 def test_mark_unavailable_expires_and_blocks_routing(monkeypatch):
-    from model.connection import health_check
-    from model.connection.health_check import HealthChecker
+    from brain.model.connection import health_check
+    from brain.model.connection.health_check import HealthChecker
 
     now = [100.0]
     monkeypatch.setattr(health_check.time, "monotonic", lambda: now[0])

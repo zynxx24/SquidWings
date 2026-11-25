@@ -10,22 +10,22 @@ from typing import Any
 import httpx
 import pytest
 
-from agent.harness.guards import normalize_arguments, tool_trace
-from agent.harness.tiers import scaffold_for
-from agent.harness.tool_select import select_tools
-from agent.orchestrator import Orchestrator
-from agent.pipeline_executor import PipelineExecutor
+from brain.agent.orchestrator import Orchestrator
+from brain.agent.pipeline_executor import PipelineExecutor
 from brain.classifier.intent_classifier import IntentClassifier
-from brain.context.context_assembler import ContextAssembler
+from brain.config.constants import TaskType
+from brain.harness.guards import normalize_arguments, tool_trace
+from brain.harness.tiers import scaffold_for
+from brain.harness.tool_select import select_tools
 from brain.memory.agent_working_memory import AgentWorkingMemory
 from brain.memory.conversation_store import ConversationStore
-from config.constants import TaskType
-from model.connection.api_client import APIClient
-from model.connection.providers import Provider, load_providers
-from model.type.activity import ActivityHandler
-from tool.register_tools import register_all_tools
-from tool.registry.tool_registry import READ_ONLY_TOOLS, WORKSPACE_TOOLS, ToolRegistry
-from tool.registry.tool_schema import ParamType, ToolParameter, ToolSchema
+from brain.model.connection.api_client import APIClient
+from brain.model.connection.providers import Provider, load_providers
+from brain.model.type.activity import ActivityHandler
+from input.context.context_assembler import ContextAssembler
+from tools.register_tools import register_all_tools
+from tools.registry.tool_registry import READ_ONLY_TOOLS, WORKSPACE_TOOLS, ToolRegistry
+from tools.registry.tool_schema import ParamType, ToolParameter, ToolSchema
 
 classifier = IntentClassifier()
 
@@ -391,7 +391,7 @@ def _response(status: int, message: str) -> httpx.Response:
 
 
 def test_router_lockout_becomes_a_retryable_error() -> None:
-    from utils.exceptions import RateLimitError, ReasoningBudgetError
+    from brain.utils.exceptions import RateLimitError, ReasoningBudgetError
 
     client = APIClient("http://router.invalid/v1", "key")
     with pytest.raises(ReasoningBudgetError) as reasoning:

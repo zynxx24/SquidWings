@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from security import sandbox
-from security.sandbox import SandboxError, SandboxPolicy
-from utils.workspace_context import set_active_workspace
+from brain.security import sandbox
+from brain.security.sandbox import SandboxError, SandboxPolicy
+from brain.utils.workspace_context import set_active_workspace
 
 
 @pytest.fixture
@@ -123,7 +123,7 @@ def test_docker_is_locked_down(workspace: Path, monkeypatch: pytest.MonkeyPatch)
 
 
 async def test_refused_command_reports_why(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_command_prompt.run_command_tool import execute_command
+    from tools.command_prompt.run_command_tool import execute_command
 
     def refuse(*_args: Any, **_kwargs: Any) -> None:
         raise SandboxError("no sandbox")
@@ -135,7 +135,7 @@ async def test_refused_command_reports_why(workspace: Path, monkeypatch: pytest.
 
 
 async def test_commands_run_and_children_die_on_timeout(workspace: Path) -> None:
-    from tool.execute.execute_command_prompt.run_command_tool import execute_command
+    from tools.command_prompt.run_command_tool import execute_command
 
     done = await execute_command("echo halo", cwd=str(workspace))
     assert done["success"] and "halo" in done["stdout"]
@@ -145,7 +145,7 @@ async def test_commands_run_and_children_die_on_timeout(workspace: Path) -> None
 
 @pytest.mark.parametrize("path", [".git/hooks/pre-commit", ".git/config", ".agent_memory/state.json"])
 async def test_file_tools_cannot_plant_files_that_run_on_the_host(tmp_path: Path, path: str) -> None:
-    from tool.execute.execute_local_ops.local_ops_tool import file_write
+    from tools.local_ops.local_ops_tool import file_write
 
     result = await file_write(path=path, content="x", workspace_path=str(tmp_path))
     assert result["ok"] is False
@@ -153,7 +153,7 @@ async def test_file_tools_cannot_plant_files_that_run_on_the_host(tmp_path: Path
 
 
 def test_user_profile_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_local_memory import user_profile, vault_context
+    from tools.local_memory import user_profile, vault_context
 
     monkeypatch.setattr(vault_context, "global_vault_path", lambda *_a, **_k: tmp_path)
     assert user_profile.prompt_block() == ""
@@ -173,14 +173,14 @@ def test_user_profile_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ["ingat gak nama saya?", "siapa nama saya?", "nama saya dan file apa", "ingatkan saya besok", "simpan file ini"],
 )
 def test_ordinary_sentences_are_not_saved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str) -> None:
-    from tool.execute.execute_local_memory import user_profile, vault_context
+    from tools.local_memory import user_profile, vault_context
 
     monkeypatch.setattr(vault_context, "global_vault_path", lambda *_a, **_k: tmp_path)
     assert user_profile.capture_from_message(message) == []
 
 
 def test_credentials_are_never_saved(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_local_memory import user_profile, vault_context
+    from tools.local_memory import user_profile, vault_context
 
     monkeypatch.setattr(vault_context, "global_vault_path", lambda *_a, **_k: tmp_path)
     assert user_profile.remember("api key saya sk-abcdefghijklmnopqrstuvwxyz123456") is False

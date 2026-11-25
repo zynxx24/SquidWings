@@ -8,16 +8,16 @@ import urllib.error
 import pytest
 from fastapi.testclient import TestClient
 
-from brain import skills
-from tool.execute.execute_trading import snapshot_tool as T
+import skills
+from addons.trading.tools import snapshot_tool as T
 
 
 @pytest.fixture()
 def server(monkeypatch):
     """The trading app in-process. The tool's HTTP call goes to it instead of a socket."""
-    from trading.mt5_adapter import SimBackend
-    from web import mt5_api
-    from web.trading_server import app
+    from addons.trading.mt5_adapter import SimBackend
+    from addons.trading.web import mt5_api
+    from addons.trading.web.trading_server import app
 
     backend = SimBackend()
     backend.connect(1, "", "", None)
@@ -63,8 +63,8 @@ def test_only_this_machine_can_be_read(monkeypatch):
 
 
 def test_tool_is_registered_read_only_and_the_skill_wakes_on_trading_talk():
-    from tool.register_tools import register_all_tools
-    from tool.registry.tool_registry import is_read_only
+    from tools.register_tools import register_all_tools
+    from tools.registry.tool_registry import is_read_only
 
     assert register_all_tools().has_tool("trading_snapshot") and is_read_only("trading_snapshot")
     skills.load_all.cache_clear()

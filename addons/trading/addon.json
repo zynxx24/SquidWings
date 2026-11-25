@@ -1,0 +1,34 @@
+{
+  "name": "trading",
+  "title": "Trading",
+  "description": "Model kuant XAUUSD, jurnal, panel trading, jembatan MT4/MT5, dan tool trading_snapshot untuk chat.",
+  "files": [
+    "addons/trading/journal.py",
+    "addons/trading/quant/__init__.py",
+    "addons/trading/web/quant_api.py",
+    "addons/trading/web/mt4_bridge.py",
+    "addons/trading/web/mt5_api.py",
+    "addons/trading/web/trading_server.py",
+    "addons/trading/web/static/index.html",
+    "addons/trading/tools/snapshot_tool.py"
+  ],
+  "requirements": "addons/trading/requirements.txt",
+  "programs": [],
+  "manual": {
+    "windows": [
+      "Pasang MetaTrader 4 atau 5 dari broker kamu.",
+      "MT5: pip install MetaTrader5 (paket ini hanya ada untuk Windows).",
+      "MT4: salin addons/trading/mt4/Mt4Bridge.mq4 ke folder MQL4/Experts, compile di MetaEditor, lalu izinkan WebRequest ke http://127.0.0.1."
+    ],
+    "linux": [
+      "MetaTrader 4 jalan lewat Wine: sudo apt install wine64, lalu pasang installer MT4 dari broker dengan wine.",
+      "Salin addons/trading/mt4/Mt4Bridge.mq4 ke MQL4/Experts di prefix Wine, compile dengan metaeditor.exe, izinkan WebRequest ke http://127.0.0.1.",
+      "Port 80 untuk EA: sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80 (atau pakai port lain di TRADING_PORT)."
+    ],
+    "macos": [
+      "MetaTrader 4 jalan lewat Wine atau CrossOver: brew install --cask wine-stable.",
+      "Salin addons/trading/mt4/Mt4Bridge.mq4 ke MQL4/Experts, compile, izinkan WebRequest ke http://127.0.0.1."
+    ]
+  },
+  "start": "python main.py trading"
+}

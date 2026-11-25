@@ -1,0 +1,31 @@
+{
+  "name": "studio",
+  "title": "Studio video",
+  "description": "Editor video motion (keyframe, klip, catatan) dengan chat revisi, render MP4, dan tool studio_* untuk agent.",
+  "files": [
+    "addons/studio/studio_doc.py",
+    "addons/studio/studio_context.py",
+    "addons/studio/web/studio_api.py",
+    "addons/studio/web/static/index.html",
+    "addons/studio/web/static/studio.js",
+    "addons/studio/tools/studio_tools.py",
+    "addons/studio/skills/studio/SKILL.md"
+  ],
+  "requirements": "addons/studio/requirements.txt",
+  "programs": ["ffmpeg"],
+  "manual": {
+    "windows": [
+      "ffmpeg: winget install Gyan.FFmpeg (atau unduh dari ffmpeg.org lalu tambahkan ke PATH).",
+      "Google Chrome atau Chromium untuk gambar diam (studio_still)."
+    ],
+    "linux": [
+      "ffmpeg: sudo apt install ffmpeg (atau brew install ffmpeg tanpa sudo).",
+      "Chromium atau Google Chrome untuk gambar diam (studio_still)."
+    ],
+    "macos": [
+      "ffmpeg: brew install ffmpeg.",
+      "Google Chrome untuk gambar diam (studio_still)."
+    ]
+  },
+  "start": "python main.py web, lalu buka menu Studio"
+}

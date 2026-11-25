@@ -13,9 +13,9 @@ import random
 import pytest
 from fastapi.testclient import TestClient
 
-from trading.quant import backtest as B
-from trading.quant import features as F
-from trading.quant import model as M
+from addons.trading.quant import backtest as B
+from addons.trading.quant import features as F
+from addons.trading.quant import model as M
 
 STATES = {"trend": 0, "range": 1, "highvol": 2}
 TREND = [0.85, 0.1, 0.05]
@@ -181,8 +181,8 @@ def test_backtest_uses_each_trades_own_target_and_can_manage():
 
 
 def test_manage_endpoint_suggests_and_sends_nothing(monkeypatch):
-    from trading.mt5_adapter import SimBackend
-    from web import mt5_api
+    from addons.trading.mt5_adapter import SimBackend
+    from addons.trading.web import mt5_api
     from web.server import app
 
     monkeypatch.delenv("MT5_TRADE_TOKEN", raising=False)

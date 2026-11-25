@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 import web.server as server
-from tool.execute.execute_upload_file import read_file_tool
+from tools.upload_file import read_file_tool
 
 
 def _png(width: int = 4, height: int = 3) -> bytes:
@@ -59,8 +59,8 @@ def test_only_media_files_are_served(session_root):
 
 
 def test_read_file_reports_image_size_and_a_markdown_embed(session_root, monkeypatch):
-    monkeypatch.setattr("utils.workspace_context.session_workspace", lambda sid, create=True: session_root)
-    monkeypatch.setattr("utils.workspace_context.get_active_session", lambda: "s1")
+    monkeypatch.setattr("brain.utils.workspace_context.session_workspace", lambda sid, create=True: session_root)
+    monkeypatch.setattr("brain.utils.workspace_context.get_active_session", lambda: "s1")
     out = read_file_tool.read_file(str(session_root / "plot.png"))
     assert out["success"] is True and out["is_image"] is True
     assert (out["width"], out["height"], out["format"]) == (4, 3, "PNG")

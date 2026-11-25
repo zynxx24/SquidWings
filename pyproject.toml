@@ -12,7 +12,7 @@ exclude = [
     "*.bak",
     "*.corrupt",
     # Vendored skill code, kept as upstream wrote it.
-    "brain/skills/*/tools",
+    "skills/*/tools",
 ]
 
 [tool.ruff.lint]
@@ -22,18 +22,18 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 # Short aliases are an intentional convention in the vault package and its tests
 # (C=constants, F=frontmatter, G=graph, V=vault).
-"tool/execute/execute_local_memory/**" = ["N812"]
-"agent/harness/**" = ["N812"]
-"agent/session_stack.py" = ["N812"]
+"tools/local_memory/**" = ["N812"]
+"brain/harness/**" = ["N812"]
+"brain/agent/session_stack.py" = ["N812"]
 "tests/test_vault_memory.py" = ["N812"]
 # The quant model uses the notation of the Kalman and HMM papers (P, H, S, K, F, Q, R, A, B, ...).
 # Renaming them would make the code harder to check against the formulas.
-"trading/quant/**" = ["N806", "N803", "N812"]
+"addons/trading/quant/**" = ["N806", "N803", "N812"]
 "tests/test_quant_model.py" = ["N806", "N803", "N812"]
 "tests/test_quant_intelligence.py" = ["N806", "N803", "N812"]
 "tests/test_trading_snapshot.py" = ["N812"]
 "tests/test_model_router.py" = ["N812"]
-"web/quant_api.py" = ["N812"]
+"addons/trading/web/quant_api.py" = ["N812"]
 
 [tool.pytest.ini_options]
 # Without this section pytest walks up to the parent folder and uses
@@ -53,16 +53,19 @@ markers = [
 
 [tool.mypy]
 # Vendored skill code, kept as upstream wrote it.
-exclude = ["brain/skills/.*/tools/"]
+exclude = ["skills/.*/tools/", "skills/builtin/", "skills/.sources/"]
 python_version = "3.12"
 files = [
-    "agent",
     "brain",
-    "config",
-    "model",
-    "security",
-    "tool",
-    "utils",
+    "input",
+    "skills/__init__.py",
+    "skills/loader.py",
+    "skills/selection.py",
+    "skills/design.py",
+    "skills/runtime.py",
+    "skills/sources.py",
+    "skills/adapters.py",
+    "tools",
     "web",
     "main.py",
 ]
@@ -77,3 +80,12 @@ disallow_untyped_defs = true
 no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
+extraPaths = [".", "workspace/wifi_hacks", "workspace/ai-agent-finance/src", "workspace/ai-agent-finance/src/agent"]
+
+[tool.pyrefly]
+search-path = [".", "workspace/wifi_hacks", "workspace/ai-agent-finance/src", "workspace/ai-agent-finance/src/agent"]
+infer-with-first-use = false

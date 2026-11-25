@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 import main
-from config import credentials
-from utils import voice_io
+from brain.config import credentials
+from brain.utils import voice_io
 
 
 def test_speakable_drops_code_links_and_markdown() -> None:

@@ -1,6 +1,6 @@
 """Formulas the model writes in LaTeX read as plain text in the terminal."""
 
-from utils.latex_text import convert, to_text
+from brain.utils.latex_text import convert, to_text
 
 
 def test_school_and_business_formulas_become_readable() -> None:

@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 
 from brain.memory.conversation_store import ConversationStore
-from tool.execute.execute_local_memory import session_distill
+from tools.local_memory import session_distill
 
 
 def _store(tmp_path: Path) -> ConversationStore:
@@ -16,7 +16,7 @@ def _store(tmp_path: Path) -> ConversationStore:
 
 def _seed(store: ConversationStore, session_id: str, turns: int = 3) -> None:
     for i in range(turns):
-        store.add_message(session_id, "user", f"tolong perbaiki file agent/orchestrator.py nomor {i}")
+        store.add_message(session_id, "user", f"tolong perbaiki file brain/agent/orchestrator.py nomor {i}")
         store.add_message(
             session_id,
             "assistant",
@@ -42,7 +42,7 @@ def test_distill_writes_session_note(tmp_path, monkeypatch):
     note = tmp_path / "vault" / result["path"]
     text = note.read_text(encoding="utf-8")
     assert "type: session" in text
-    assert "agent/orchestrator.py" in text
+    assert "brain/agent/orchestrator.py" in text
 
 
 def test_distill_skips_when_unchanged(tmp_path, monkeypatch):

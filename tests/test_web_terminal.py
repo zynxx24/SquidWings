@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from utils import web_terminal as wt
+from brain.utils import web_terminal as wt
 
 
 def test_forbidden_commands_are_refused_and_ordinary_ones_pass() -> None:
@@ -41,7 +41,7 @@ async def test_run_waits_for_the_prompt_and_reports_the_exit_code(tmp_path: Path
 
 
 async def test_terminal_run_says_so_outside_the_web_app() -> None:
-    from tool.execute.execute_command_prompt.terminal_tool import terminal_run
+    from tools.command_prompt.terminal_tool import terminal_run
 
     wt.enable(False)
     result = await terminal_run("sudo apt install php-xml")
@@ -49,7 +49,7 @@ async def test_terminal_run_says_so_outside_the_web_app() -> None:
 
 
 async def test_execute_command_hands_sudo_to_the_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_command_prompt import run_command_tool
+    from tools.command_prompt import run_command_tool
 
     seen: list[str] = []
 
@@ -102,8 +102,8 @@ def test_the_panel_streams_the_shell_when_allowed(monkeypatch: pytest.MonkeyPatc
 
 
 async def test_preview_needs_a_running_server_and_gives_the_local_link(monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_command_prompt.terminal_tool import preview_url
-    from utils import preview
+    from brain.utils import preview
+    from tools.command_prompt.terminal_tool import preview_url
 
     monkeypatch.setattr(preview, "listening", lambda port, host="127.0.0.1": port == 8000)
     missing = await preview_url(5173, public=False)

@@ -16,7 +16,7 @@ os.environ["SANDBOX_MODE"] = "off"
 # The local graphify and aislop programs must not run during ordinary tests.
 os.environ["GRAPHIFY_AUTO"] = "false"
 os.environ["AISLOP_AUTO"] = "false"
-os.environ["MT4_RECORD_TICKS"] = "0"     # bridge tests must not write into trading/data
+os.environ["MT4_RECORD_TICKS"] = "0"     # bridge tests must not write into addons/trading/data
 os.environ["TRADE_NEWS_AUTO"] = "0"      # proposals must not fetch the live economic calendar
 os.environ["QUANT_WORKER"] = "0"          # keep backtests in the test process
 os.environ["DOCUMENT_OCR"] = "false"      # each image would be a model call
@@ -32,11 +32,15 @@ os.environ["MODEL_STATS_PATH"] = os.path.join(_tempfile.mkdtemp(prefix="model-st
 # Router providers and the token log must not touch the real web/data/router.
 os.environ["ROUTER_STORE_DIR"] = _tempfile.mkdtemp(prefix="router-store-")
 os.environ["STYLE_HISTORY_FILE"] = os.path.join(_tempfile.mkdtemp(prefix="style-history-"), "h.json")  # looks used, across chats
+os.environ["SQUIDWINGS_DATA_DIR"] = _tempfile.mkdtemp(prefix="sw-data-")   # audit chain, logs, reports
 os.environ["ROUTER_IMPORT_ENV"] = "0"      # the server's start-up must not copy .env endpoints into it
+# Add-ons are off by default; the suite covers them, so switch both on (a test may still turn one off).
+os.environ.setdefault("ADDON_TRADING", "1")
+os.environ.setdefault("ADDON_STUDIO", "1")
 
 import pytest
 
-from config.edition import trading_enabled
+from brain.config.edition import trading_enabled
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -51,6 +55,14 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 # Offline tests must pass on a fresh clone, which has no .env.
 os.environ["API_KEY"] = "test-key-not-real"
+
+
+@pytest.fixture(autouse=True)
+def fresh_caches() -> None:
+    """Shared caches (classifier answers, pages, indexes) must not carry over from one test to the next."""
+    from brain.utils import cache
+
+    cache.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +86,7 @@ def isolated_credentials_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) ->
 @pytest.fixture(autouse=True)
 def isolated_workspace_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     """Team runs and web sessions create folders; keep them out of the real workspace."""
-    from utils import workspace_context
+    from brain.utils import workspace_context
 
     monkeypatch.setattr(workspace_context, "SESSIONS_ROOT", tmp_path / "workspace" / "sessions")
     monkeypatch.setattr(workspace_context, "PROJECTS_ROOT", tmp_path / "workspace" / "projects")
@@ -83,7 +95,7 @@ def isolated_workspace_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> N
 @pytest.fixture(autouse=True)
 def _roomy_disk_for_video_teams(monkeypatch):
     """Video team runs refuse to start on a nearly full disk; tests must not depend on this machine's."""
-    import agent.team_orchestrator as team_module
+    import brain.agent.team_orchestrator as team_module
 
     monkeypatch.setattr(team_module, "free_bytes", lambda path: 50 * 2**30)
 

@@ -12,15 +12,15 @@ import random
 import pytest
 from fastapi.testclient import TestClient
 
-from trading import strategy
-from trading.mt5_adapter import SimBackend
-from trading.quant import backtest as B
-from trading.quant import data as D
-from trading.quant import engine as E
-from trading.quant import features as F
-from trading.quant import model as M
-from trading.quant import risk as R
-from trading.quant.hmm import GaussianHMM, label_states
+from addons.trading import strategy
+from addons.trading.mt5_adapter import SimBackend
+from addons.trading.quant import backtest as B
+from addons.trading.quant import data as D
+from addons.trading.quant import engine as E
+from addons.trading.quant import features as F
+from addons.trading.quant import model as M
+from addons.trading.quant import risk as R
+from addons.trading.quant.hmm import GaussianHMM, label_states
 
 
 def _walk(n: int, seed: int = 1, drift_period: int = 400, vol: float = 0.0006) -> list[dict[str, float]]:
@@ -185,7 +185,7 @@ def test_engine_refits_when_a_bar_is_resent_with_new_prices(monkeypatch):
 
 
 def test_engine_fit_cache_is_keyed_by_session(monkeypatch):
-    from utils import workspace_context as wc
+    from brain.utils import workspace_context as wc
 
     E.reset_state()
     E.clear_fit_cache()
@@ -404,7 +404,7 @@ def test_quant_api_reads_without_a_token_but_needs_a_connection(monkeypatch):
     assert r.status_code == 200 and "max_risk_per_trade_pct" in r.json()
     assert c.post("/api/quant/reset").status_code == 401           # changing state still needs it
     assert c.post("/api/quant/reset", headers={"X-MT5-Token": "t-quant"}).status_code == 200
-    from web import mt5_api
+    from addons.trading.web import mt5_api
     mt5_api._state.update(backend=None, live=False, view_only="")
     r = c.get("/api/quant/propose", params={"symbol": "EURUSD"})
     assert r.status_code == 409

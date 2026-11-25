@@ -1,0 +1,2 @@
+# Add-on Studio: dipasang oleh `python main.py addon install studio`.
+# Semua paket Python-nya sudah ada di requirements.txt inti; yang perlu dipasang adalah program di addon.json.

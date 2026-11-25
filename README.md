@@ -7,13 +7,13 @@
 **Open-source AI agent for the terminal and web browser. Works with any OpenAI-compatible model: Claude, GPT, Gemini, DeepSeek, Qwen, Llama, or a local model in Ollama.**
 
 ![Python](https://img.shields.io/badge/python-3.12%20%7C%203.14-3776AB?logo=python&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS-555)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-555)
 ![API](https://img.shields.io/badge/API-OpenAI--compatible-10a37f)
 ![Sandbox](https://img.shields.io/badge/sandbox-bubblewrap%20%7C%20Docker-orange)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Stars](https://img.shields.io/github/stars/zynxx24/SquidWings?style=flat&logo=github)
 
-[Mulai cepat](#-mulai-cepat) · [Fitur](#-fitur) · [Trading dan Studio](#-modul-trading-dan-studio) · [Struktur file](#-struktur-file) · [Pengaturan](#%EF%B8%8F-pengaturan) · [Pengembangan](#-pengembangan) · [Lisensi](#-lisensi) · [English](#-in-english)
+[Mulai cepat](#-mulai-cepat) · [Fitur](#-fitur) · [Add-on](#-add-on-trading-dan-studio) · [Struktur file](#-struktur-file) · [Pengaturan](#%EF%B8%8F-pengaturan) · [Pengembangan](#-pengembangan) · [Lisensi](#-lisensi) · [English](#-in-english)
 
 </div>
 
@@ -32,20 +32,31 @@ Semua fitur gratis di bawah lisensi AGPL-3.0, termasuk panel trading MT4/MT5 dan
 
 ## 🚀 Mulai cepat
 
+Satu bahasa (Python 3.12+), satu perintah, jalan di **Windows, macOS, dan Linux**:
+
 ```bash
 git clone https://github.com/zynxx24/SquidWings.git
 cd SquidWings
-curl -LsSf https://astral.sh/uv/install.sh | sh    # sekali saja: uv memasang Python 3.14 tanpa sudo
-uv venv --seed --python 3.14 .venv && source .venv/bin/activate
-uv pip install -r requirements.txt
-cp .env.example .env        # opsional: provider dan API key bisa diatur di http://127.0.0.1:8080/router
-sudo apt install bubblewrap # sandbox untuk perintah agent
-python main.py doctor       # memastikan sandbox benar-benar mengisolasi
-python main.py tools        # ffmpeg, Node.js, dan program media lain: apa yang sudah ada
-python main.py web          # buka http://127.0.0.1:8080
+python scripts/setup.py     # bikin .venv dan pasang requirements (pakai uv kalau ada)
 ```
 
-Diuji di Python 3.14 (direkomendasikan) dan 3.12. Dengan 3.12 bisa juga memakai `python3 -m venv .venv && pip install -r requirements.txt`.
+Lalu aktifkan venv dan jalankan:
+
+| OS | Aktifkan | Jalankan |
+|---|---|---|
+| Linux, macOS | `source .venv/bin/activate` | `python main.py web` |
+| Windows | `.venv\Scripts\activate` | `python main.py web` |
+
+Buka http://127.0.0.1:8080. Provider dan API key bisa diatur di halaman **Router**, atau salin `.env.example` ke `.env`.
+
+| Langkah opsional | Perintah |
+|---|---|
+| Sandbox perintah agent | Linux: `sudo apt install bubblewrap`. macOS dan Windows: Docker Desktop, atau `SANDBOX_MODE=off` |
+| Cek sandbox benar-benar mengisolasi | `python main.py doctor` |
+| Program media (ffmpeg, Node.js, ...) | `python main.py tools`, lalu `python main.py tools install` |
+| Add-on trading atau Studio | `python main.py addon install trading` (lihat [Add-on](#-add-on-trading-dan-studio)) |
+
+Di Windows, panel Terminal memakai PowerShell lewat `pywinpty`, dan perintah agent memakai Git Bash kalau ada (kalau tidak, PowerShell). Diuji di Python 3.14 (direkomendasikan) dan 3.12.
 
 **Sudah terpasang dengan Python lama?** Hentikan SquidWings, lalu jalankan `bash scripts/upgrade_python.sh`. Skrip ini memasang Python 3.14 lewat uv tanpa mengubah python3 bawaan sistem, menyimpan venv lama sebagai `.venv-py3.12`, membuat venv baru, lalu memeriksanya. Kalau ada langkah yang gagal, venv lama dikembalikan otomatis.
 
@@ -57,6 +68,8 @@ Tidak perlu mengunduh ulang. Setiap kali dijalankan, SquidWings mengambil versi 
 - **Hasil *Download ZIP*:** pada start pertama folder itu otomatis disambungkan ke repo ini (perlu `git` terpasang). Setelah itu pembaruannya sama seperti clone.
 - **Perubahan Anda aman.** Hanya fast-forward. File yang Anda ubah tetap, dan bila pembaruan menyentuh file yang sama, pembaruan ditunda. `.env`, `workspace/`, dan data lain yang di-ignore tidak pernah disentuh.
 - Perbarui sekarang: `python main.py update`. Matikan: `AUTO_UPDATE=false` di `.env`, atau `python main.py --no-update web`.
+
+**Dari HP:** jawaban tetap dikerjakan di server walau layar mati atau pindah aplikasi; buka lagi halamannya dan jawabannya menyusul sendiri. Hanya tombol stop yang menghentikan.
 
 > [!IMPORTANT]
 > **Tidak ada login.** Web UI hanya menerima akses dari mesin ini secara bawaan. Dengan `--tunnel`, siapa pun yang punya URL-nya bisa memakai agent dan membaca semua chat.
@@ -86,72 +99,84 @@ Tidak perlu mengunduh ulang. Setiap kali dijalankan, SquidWings mengambil versi 
 | 🔀 Router model | Provider, URL, dan API key dari web; rotasi pintar, model default, dan pemakaian token |
 | 📚 Skill dari GitHub | Repo skill (superpowers, anthropics/skills, GSAP, Remotion, humanizer, dan lainnya) di-clone dan diperbarui otomatis. Hanya skill penting yang aktif, sisanya tersimpan, dan skill pilihan ikut tersedia di Claude Code |
 
-## 🧩 Modul trading dan Studio
+## 🧠 Dua mode model
 
-Keduanya ada di repo ini dan gratis:
+| Mode | Perilaku |
+|---|---|
+| **Pilih sendiri** | Model yang kamu pilih di selector (atau `/model` di terminal) selalu dipakai. Kalau gagal, chat menjelaskan sebabnya (key ditolak, saldo habis, rate limit, model tidak ada, konteks kepanjangan, timeout, server error) dan **tidak** diam-diam pindah ke model lain |
+| **Auto** | Autopilot (`ROUTING_QUALITY=smart`) memilih model termurah yang andal untuk tingkat kesulitan permintaan: easy ke model ringan, hard ke model terkuat. Kerja dengan tool tidak pernah ke model ringan, dan setelah giliran yang gagal giliran berikutnya naik satu tier. Alasannya tampil di chat |
 
-- **Trading:** panel `/trading` dengan chart dan tiket order, jembatan EA MT4 dan adapter MT5, model kuant, otak neural, LLM analyst, simulasi live, auto trade dengan stop loss dan trailing stop, tool `trading_snapshot`, dan skill `analis-trading`. Pengaturannya ada di `trading/env.enterprise.example`, dan panduannya di [docs/trading.md](docs/trading.md).
+`ROUTING_QUALITY=max` mengirim semua ke model terkuat, `balanced` memakai tabel di `brain/config/models_config.yaml`.
+
+Supaya tetap pintar dan hemat saat skill dan tool makin banyak: indeks skill diurutkan dari yang paling relevan (tanpa batas buatan; konteks sampai 1 juta token), trigger dibobot menurut kelangkaannya, tool toolbox baru dikirim saat diminta, dan semua cache (klasifikasi, halaman web, indeks) dikelola di satu tempat dengan statistik di `/api/cache`. Detail di [brain/harness/README.md](brain/harness/README.md).
+
+## 🧩 Add-on: trading dan Studio
+
+Keduanya ada di repo ini (folder `addons/`), gratis, dan **mati bawaan**. Nyalakan dengan setup manual:
+
+```bash
+python main.py addon list              # apa saja, aktif atau mati, program yang belum ada
+python main.py addon install trading   # pasang paket (torch, MetaTrader5 di Windows), nyalakan, tampilkan langkah manual OS ini
+python main.py addon install studio    # cek dan pasang ffmpeg, nyalakan
+python main.py addon remove trading    # matikan lagi; file dan data tetap
+```
+
+Tiap add-on punya `addon.json` (file yang dibutuhkan, paket, program, langkah manual per OS) dan `README.md` sendiri.
+
+- **Trading:** panel `/trading` dengan chart dan tiket order, jembatan EA MT4 dan adapter MT5, model kuant, otak neural, LLM analyst, simulasi live, auto trade dengan stop loss dan trailing stop, tool `trading_snapshot`, dan skill `analis-trading`. Pengaturannya ada di `addons/trading/env.enterprise.example`, dan panduannya di [docs/trading.md](docs/trading.md).
 - **Studio video:** editor motion dengan keyframe, catatan, dan chat revisi.
 
-Kedua modul ini opsional. `config/edition.py` menyalakannya bila filenya ada. Bila filenya dihapus, bagian lain tetap berjalan dan menunya disembunyikan. `ENTERPRISE_TRADING=0` atau `ENTERPRISE_STUDIO=0` mematikannya walaupun terpasang. Data trading (`trading/data/`: jurnal, histori candle, bobot model) tidak ikut di repo.
+Saklarnya disimpan di `addons/enabled.json` (tidak ikut Git). `ADDON_TRADING=1` atau `ADDON_STUDIO=0` di `.env` mengalahkan saklar itu. Add-on yang mati atau filenya tidak lengkap disembunyikan, dan bagian lain tetap berjalan. Data trading (`addons/trading/data/`: jurnal, histori candle, bobot model) tidak ikut di repo.
 
 > [!WARNING]
 > Fitur trading tidak menjamin keuntungan. Uji di akun demo dulu; seluruh keputusan dan risiko trading ada pada pemakainya.
 
 ## 📁 Struktur file
 
+Kode dibagi per segmen. Setiap folder punya `README.md` sendiri yang menjelaskan isinya.
+
 ```text
 SquidWings/
-├── main.py                  entry point: chat, ask, web, models, health, doctor, trading
-├── cli.py                   antarmuka terminal
-├── .env.example             contoh semua pengaturan (salin ke .env)
-├── pyproject.toml           konfigurasi ruff, mypy, dan pytest
-├── requirements.txt         dependensi (requirements.lock untuk versi tepat)
-│
-├── agent/                   otak kerja agent
-│   ├── orchestrator.py      menerima pesan, memilih model, menjalankan giliran
-│   ├── agent_loop.py        loop model → tool → hasil
-│   ├── harness/             verifier, guard loop, pemilih tool, tier model, advisor
-│   └── team_*.py            tim agent: alur, eksekusi, dan output
-│
-├── brain/                   pemahaman dan memori
-│   ├── classifier/          jenis tugas dan lanjutan percakapan
-│   ├── memory/              riwayat chat, memori proyek, ringkasan, recall antar chat
-│   ├── system_prompt/       prompt sistem per jenis tugas
-│   └── skills/              panduan kerja (fix-bug, build-web, google-maps, studio, …); sources.json = skill dari GitHub
-│
-├── model/                   koneksi ke model
-│   ├── connection/          API client dan retry
-│   ├── registry/            daftar model dan batasnya
-│   ├── router/              provider, rotasi, sinkron daftar model, harga, pemakaian
-│   └── stream/              streaming jawaban
-│
-├── tool/                    semua tool agent
-│   ├── register_tools.py    tool inti yang selalu tersedia
-│   ├── registry/            skema dan registry tool
-│   └── execute/             implementasi: file, perintah, web, memori, kode, toolbox, trading
-│
-├── trading/                 model kuant, EA MT4, adapter MT5, berita, risiko
-├── security/                sandbox, policy.yaml, path jail, audit chain, prompt shield
-├── config/                  settings, modul opsional, kredensial, model dan provider
-├── web/                     server FastAPI, API tim, router, trading, Studio, file statis Web UI
-├── knowledge/               impor hasil Google Maps ke vault
-├── utils/                   logger, tampilan CLI, workspace, port, tunnel, OCR, terminal web
-├── docs/                    panduan lengkap
-├── scripts/check_all.sh     ruff, mypy, compile, pytest, dan import sekaligus
-└── tests/                   test suite offline
+├── main.py          entry point: chat, ask, web, addon, skills, tools, doctor, trading
+├── CLAUDE.md        konteks proyek untuk Claude Code (fork lalu buka claude di folder ini)
+├── brain/           otak + harness: agent/ (orchestrator, loop, tim), harness/ (autopilot, skill & tool),
+│                    classifier, memori, model, prompt, config, utils (cache, platform), security
+├── input/           apa yang dikirim ke model: konteks, batas token, cara berpikir, gaya desain
+├── skills/          panduan kerja: builtin/, skill GitHub (sources.json), adapters/
+├── tools/           semua tool AI, satu folder per segmen, plus toolbox tersembunyi
+├── web/             server FastAPI dan halaman chat
+├── addons/          fitur tambahan, mati bawaan: trading/, studio/
+├── scripts/         setup.py, check_all.sh, tunnel.sh, upgrade_python.sh
+├── tests/           test suite offline
+└── docs/            panduan lengkap
 ```
+
+| Segmen | Baca |
+|---|---|
+| Otak, agent, model, cache | [brain/README.md](brain/README.md) |
+| Harness: autopilot, skill & tool | [brain/harness/README.md](brain/harness/README.md) |
+| Input ke model | [input/README.md](input/README.md) |
+| Skill dan adapter | [skills/README.md](skills/README.md) |
+| Tool | [tools/README.md](tools/README.md) |
+| Web | [web/README.md](web/README.md) |
+| Add-on | [addons/README.md](addons/README.md) |
+| Skrip | [scripts/README.md](scripts/README.md) |
+| Test | [tests/README.md](tests/README.md) |
 
 Folder yang dibuat saat jalan dan **tidak** ikut Git:
 
 | Folder | Isi |
 |---|---|
-| `workspace/sessions/<id>/` | Folder kerja tiap chat web dan team run |
-| `workspace/projects/<nama>/` | Proyek dari `python main.py chat` |
+| `data/` | Log (`data/logs/`), audit chain (`data/audit.jsonl`), laporan (`data/reports/`). `SQUIDWINGS_DATA_DIR` memindahkannya |
+| `workspace/` | Folder kerja tiap chat (`sessions/`) dan proyek dari `python main.py chat` (`projects/`) |
 | `vault/` | Profil pengguna dan playbook, berlaku di semua chat |
-| `web/data/` | Provider router, kredensial dari web, dan log token |
-| `.agent_memory/` | Statistik model untuk router |
-| `trading/data/` | Jurnal trade, histori candle, dan bobot model trading |
+| `web/data/` | Provider router, kredensial dari web, run tim |
+| `brain/memory/chat_store/` | Riwayat chat |
+| `.agent_memory/` | Statistik model, brief harian, riwayat gaya |
+| `skills/.sources/` | Clone skill dari GitHub |
+| `addons/enabled.json`, `addons/trading/data/` | Saklar add-on, data trading |
+
+`workspace/` dan `vault/` sengaja tetap di root, karena chat yang tersimpan menunjuk ke sana dengan path lengkap. File lama yang dulu ditulis ke root (`*.log`, `audit.jsonl`, `logs/`, `reports/`) dipindah otomatis ke `data/` saat SquidWings start.
 
 ## ⚙️ Pengaturan
 
@@ -162,9 +187,9 @@ Pengaturan ada di tiga tempat. Yang di web langsung berlaku tanpa restart.
 | `.env` | Semua pengaturan dasar. Contoh lengkap di [.env.example](.env.example). Tulis komentar di baris sendiri |
 | Web → **Router & token** | Provider, URL, API key, model default, dan rotasi |
 | Web → **Tim agent → Kredensial** | Token Telegram, Brave/SearXNG, dan URL database |
-| `config/models_config.yaml` | Batas konteks per model dan aturan routing tetap |
-| `config/providers.yaml` | Beberapa endpoint sekaligus |
-| `security/policy.yaml` | Aturan apa yang boleh dan tidak boleh dilakukan agent |
+| `brain/config/models_config.yaml` | Batas konteks per model dan aturan routing tetap |
+| `brain/config/providers.yaml` | Beberapa endpoint sekaligus |
+| `brain/security/policy.yaml` | Aturan apa yang boleh dan tidak boleh dilakukan agent |
 
 <details>
 <summary><b>Variabel <code>.env</code> utama</b></summary>
@@ -183,7 +208,7 @@ Pengaturan ada di tiga tempat. Yang di web langsung berlaku tanpa restart.
 | Upload | `MAX_UPLOAD_MB`, `MAX_UPLOAD_CHARS`, `UPLOAD_INLINE_CHARS`, `DOCUMENT_OCR`, `OCR_MAX_IMAGES`, `OCR_TIER`, `OCR_IMAGE_S`, `OCR_TOTAL_S`, `SEND_IMAGES` |
 | Alat lokal | `GRAPHIFY_AUTO`, `AISLOP_AUTO`, `TOOLS_AUTO_UPDATE` |
 | Suara dan brief | `VOICE_LANG`, `VOICE_STT_MODEL`, `ELEVENLABS_API_KEY`, `DAILY_BRIEF`, `BRIEF_TIME` |
-| Modul | `ENTERPRISE_TRADING`, `ENTERPRISE_STUDIO` (`0` mematikan modul trading atau Studio) |
+| Add-on | `ADDON_TRADING`, `ADDON_STUDIO` (`1` nyala, `0` mati; mengalahkan `python main.py addon …`). `ENTERPRISE_*=0` lama tetap mematikan |
 
 </details>
 
@@ -210,14 +235,14 @@ Lalu jalankan `python main.py models`. Tidak ada nama model yang tertanam di kod
 
 Ollama dan LM Studio tetap butuh `API_KEY`, tetapi isinya boleh apa saja.
 
-Nama model yang berisi `flash`, `mini`, atau `lite` dianggap murah dan dipakai untuk tugas mudah. Nama seperti `opus` dipakai untuk tugas sulit. Untuk memaksa satu model, isi `DEFAULT_MODEL`, atau tulis di `routing` pada `config/models_config.yaml`. Bila endpoint tidak melaporkan batasnya, agent memakai perkiraan aman: konteks 32 ribu token dan output 4 ribu token.
+Nama model yang berisi `flash`, `mini`, atau `lite` dianggap murah dan dipakai untuk tugas mudah. Nama seperti `opus` dipakai untuk tugas sulit. Untuk memaksa satu model, isi `DEFAULT_MODEL`, atau tulis di `routing` pada `brain/config/models_config.yaml`. Bila endpoint tidak melaporkan batasnya, agent memakai perkiraan aman: konteks 32 ribu token dan output 4 ribu token.
 
 </details>
 
 <details>
 <summary><b>Pilihan model pada mode Auto</b></summary>
 
-- Kandidat diambil dari `config/models_config.yaml` dan dari daftar model yang sedang dikembalikan API. Model baru dari provider ikut dicoba tanpa mengubah konfigurasi.
+- Kandidat diambil dari `brain/config/models_config.yaml` dan dari daftar model yang sedang dikembalikan API. Model baru dari provider ikut dicoba tanpa mengubah konfigurasi.
 - Tugas mudah memakai model murah. Tugas sedang memakai semua model kecuali tier frontier. Tugas sulit memakai model yang dikonfigurasi.
 - Tiap pilihan melihat catatan sukses, gagal, dan latensi model, ditambah sedikit acak supaya model baru tetap kebagian giliran.
 
@@ -252,10 +277,12 @@ python main.py doctor                   # uji isolasi sandbox
 python main.py tools                    # program media yang terpasang (ffmpeg, yt-dlp, Node, ...)
 python main.py tools install            # pasang yang belum ada, tanpa sudo
 python main.py update                   # ambil versi terbaru dari GitHub sekarang
-python main.py skills                   # skill dari GitHub: status (sync, update, link)
+python main.py skills                   # skill dari GitHub: status (sync, update, link, search)
+python main.py addon list               # add-on trading dan Studio: status, install, enable, remove
+python main.py trading                  # server trading port 80 untuk EA MT4 (add-on trading)
 ```
 
-Perintah di dalam `chat`: `/model`, `/stack`, `/ponytail`, `/memory`, `/chats`, `/brief`, `/voice`, `/sandbox`, `/status`, dan `/help`.
+Perintah di dalam `chat`: `/model` (pilih dan kunci model), `/model auto` (balik ke Auto), `/model <id>`, `/cache` (statistik cache, `/cache clear`), `/stack`, `/ponytail`, `/memory`, `/chats`, `/brief`, `/voice`, `/sandbox`, `/status`, dan `/help`. Setiap jawaban diawali satu baris: jenis tugas, tingkat kesulitan, dan model (🔒 kalau dipilih sendiri, atau alasan pilihan Auto).
 
 **Suara.** `/voice` merekam lewat mikrofon (perlu `arecord` atau `parecord`), mengubahnya jadi teks, lalu menampilkan hasilnya: Enter untuk kirim, atau ketik perbaikan. Pengenal suara memakai `faster-whisper` (lokal, sudah termasuk di `requirements.txt`; model diunduh sekali saat pertama dipakai). Bila tidak terpasang, `SpeechRecognition` dipakai, yang mengirim audio ke layanan online Google. Transkripsi audio dan video yang diunggah ke chat memakai mesin yang sama. `/voice on` membacakan jawaban dengan ElevenLabs (butuh API key dan `ffplay` atau `mpv`); `/voice status` menunjukkan apa yang sudah siap. Di Web UI ada tombol mikrofon di kotak pesan dan tombol *Bacakan* di bawah jawaban; keduanya memakai fitur suara browser, jadi tidak butuh key, dan pesan tidak pernah terkirim sendiri.
 
@@ -318,30 +345,33 @@ uv tool install graphifyy    # graph kode
 | [Router model](docs/router.md) | Provider, URL, dan API key dari web; rotasi, model default, dan pemakaian token |
 | [Tim agent](docs/tim-agent.md) | Kanvas alur, jadwal, Telegram, dan database |
 | [Trading](docs/trading.md) | Panel, EA MT4, adapter MT5, model kuant, dan batas risiko |
+| README per segmen | Lihat tabel di [Struktur file](#-struktur-file) |
+| [Catatan perubahan](docs/CHANGELOG.md) | Apa yang berubah dan kapan |
 
 ## 🧪 Pengembangan
 
 ```bash
 bash scripts/check_all.sh        # ruff, mypy, compile, pytest, import
-python -m pytest -m "not live"   # lewati tes yang memanggil API asli
+python -m pytest -q              # test suite offline
 python -m tests.routing_eval     # akurasi routing: jenis tugas, skill, dan tool per prompt
 ```
 
 Kasus routing ada di `tests/eval_data/*.json`; menambah prompt tidak perlu menyentuh kode. Kasus bertanda `"gap": true` adalah kekurangan yang sudah diketahui: tesnya gagal-yang-diharapkan, jadi saat diperbaiki tes memintamu menghapus tandanya.
 
-Tes bertanda `enterprise` dilewati sendiri bila modul trading tidak terpasang. Jangan pernah meng-commit `.env`: key disimpan di sana, dan `.env.example` hanya berisi contoh.
+Test menyalakan kedua add-on sendiri dan memakai folder `data/` sementara, jadi tidak menyentuh data asli. Jangan pernah meng-commit `.env`: key disimpan di sana, dan `.env.example` hanya berisi contoh.
 
 ## 🩺 Troubleshooting
 
 | Gejala | Solusi |
 |---|---|
-| Perintah agent ditolak | Pasang bubblewrap atau Docker, lalu jalankan `python main.py doctor` |
+| Perintah agent ditolak | Linux: pasang bubblewrap. macOS/Windows: jalankan Docker Desktop, atau `SANDBOX_MODE=off`. Lalu `python main.py doctor` |
+| Panel Terminal tidak jalan di Windows | `pip install pywinpty` (sudah ada di requirements.txt untuk Windows) |
 | Koneksi ditolak | Periksa `API_BASE_URL` dan `API_KEY`, lalu jalankan `python main.py health` |
 | Hasil riset kurang lengkap | Pasang SearXNG atau isi `BRAVE_SEARCH_API_KEY` |
 | Gambar atau PDF scan tidak terbaca | Periksa `DOCUMENT_OCR=true` dan `pip install -r requirements.txt` (rapidocr). `OCR_TIER=max` untuk scan sangat sulit |
 | Nilai env tidak terbaca | Pindahkan komentar ke baris sendiri |
 | Menu tim tidak muncul | Atur `WEB_TEAMS_ENABLED=true` |
-| Menu Trading tidak ada | File modul trading tidak lengkap, atau `ENTERPRISE_TRADING=0` |
+| Menu Trading atau Studio tidak ada | Add-on mati bawaan: `python main.py addon install trading` (atau `studio`), lalu restart |
 | Port 8080 sudah terpakai | `web` pindah sendiri ke port kosong berikutnya. Untuk SquidWings lama, pakai `--replace` |
 
 ## 📜 Lisensi
@@ -373,7 +403,7 @@ Kalau SquidWings berguna, beri **bintang** di GitHub supaya lebih mudah ditemuka
 - **Trading:** MT4/MT5 bridge, quant and neural models, LLM analyst, paper trading, and auto trade with stop loss.
 - **Security:** sandboxed commands, policy engine, path jail, audit log, prompt-injection shield, and secret masking.
 
-The interface and docs are in Indonesian. Quick start: see the commands [above](#-mulai-cepat).
+Runs on Windows, macOS, and Linux (`python scripts/setup.py`). Trading and the video Studio are optional add-ons, off until `python main.py addon install <name>`. Every top-level folder has its own README. The interface and docs are in Indonesian. Quick start: see the commands [above](#-mulai-cepat).
 
 ---
 

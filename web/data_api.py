@@ -16,10 +16,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from config import credentials
-from utils import datastore
-from utils.datastore import DataError, registry
-from utils.datastore.base import MAX_PAGE, Backend
+from brain.config import credentials
+from brain.utils import datastore
+from brain.utils.datastore import DataError, registry
+from brain.utils.datastore.base import MAX_PAGE, Backend
 from web.router_api import admin
 
 router = APIRouter(prefix="/api/data", tags=["Data"])

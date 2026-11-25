@@ -9,15 +9,15 @@ from typing import Any
 
 import pytest
 
-from agent.orchestrator import AgentResponse
-from agent.team_orchestrator import (
+from brain.agent.orchestrator import AgentResponse
+from brain.agent.team_orchestrator import (
     TeamMember,
     TeamOrchestrator,
     TeamStore,
     execution_layers,
     team_templates,
 )
-from config.constants import ResponseStatus
+from brain.config.constants import ResponseStatus
 
 
 class FakeOrchestrator:
@@ -174,7 +174,7 @@ async def test_agents_keep_the_task_as_intent_and_leave_no_chat_history(tmp_path
 
 
 def set_limits(monkeypatch: pytest.MonkeyPatch, **values: int) -> None:
-    from config.settings import get_settings
+    from brain.config.settings import get_settings
 
     for name, value in values.items():
         monkeypatch.setattr(get_settings(), name, value)
@@ -219,7 +219,7 @@ async def test_reports_survive_a_failing_lead(tmp_path: Path) -> None:
 
 
 async def test_a_hanging_model_cannot_block_the_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent import team_orchestrator
+    from brain.agent import team_orchestrator
 
     monkeypatch.setattr(team_orchestrator, "HARD_TIMEOUT_GRACE_SECONDS", 0)
     set_limits(monkeypatch, team_member_seconds=0)
@@ -245,14 +245,14 @@ def _saved_team(team_id="team-1", **extra):
 
 
 def test_saved_team_mode_survives_a_reload():
-    from agent.team_orchestrator import TeamStore
+    from brain.agent.team_orchestrator import TeamStore
 
     team = TeamStore._team_from_dict(_saved_team(mode="video"))
     assert team.mode == "video"
 
 
 def test_a_field_from_another_version_does_not_lose_the_team():
-    from agent.team_orchestrator import TeamStore
+    from brain.agent.team_orchestrator import TeamStore
 
     data = _saved_team(dari_versi_baru=1)
     data["members"][0]["field_baru"] = "x"
@@ -262,15 +262,15 @@ def test_a_field_from_another_version_does_not_lose_the_team():
 def test_one_damaged_team_does_not_hide_the_others(tmp_path):
     import json
 
-    from agent.team_orchestrator import TeamStore
+    from brain.agent.team_orchestrator import TeamStore
 
     (tmp_path / "teams.json").write_text(json.dumps([{"id": "rusak"}, _saved_team("team-baik")]), encoding="utf-8")
     assert list(TeamStore(tmp_path)._teams) == ["team-baik"]
 
 
 def test_a_video_run_needs_a_shared_video_file(tmp_path):
-    from agent.team_orchestrator import TeamOrchestrator
-    from utils import shared_files
+    from brain.agent.team_orchestrator import TeamOrchestrator
+    from brain.utils import shared_files
 
     assert TeamOrchestrator._has_video(tmp_path) is False
     shared_files.add(tmp_path, "catatan.md")
@@ -300,7 +300,7 @@ def test_visual_templates_ask_for_a_fresh_direction() -> None:
 
 
 def test_bug_hunt_gate_reads_only_the_last_line() -> None:
-    from agent.team_flow import check_condition
+    from brain.agent.team_flow import check_condition
 
     gate = next(m for m in next(t for t in team_templates(["m"]) if t["key"] == "bug-hunt")["members"] if m["id"] == "check")
     rule = {"mode": "regex", "value": gate["config"]["value"]}

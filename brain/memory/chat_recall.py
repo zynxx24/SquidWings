@@ -20,7 +20,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
-from utils.logger import get_logger
+from brain.utils.logger import get_logger
 
 logger = get_logger(__name__)
 

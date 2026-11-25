@@ -31,35 +31,36 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from agent import session_stack
-from agent.orchestrator import Orchestrator
-from agent.team_orchestrator import TeamOrchestrator, TeamStore
+from brain.agent import session_stack
+from brain.agent.orchestrator import Orchestrator
+from brain.agent.team_orchestrator import TeamOrchestrator, TeamStore
 from brain.classifier.continuation import is_continuation_input
-from config.settings import get_settings
-from model.router.groups import group_of, provider_labels
-from model.settings.model_picker import is_chat_model
-from security import sandbox
-from security.headers import embeddable_headers, shell_headers
-from security.web_access import (
+from brain.config.settings import get_settings
+from brain.model.router.groups import group_of, provider_labels
+from brain.model.settings.model_picker import is_chat_model
+from brain.security import sandbox
+from brain.security.headers import embeddable_headers, shell_headers
+from brain.security.web_access import (
     WebSecurityMiddleware,
     is_local_request,
     is_loopback_host,
     set_public_mode,
 )
-from tool.execute.execute_code_intel import quality_tools
-from utils import daily_brief, local_ocr, preview, shared_files, web_terminal
-from utils.extract import DOCUMENT_SUFFIXES, Extracted, extract, intent_of, save_images
-from utils.extract import Image as ExtractedImage
-from utils.helpers import format_tokens, generate_session_id, is_valid_session_id
-from utils.logger import get_logger
-from utils.markdown_compact import compact_markdown, fit_markdown
-from utils.session_names import quick_title
-from utils.workspace_context import (
+from brain.utils import cache, daily_brief, local_ocr, preview, shared_files, web_terminal
+from brain.utils.extract import DOCUMENT_SUFFIXES, Extracted, extract, intent_of, save_images
+from brain.utils.extract import Image as ExtractedImage
+from brain.utils.helpers import format_tokens, generate_session_id, is_valid_session_id
+from brain.utils.logger import get_logger
+from brain.utils.markdown_compact import compact_markdown, fit_markdown
+from brain.utils.session_names import quick_title
+from brain.utils.workspace_context import (
     forget_session_folder,
     name_session_folder,
     reserve_session_name,
     session_workspace,
 )
+from tools.code_intel import quality_tools
+from web import live_turns
 from web.data_api import router as data_router
 from web.team_api import router as team_router
 
@@ -95,7 +96,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning(f"[web] eager orchestrator init failed: {exc}")
     # Endpoints in .env move to the Router page once; from then on they are managed there.
     try:
-        from model.router.store import get_store
+        from brain.model.router.store import get_store
 
         imported = get_store().import_env() if os.getenv("ROUTER_IMPORT_ENV", "1").strip() != "0" else []
         if imported:
@@ -112,11 +113,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:  # noqa: BLE001 - naming is cosmetic
         logger.warning(f"[web] naming old folders failed: {exc}")
     # Daily, in the background: keeps graphify and aislop on their latest release.
-    from tool.execute.execute_code_intel import tool_updates
+    from tools.code_intel import tool_updates
 
     tool_updates.start_background(get_settings().project_root / ".agent_memory" / "tool_updates.json")
     # Skills from GitHub: clone what is missing, pull daily, link the chosen ones into Claude Code.
-    from brain.skills import sources as skill_sources
+    from skills import sources as skill_sources
 
     skill_sources.start_background()
     # Teams validate models against the registry, which is empty until the first
@@ -155,7 +156,7 @@ if _TEAMS_ENABLED:
 # Trading: the MT5 panel, the MT4 EA bridge and the quant API. They are mounted only when the
 # trading module's files are all present; without them there are no trading routes at all.
 # The MT5 order endpoints stay closed unless MT5_TRADE_TOKEN is set.
-from config.edition import (  # noqa: E402
+from brain.config.edition import (  # noqa: E402
     ENTERPRISE_NOTE,
     STUDIO_NOTE,
     edition,
@@ -165,9 +166,9 @@ from config.edition import (  # noqa: E402
 )
 
 if trading_enabled():
-    from web.mt4_bridge import router as mt4_router
-    from web.mt5_api import router as mt5_router
-    from web.quant_api import router as quant_router
+    from addons.trading.web.mt4_bridge import router as mt4_router
+    from addons.trading.web.mt5_api import router as mt5_router
+    from addons.trading.web.quant_api import router as quant_router
 
     app.include_router(mt5_router)
     app.include_router(mt4_router)
@@ -188,16 +189,16 @@ def _router_models_sink(provider_id: str, models: list[dict[str, Any]] | None) -
     return len(models or [])
 
 
-from model.router import sync as _router_sync  # noqa: E402
+from brain.model.router import sync as _router_sync  # noqa: E402
 
 _router_sync.set_registry_sink(_router_models_sink)
 
 app.include_router(model_router_api)
 if studio_enabled():   # optional module: the video Studio
-    from web.studio_api import router as studio_router
+    from addons.studio.web.studio_api import router as studio_router
 
     app.include_router(studio_router)
-studio_context = studio_module("utils.studio_context")
+studio_context = studio_module("addons.studio.studio_context")
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -229,7 +230,7 @@ if _allowed_origins:
 # Imported lazily so the web layer still boots if the security package is
 # unavailable; a failure is logged rather than fatal.
 try:
-    from security.headers import SecurityHeadersMiddleware
+    from brain.security.headers import SecurityHeadersMiddleware
 
     app.add_middleware(SecurityHeadersMiddleware)
 except Exception as _sec_exc:  # pragma: no cover - defensive
@@ -273,8 +274,11 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 # The pages the chat page opens inside itself, and their files.
-_APP_PAGES = {"trading": STATIC_DIR / "trading" / "index.html", "router": STATIC_DIR / "router" / "index.html",
-              "studio": STATIC_DIR / "studio" / "index.html"}
+# Add-ons keep their pages in their own folder and are served under /static/<add-on>/.
+ADDON_STATIC = {"trading": Path(__file__).resolve().parents[1] / "addons" / "trading" / "web" / "static",
+                "studio": Path(__file__).resolve().parents[1] / "addons" / "studio" / "web" / "static"}
+_APP_PAGES = {"trading": ADDON_STATIC["trading"] / "index.html", "router": STATIC_DIR / "router" / "index.html",
+              "studio": ADDON_STATIC["studio"] / "index.html"}
 _ENTERPRISE_PAGE = """<!doctype html><html lang="id"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Trading · tidak terpasang</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.6 system-ui,sans-serif;
@@ -332,10 +336,15 @@ async def serve_studio_frame() -> HTMLResponse:
     """Frames of a Studio video side by side, drawn by the Studio's own renderer (for studio_still)."""
     if not studio_enabled():
         raise HTTPException(status_code=404, detail=STUDIO_NOTE)
-    return _page(STATIC_DIR / "studio" / "frame.html", {})
+    return _page(ADDON_STATIC["studio"] / "frame.html", {})
 
 
 # Mount static files (CSS, JS, assets)
+# Specific mounts first: Starlette takes the first mount whose prefix matches.
+if trading_enabled() and ADDON_STATIC["trading"].is_dir():
+    app.mount("/static/trading", StaticFiles(directory=str(ADDON_STATIC["trading"])), name="static-trading")
+if studio_enabled() and ADDON_STATIC["studio"].is_dir():
+    app.mount("/static/studio", StaticFiles(directory=str(ADDON_STATIC["studio"])), name="static-studio")
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -444,7 +453,7 @@ async def ensure_models(force: bool = False) -> dict[str, int]:
 
 def default_model_id() -> str:
     """The model chosen on the Router page, else DEFAULT_MODEL, if registered; otherwise the first known model."""
-    from model.router.store import get_store
+    from brain.model.router.store import get_store
 
     orch = get_orchestrator()
     for configured in (get_store().meta("default_model", ""), get_settings().default_model):
@@ -575,7 +584,7 @@ if _env_bool("VIDEO_UPLOAD_ENABLED", False):
 
 
 def _ffmpeg_exe() -> str:
-    from utils.toolkit import ffmpeg_exe
+    from brain.utils.toolkit import ffmpeg_exe
 
     found = ffmpeg_exe()
     if found is None:
@@ -585,7 +594,7 @@ def _ffmpeg_exe() -> str:
 
 def _transcribe_locally(wav: Path) -> str | None:
     """The speech in a WAV, read on this machine by faster-whisper. None when it is not installed."""
-    from utils import whisper_stt
+    from brain.utils import whisper_stt
 
     if not whisper_stt.available():
         return None
@@ -800,7 +809,7 @@ async def client_config() -> dict[str, Any]:
 async def security_status() -> dict[str, Any]:
     """Expose the security layer snapshot (policy, audit chain, rate)."""
     try:
-        from security.guard import get_guard_facade
+        from brain.security.guard import get_guard_facade
 
         return get_guard_facade().status()
     except Exception as e:
@@ -810,7 +819,7 @@ async def security_status() -> dict[str, Any]:
 @app.get("/api/update")
 async def update_status() -> dict[str, Any]:
     """The newest GitHub update check. ``restart_needed`` means new code was pulled and waits for a restart."""
-    from utils import repo_update
+    from brain.utils import repo_update
 
     return repo_update.status()
 
@@ -818,7 +827,7 @@ async def update_status() -> dict[str, Any]:
 @app.get("/api/tunnel")
 async def tunnel_status() -> dict[str, Any]:
     """Get Cloudflare Tunnel status and public URL."""
-    from utils.tunnel import get_current_tunnel, get_public_url
+    from brain.utils.tunnel import get_current_tunnel, get_public_url
     url = get_public_url()
     tunnel = get_current_tunnel()
     active = bool(tunnel and tunnel.process and tunnel.process.poll() is None and url)
@@ -902,6 +911,18 @@ async def update_session_title(session_id: str, payload: dict[str, Any]) -> dict
     return {"status": "ok", "session_id": session_id, "title": title}
 
 
+@app.get("/api/cache")
+async def cache_stats() -> dict[str, Any]:
+    """Every shared cache: entries, hits, misses, hit rate."""
+    return {"caches": cache.stats()}
+
+
+@app.post("/api/cache/clear")
+async def cache_clear(name: str = "") -> dict[str, Any]:
+    """Empty one cache by name, or all of them."""
+    return {"cleared": cache.clear(name or None)}
+
+
 @app.delete("/api/session/{session_id}")
 @app.post("/api/session/{session_id}/delete")
 async def delete_session(session_id: str) -> dict[str, Any]:
@@ -912,6 +933,7 @@ async def delete_session(session_id: str) -> dict[str, Any]:
         orch.session_manager.delete_session(session_id)
     _override_models.pop(session_id, None)
     web_terminal.close(session_id)
+    cache.clear_session(session_id)   # pages, decisions, anything cached for this chat
     # The chat's folder holds its vault, graph, memory, and files. Only ever a
     # direct child of the sessions folder, under an id already checked to be plain.
     if is_valid_session_id(session_id):
@@ -985,7 +1007,7 @@ _SESSION_FILE_HEADERS = {
 
 @app.get("/api/session/{session_id}/file")
 async def session_image(session_id: str, path: str = Query(..., min_length=1, max_length=400)) -> FileResponse:
-    from tool.execute.execute_local_ops.path_guard import PathGuardError, resolve_inside
+    from tools.local_ops.path_guard import PathGuardError, resolve_inside
 
     if not is_valid_session_id(session_id):
         raise HTTPException(status_code=404, detail="file not found in this session")
@@ -1047,7 +1069,7 @@ async def select_model(payload: dict[str, Any]) -> dict[str, Any]:
 
     if raw_model_id == AUTO_MODEL:
         _override_models[session_id] = AUTO_MODEL
-        return {"status": "ok", "model_id": AUTO_MODEL, "display_name": "Auto"}
+        return {"status": "ok", "model_id": AUTO_MODEL, "display_name": "Auto (hemat)"}
 
     if raw_model_id:
         normalized_id = raw_model_id
@@ -1120,7 +1142,7 @@ async def _finish_naming(orch: Any, session_id: str, tag: str, task: asyncio.Tas
 
 def _name_old_folders() -> int:
     """Give folders made before the naming a ``[web] <title>`` name. Runs once at start, nothing works in them then."""
-    from utils import workspace_context as wc
+    from brain.utils import workspace_context as wc
 
     store = get_orchestrator().conversation_store
     names = wc._read_names()
@@ -1137,12 +1159,13 @@ def _name_old_folders() -> int:
 async def _await_turn(websocket: WebSocket, turn: asyncio.Task[Any]) -> None:
     """Wait for a turn while listening, so the user can stop it.
 
-    Closing the page stops it too, rather than spending tokens on an answer nobody
-    will read.
+    Only the stop button stops it. A page that goes away (a phone screen turning off, another
+    app in front) leaves the turn running: its answer is saved, and the page picks it up again
+    when it reconnects (``{"type": "attach"}``).
 
     Raises:
         asyncio.CancelledError: If the user pressed stop.
-        WebSocketDisconnect: If the browser went away.
+        WebSocketDisconnect: If the browser went away (the turn keeps running).
     """
     while not turn.done():
         incoming = asyncio.create_task(websocket.receive_text())
@@ -1155,10 +1178,7 @@ async def _await_turn(websocket: WebSocket, turn: asyncio.Task[Any]) -> None:
         try:
             raw = incoming.result()
         except WebSocketDisconnect:
-            turn.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await turn
-            raise
+            raise   # the turn is not cancelled: it finishes and saves its answer
         with contextlib.suppress(ValueError):
             if json.loads(raw).get("type") == "stop":
                 turn.cancel()
@@ -1209,7 +1229,7 @@ async def preview_open(request: Request) -> dict[str, Any]:
 
 @app.websocket("/ws/terminal")
 async def websocket_terminal(websocket: WebSocket, session: str = Query("")) -> None:
-    """The chat's shell in the browser (xterm.js). See utils.web_terminal.
+    """The chat's shell in the browser (xterm.js). See brain.utils.web_terminal.
 
     Client sends {"type": "input", "data": "..."}, {"type": "resize", "cols": n, "rows": n},
     or {"type": "restart"}. Server sends {"type": "output", "data": "..."} and {"type": "exit"}.
@@ -1265,6 +1285,109 @@ async def websocket_terminal(websocket: WebSocket, session: str = Query("")) -> 
         term.unsubscribe(listener)
 
 
+async def _run_live_turn(
+    orch: Any, live: live_turns.LiveTurn, session_id: str, message: str, override: str | None, *,
+    locked: bool, images: list[str], classification: Any, difficulty: str,
+) -> None:
+    """One chat turn, start to finish, whether or not a browser is watching."""
+    content_buf: list[str] = []
+    thinking_buf: list[str] = []
+
+    def on_content(chunk: str) -> None:
+        content_buf.append(chunk)
+        live.emit({"type": "content", "content": chunk})
+
+    def on_reset() -> None:
+        content_buf.clear()
+        live.emit({"type": "reset"})
+
+    def on_event(event: dict[str, Any]) -> None:
+        live.emit({**event, "kind": event.get("type"), "type": "progress"})
+
+    def on_thinking(chunk: str) -> None:
+        thinking_buf.append(chunk)
+        live.emit({"type": "thinking", "content": chunk})
+
+    start_time = time.time()
+    # "[web] <title>": a quick title now, the AI's own (at most 28 characters) once it answers
+    title_task = _start_naming(orch, session_id, "web", message)
+    # This chat's folder, vault, graph, and Ponytail mode.
+    session_stack.enter(session_id)
+    try:
+        response = await orch.process(
+            user_input=message,
+            session_id=session_id,
+            override_model=override,
+            model_locked=locked,
+            stream=True,
+            images=images,
+            on_content_chunk=on_content,
+            on_thinking_chunk=on_thinking,
+            classification=classification,
+            difficulty=difficulty,
+            on_reset=on_reset,
+            on_event=on_event,
+        )
+        # Send fallback buffered items if streaming didn't output chunks
+        if not thinking_buf and response.thinking:
+            live.emit({"type": "thinking", "content": response.thinking})
+        if not content_buf and response.content:
+            live.emit({"type": "content", "content": response.content})
+        latency = (time.time() - start_time) * 1000
+        titled = await _finish_naming(orch, session_id, "web", title_task)
+        if titled:
+            live.emit({"type": "meta", "event": "title", "session_id": session_id, "title": titled})
+        live.emit({
+            "type": "done",
+            "model_used": response.model_used,
+            "task_type": response.task_type,
+            "difficulty": response.difficulty,
+            "confidence": response.confidence,
+            "prompt_tokens": response.prompt_tokens,
+            "completion_tokens": response.completion_tokens,
+            "total_tokens": response.total_tokens,
+            "latency_ms": round(latency, 0),
+            "iterations": response.iterations,
+            "status": response.status.value if hasattr(response.status, "value") else str(response.status),
+            "fallback_used": response.fallback_used,
+            "harness": response.harness,
+        })
+    except asyncio.CancelledError:
+        live.emit({"type": "stopped"})   # the stop button, the only thing that cancels a turn
+    except Exception as proc_err:  # noqa: BLE001 - the page must hear about any failure
+        logger.error(f"[ws] Orchestrator processing error: {proc_err}")
+        live.emit({"type": "error", "content": str(proc_err)})
+    finally:
+        live.finish()
+
+
+async def _follow_live_turn(websocket: WebSocket, live: live_turns.LiveTurn) -> None:
+    """Stream a live turn to this connection (from its start), listening for stop.
+
+    Raises:
+        WebSocketDisconnect: The browser went away. The turn keeps running.
+    """
+    q = live.subscribe()
+
+    async def sender() -> None:
+        try:
+            while (item := await q.get()) is not None:
+                await websocket.send_json(item)
+        except Exception as ex:  # noqa: BLE001 - a closed socket ends this follower only
+            logger.debug(f"[ws] Sender error: {ex}")
+
+    sender_task = asyncio.create_task(sender())
+    try:
+        if live.task is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await _await_turn(websocket, live.task)
+        await sender_task
+    finally:
+        live.unsubscribe(q)
+        if not sender_task.done():
+            sender_task.cancel()
+
+
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket) -> None:
     """WebSocket endpoint for real-time streaming chat.
@@ -1289,6 +1412,17 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 data = None
             # A stop that arrives after the turn already finished has nothing to stop.
             if isinstance(data, dict) and data.get("type") == "stop":
+                continue
+            # A page (re)opening a chat: follow the answer still being written there, from its start.
+            if isinstance(data, dict) and data.get("type") == "attach":
+                attach_id = str(data.get("session_id") or "")
+                live = live_turns.get(attach_id) if is_valid_session_id(attach_id) else None
+                if live is None or (live.finished and not data.get("include_finished")):
+                    await websocket.send_json({"type": "attach", "running": False, "session_id": attach_id})
+                    continue
+                await websocket.send_json({"type": "attach", "running": True, "session_id": attach_id,
+                                           "message": live.message, "started": live.started})
+                await _follow_live_turn(websocket, live)
                 continue
             if not isinstance(data, dict) or not isinstance(data.get("message"), str):
                 await websocket.send_json({"type": "error", "content": "Malformed request"})
@@ -1324,7 +1458,11 @@ async def websocket_chat(websocket: WebSocket) -> None:
             # Send classification info first. Routed by what the user typed, not by an attached document
             # (the orchestrator skips its own classification when it is handed this one).
             classification, difficulty = orch.classifier.classify_with_difficulty(intent_of(message))
-            await websocket.send_json({
+
+            # The turn runs as its own task and records everything it sends (web/live_turns.py):
+            # a phone that sleeps or switches apps loses this connection, not the answer.
+            live = live_turns.start(session_id, message)
+            live.emit({
                 "type": "meta",
                 "event": "classified",
                 "task_type": classification.task_type.value,
@@ -1333,120 +1471,23 @@ async def websocket_chat(websocket: WebSocket) -> None:
                 "continuation": is_continue,
                 "model": override or AUTO_MODEL,
             })
-
-            # Queue for thread-safe ordered streaming chunks
-            queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-
-            async def queue_sender(q: asyncio.Queue[dict[str, Any] | None] = queue) -> None:
-                try:
-                    while True:
-                        item = await q.get()
-                        if item is None:
-                            break
-                        await websocket.send_json(item)
-                except Exception as ex:
-                    logger.debug(f"[ws] Sender error: {ex}")
-
-            sender_task = asyncio.create_task(queue_sender())
-
-            _content_buf: list[str] = []
-            _thinking_buf: list[str] = []
-
-            def on_content(
-                chunk: str,
-                buf: list[str] = _content_buf,
-                q: asyncio.Queue[dict[str, Any] | None] = queue,
-            ) -> None:
-                buf.append(chunk)
-                q.put_nowait({"type": "content", "content": chunk})
-
-            def on_reset(
-                buf: list[str] = _content_buf,
-                q: asyncio.Queue[dict[str, Any] | None] = queue,
-            ) -> None:
-                buf.clear()
-                q.put_nowait({"type": "reset"})
-
-            def on_event(
-                event: dict[str, Any],
-                q: asyncio.Queue[dict[str, Any] | None] = queue,
-            ) -> None:
-                q.put_nowait({**event, "kind": event.get("type"), "type": "progress"})
-
-            def on_thinking(
-                chunk: str,
-                buf: list[str] = _thinking_buf,
-                q: asyncio.Queue[dict[str, Any] | None] = queue,
-            ) -> None:
-                buf.append(chunk)
-                q.put_nowait({"type": "thinking", "content": chunk})
-
-            start_time = time.time()
-            # "[web] <title>": a quick title now, the AI's own (at most 28 characters) once it answers
-            title_task = _start_naming(orch, session_id, "web", message)
-            # This chat's folder, vault, graph, and Ponytail mode.
-            session_stack.enter(session_id)
-
+            images = [
+                u for u in (data.get("images") or [])
+                if isinstance(u, str) and u.startswith("data:image/")
+            ][:MAX_CHAT_IMAGES]
             # From the Studio's chat panel: this turn edits one video, with the editor's context.
             studio_token = studio_context.set_current(studio_context.clean(data.get("studio"))) if studio_context else None
             try:
-                turn = asyncio.create_task(orch.process(
-                    user_input=message,
-                    session_id=session_id,
-                    override_model=override,
-                    stream=True,
-                    images=[
-                        u for u in (data.get("images") or [])
-                        if isinstance(u, str) and u.startswith("data:image/")
-                    ][:MAX_CHAT_IMAGES],
-                    on_content_chunk=on_content,
-                    on_thinking_chunk=on_thinking,
-                    classification=classification,
-                    difficulty=difficulty,
-                    on_reset=on_reset,
-                    on_event=on_event,
+                live.task = asyncio.create_task(_run_live_turn(
+                    orch, live, session_id, message, override,
+                    # A model picked in the selector stays the model: its errors are shown, never routed around.
+                    locked=selected != AUTO_MODEL,
+                    images=images, classification=classification, difficulty=difficulty,
                 ))
+            finally:
                 if studio_context:
                     studio_context.reset(studio_token)   # the turn task keeps its own copy
-                await _await_turn(websocket, turn)
-                response = turn.result()
-
-                # Send fallback buffered items if streaming didn't output chunks
-                if not _thinking_buf and response.thinking:
-                    queue.put_nowait({"type": "thinking", "content": response.thinking})
-
-                if not _content_buf and response.content:
-                    queue.put_nowait({"type": "content", "content": response.content})
-
-                latency = (time.time() - start_time) * 1000
-                titled = await _finish_naming(orch, session_id, "web", title_task)
-                if titled:
-                    queue.put_nowait({"type": "meta", "event": "title", "session_id": session_id, "title": titled})
-                queue.put_nowait({
-                    "type": "done",
-                    "model_used": response.model_used,
-                    "task_type": response.task_type,
-                    "difficulty": response.difficulty,
-                    "confidence": response.confidence,
-                    "prompt_tokens": response.prompt_tokens,
-                    "completion_tokens": response.completion_tokens,
-                    "total_tokens": response.total_tokens,
-                    "latency_ms": round(latency, 0),
-                    "iterations": response.iterations,
-                    "status": response.status.value if hasattr(response.status, "value") else str(response.status),
-                    "fallback_used": response.fallback_used,
-                    "harness": response.harness,
-                })
-            except asyncio.CancelledError:
-                queue.put_nowait({"type": "stopped"})
-            except WebSocketDisconnect:
-                raise
-            except Exception as proc_err:
-                logger.error(f"[ws] Orchestrator processing error: {proc_err}")
-                queue.put_nowait({"type": "error", "content": str(proc_err)})
-            finally:
-                queue.put_nowait(None)
-                await sender_task
+            await _follow_live_turn(websocket, live)
 
     except WebSocketDisconnect:
         logger.info("[ws] Client disconnected")
@@ -1466,7 +1507,7 @@ def run_server(
     """Run a local web server; public tunneling is explicitly opt-in."""
     import uvicorn
 
-    from utils.tunnel import CloudflareTunnel, get_current_tunnel
+    from brain.utils.tunnel import CloudflareTunnel, get_current_tunnel
 
     if enable_tunnel or not is_loopback_host(host):
         open_to_public()

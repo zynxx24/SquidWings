@@ -10,7 +10,8 @@ from pathlib import Path
 
 import pytest
 
-STATIC = Path(__file__).resolve().parent.parent / "web" / "static" / "trading"
+ROOT = Path(__file__).resolve().parent.parent
+STATIC = ROOT / "addons" / "trading" / "web" / "static"
 SCRIPTS = ["chart.js", "panel-core.js", "panel-tables.js", "panel-ticket.js", "panel-sim.js", "panel-news.js", "panel-brain.js", "panel-candle.js", "lab.js", "panel-levels.js", "panel-auto.js", "panel-share.js", "panel-recap.js", "trading.js"]
 
 
@@ -37,7 +38,7 @@ def test_every_data_tab_and_timeframe_has_a_handler_target():
 
 
 def test_the_page_uses_the_same_design_tokens_and_theme_setting_as_the_chat():
-    chat = (STATIC.parent / "index.html").read_text(encoding="utf-8")
+    chat = (ROOT / "web" / "static" / "index.html").read_text(encoding="utf-8")
     assert "/static/css/tokens.css" in chat and "/static/css/tokens.css" in _source("index.html")
     assert 'THEME_KEY = "theme"' in _source("trading.js")
     assert "#" not in _source("trading.css").split("* { box-sizing", 1)[0].replace("/*", "").split("*/")[-1]
@@ -56,7 +57,7 @@ def test_server_text_never_reaches_the_page_as_html():
 
 def test_rates_endpoint_allows_the_bars_the_panel_asks_for():
     wanted = int(re.search(r"MT4_BARS = (\d+)", _source("trading.js")).group(1))
-    allowed = int(re.search(r"count: int = Query\(200, ge=10, le=(\d+)\)", (STATIC.parent.parent / "mt5_api.py").read_text(encoding="utf-8")).group(1))
+    allowed = int(re.search(r"count: int = Query\(200, ge=10, le=(\d+)\)", (STATIC.parent / "mt5_api.py").read_text(encoding="utf-8")).group(1))
     assert wanted <= allowed
 
 

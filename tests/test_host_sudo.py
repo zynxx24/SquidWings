@@ -6,7 +6,7 @@ import asyncio
 import os
 import stat
 
-from utils import host_sudo
+from brain.utils import host_sudo
 
 FAKE_SUDO = """#!/bin/bash
 # -S -v: read the password from stdin and remember it; anything else: run the command.
@@ -44,7 +44,7 @@ def test_ready_needs_a_password_or_nopasswd(monkeypatch):
 
 
 def test_execute_command_runs_sudo_here_when_ready(monkeypatch):
-    from tool.execute.execute_command_prompt import run_command_tool
+    from tools.command_prompt import run_command_tool
 
     calls = []
 

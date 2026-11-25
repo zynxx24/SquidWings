@@ -11,8 +11,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from config import credentials
-from utils.datastore import registry
+from brain.config import credentials
+from brain.utils.datastore import registry
 from web.data_api import router
 from web.router_api import admin
 from web.team_api import router as team_router
@@ -22,7 +22,7 @@ from web.team_api import router as team_router
 def api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(registry, "DATA_DIR", tmp_path / "datastore")
     monkeypatch.setenv("CREDENTIALS_FILE", str(tmp_path / "credentials.json"))
-    from config.settings import get_settings
+    from brain.config.settings import get_settings
 
     get_settings.cache_clear()
     app = FastAPI()
@@ -155,8 +155,8 @@ def test_online_sources_need_their_login_first(api: TestClient) -> None:
 
 
 def test_the_google_key_can_be_tested_from_the_credentials_tab(api: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from brain.utils.datastore.sheets import SheetsBackend
     from tests.test_datastore import make_account
-    from utils.datastore.sheets import SheetsBackend
 
     empty = api.post("/api/teams/credentials/test", json={"group": "google"})
     assert empty.status_code == 422 and "Google" in empty.json()["detail"]

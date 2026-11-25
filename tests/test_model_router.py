@@ -15,12 +15,12 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from model.router import anthropic as A
-from model.router import dispatch as D
-from model.router import usage as U
-from model.router.rotation import NoAccountError, Rotator, get_rotator
-from model.router.store import Store, StoreError, get_store
-from utils.exceptions import ModelError, RateLimitError
+from brain.model.router import anthropic as A
+from brain.model.router import dispatch as D
+from brain.model.router import usage as U
+from brain.model.router.rotation import NoAccountError, Rotator, get_rotator
+from brain.model.router.store import Store, StoreError, get_store
+from brain.utils.exceptions import ModelError, RateLimitError
 
 
 @pytest.fixture(autouse=True)
@@ -269,7 +269,7 @@ def test_claude_stream_events_become_openai_chunks():
     assert any(c["choices"] and c["choices"][0]["finish_reason"] == "tool_calls" for c in chunks)
     assert chunks[-1]["usage"]["prompt_tokens"] == 100 and chunks[-1]["usage"]["completion_tokens"] == 7
 
-    from model.stream.stream_handler import StreamAggregator
+    from brain.model.stream.stream_handler import StreamAggregator
 
     async def replay():
         for c in chunks:
@@ -424,7 +424,7 @@ def test_openai_stream_asks_for_usage(monkeypatch):
 
 
 def test_api_client_routes_router_models_through_the_dispatcher(monkeypatch):
-    from model.connection.api_client import APIClient
+    from brain.model.connection.api_client import APIClient
 
     _provider()
     calls = {}
@@ -528,7 +528,7 @@ def test_new_provider_models_reach_the_registry_and_leave_with_it(monkeypatch):
 
 
 def test_no_key_anywhere_points_to_the_router_page(monkeypatch):
-    from model.connection.api_client import APIClient
+    from brain.model.connection.api_client import APIClient
 
     client = APIClient("https://main.example/v1", "")
     with pytest.raises(ModelError, match="/router"):

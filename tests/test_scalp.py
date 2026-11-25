@@ -8,7 +8,7 @@ import random
 
 import pytest
 
-from trading.quant import scalp, scalp_review, ticks
+from addons.trading.quant import scalp, scalp_review, ticks
 
 
 def _walk(n: int = 1500, seed: int = 3, step: int = 60) -> list[dict[str, float]]:
@@ -160,7 +160,7 @@ def test_no_recorded_ticks_gives_no_bars(tmp_path):
 
 
 def test_the_llm_reviewer_can_be_built_from_the_real_settings():
-    from web import quant_api
+    from addons.trading.web import quant_api
 
     review, usage = quant_api._scalp_reviewer(True)
     assert callable(review) and usage == {"llm_calls": 0, "llm_failures": 0}
@@ -207,7 +207,7 @@ def test_after_one_failure_the_llm_is_left_alone():
 def test_the_heavy_job_really_runs_in_another_process(monkeypatch):
     import os
 
-    from web import quant_api
+    from addons.trading.web import quant_api
 
     monkeypatch.setenv("QUANT_WORKER", "1")
     monkeypatch.setattr(quant_api, "_worker", None)

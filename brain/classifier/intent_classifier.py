@@ -7,16 +7,20 @@ to classify user input into a TaskType.
 
 from __future__ import annotations
 
+import copy
 import re
 
 from brain.classifier.confidence_scorer import ClassificationResult, ConfidenceScorer
 from brain.classifier.keyword_rules import get_keyword_matches
 from brain.classifier.llm_classifier import LLMIntentClassifier
 from brain.classifier.pattern_matcher import get_pattern_matches
-from config.constants import CLASSIFICATION_CONFIDENCE_THRESHOLD, TaskType
-from utils.logger import get_logger
+from brain.config.constants import CLASSIFICATION_CONFIDENCE_THRESHOLD, TaskType
+from brain.utils.cache import cache
+from brain.utils.logger import get_logger
 
 logger = get_logger(__name__)
+# LLM classifications of recent requests (normalised text -> result): one model call per distinct request.
+_LLM_CACHE = cache("classifier.llm", max_entries=512, ttl=3600)
 
 _CHITCHAT_MAX_WORDS = 3
 _MULTI_STEP_RE = re.compile(r"\b(?:dan juga|serta|kemudian|lalu|also|then|and also)\b", re.IGNORECASE)
@@ -130,8 +134,19 @@ class IntentClassifier:
             or len(user_input.split()) <= _CHITCHAT_MAX_WORDS
         ):
             return result
+        key = " ".join(user_input.lower().split())[:2000]
+        cached = _LLM_CACHE.get(key)
+        if cached is not None:
+            # The same request classified a moment ago: no second model call for the same answer.
+            refined = copy.deepcopy(cached)
+            if refined.confidence >= result.confidence:
+                refined.matched_rules = [*result.matched_rules, *refined.matched_rules, "llm_cache"]
+                return refined
+            return result
         try:
             refined = await self._llm_classifier.classify(user_input)
+            if refined is not None:
+                _LLM_CACHE.set(key, copy.deepcopy(refined))
         except Exception as exc:
             # Auxiliary classification failures must not fail the request.
             logger.warning(f"[classifier] LLM fallback failed: {exc}")

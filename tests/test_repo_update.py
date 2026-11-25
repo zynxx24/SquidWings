@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from utils import repo_update
+from brain.utils import repo_update
 
 pytestmark = pytest.mark.skipif(subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
                                 reason="git not installed")

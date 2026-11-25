@@ -11,9 +11,9 @@ from collections.abc import Callable
 from typing import Any
 
 from brain.classifier.confidence_scorer import ClassificationResult
-from config.constants import TaskType
-from model.connection.response_handler import ResponseHandler
-from utils.logger import get_logger
+from brain.config.constants import TaskType
+from brain.model.connection.response_handler import ResponseHandler
+from brain.utils.logger import get_logger
 
 logger = get_logger(__name__)
 ModelSelector = str | Callable[[], str | None] | None

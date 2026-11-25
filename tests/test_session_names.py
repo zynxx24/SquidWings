@@ -7,10 +7,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from brain import skills
+import skills
 from brain.memory.conversation_store import ConversationStore
-from utils import session_names, workspace_context
-from utils.workspace_context import (
+from brain.utils import session_names, workspace_context
+from brain.utils.workspace_context import (
     TITLE_MAX,
     folder_label,
     name_session_folder,
@@ -120,7 +120,7 @@ def test_a_typed_title_keeps_its_tag_out_of_the_name(tmp_path):
 
 
 def test_the_team_run_folder_is_named_before_the_run_works_in_it(monkeypatch):
-    from agent.team_orchestrator import TeamOrchestrator, TeamRun
+    from brain.agent.team_orchestrator import TeamOrchestrator, TeamRun
 
     async def title_for(text):
         return "Video promosi kopi"
@@ -150,8 +150,8 @@ def test_aislop_stays_out_of_plain_coding_and_research():
 
 
 def test_an_image_request_still_gets_the_aislop_guide():
-    from agent.harness.briefing import skill_guidance
-    from config.constants import TaskType
+    from brain.config.constants import TaskType
+    from brain.harness.briefing import skill_guidance
 
     text, chosen = skill_guidance("buat gambar poster konser jazz", TaskType.GENERATE_IMG, 8000)
     assert "aislop" in chosen

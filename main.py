@@ -24,11 +24,9 @@ import contextlib
 import datetime
 import os
 import re
-import select
 import shutil
 import signal
 import sys
-import termios
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -44,21 +42,19 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.tree import Tree
 
-from agent import session_stack
-from agent.orchestrator import Orchestrator
+from brain.agent import session_stack
+from brain.agent.orchestrator import Orchestrator
+from brain.config.constants import ResponseStatus
+from brain.config.secrets import get_secrets
+from brain.config.settings import get_settings
 from brain.memory.project_memory import ProjectMemory
-from config.constants import ResponseStatus
-from config.secrets import get_secrets
-from config.settings import get_settings
-from model.connection.api_client import APIClient
-from model.registry.model_info import ModelInfo
-from model.registry.model_registry import ModelRegistry
-from security import sandbox
-from security.web_access import is_loopback_host
-from tool.execute.execute_edit_change_file.file_editor import FileEditor
-from tool.execute.execute_local_memory import user_profile
-from utils import cli_ui, daily_brief, repo_update, voice_io
-from utils.cli_formatter import (
+from brain.model.connection.api_client import APIClient
+from brain.model.registry.model_info import ModelInfo
+from brain.model.registry.model_registry import ModelRegistry
+from brain.security import sandbox
+from brain.security.web_access import is_loopback_host
+from brain.utils import cli_ui, daily_brief, platform_compat, repo_update, voice_io
+from brain.utils.cli_formatter import (
     SESSION_CODE_TRACKER,
     TerminalFormatConfig,
     TerminalStreamRenderer,
@@ -66,10 +62,12 @@ from utils.cli_formatter import (
     handle_format_command,
     render_terminal_markdown,
 )
-from utils.helpers import format_tokens, generate_session_id
-from utils.logger import get_logger
-from utils.session_settings import PONYTAIL_MODES
-from utils.workspace_context import PROJECTS_ROOT, folder_label, set_active_ponytail
+from brain.utils.helpers import format_tokens, generate_session_id
+from brain.utils.logger import get_logger
+from brain.utils.session_settings import PONYTAIL_MODES
+from brain.utils.workspace_context import PROJECTS_ROOT, folder_label, set_active_ponytail
+from tools.edit_change_file.file_editor import FileEditor
+from tools.local_memory import user_profile
 
 logger = get_logger(__name__)
 console = Console()
@@ -108,30 +106,11 @@ IGNORED_FILES: set[str] = {
 def _flush_stdin_buffer() -> None:
     """Flush any buffered stdin input after AI streaming ends.
 
-    Saat AI streaming teks panjang (mis. CSS/kode besar), ada jeda
-    beberapa detik di tengah streaming. User yang tidak sadar masih
-    dalam mode input mungkin menekan Enter atau mengetik sesuatu.
-    Tombol tersebut masuk ke buffer stdin dan akan langsung dikonsumsi
-    oleh console.input() berikutnya — menyebabkan AI "lanjut sendiri".
-
-    Fungsi ini membuang semua keystroke yang terakumulasi di buffer
-    stdin sejak AI mulai merespons, sehingga prompt berikutnya
-    benar-benar menunggu input baru dari user.
+    Saat AI streaming teks panjang, user yang tidak sadar masih dalam mode input mungkin menekan
+    Enter atau mengetik sesuatu. Tombol itu dibuang supaya prompt berikutnya benar-benar menunggu
+    input baru (termios di Linux/Mac, msvcrt di Windows).
     """
-    try:
-        # Unix/Linux/Mac: gunakan termios untuk flush buffer stdin
-        if sys.stdin.isatty():
-            termios.tcflush(sys.stdin, termios.TCIFLUSH)
-    except Exception:
-        # Fallback: drain dengan select (non-blocking read loop)
-        try:
-            while True:
-                ready, _, _ = select.select([sys.stdin], [], [], 0)
-                if not ready:
-                    break
-                sys.stdin.read(1)
-        except Exception:
-            pass
+    platform_compat.flush_stdin()
 
 
 def _read_user_input(prompt: str) -> str:
@@ -147,10 +126,7 @@ def _read_user_input(prompt: str) -> str:
 
     # Check if more lines are immediately buffered in stdin (multi-line paste)
     timeout = 0.1 if is_bracketed_paste else 0.05
-    while sys.stdin.isatty():
-        r, _, _ = select.select([sys.stdin], [], [], timeout)
-        if not r:
-            break
+    while platform_compat.stdin_ready(timeout):
         extra_line = sys.stdin.readline()
         if not extra_line:
             break
@@ -769,10 +745,39 @@ def _handle_ide_command(
     arg = parts[1].strip() if len(parts) > 1 else ""
 
     if command in ("model", "models", "m"):
-        selected = _display_model_selector(registry, current_model)
+        if arg.lower() == "auto":
+            console.print("\n[bold green]✅ Mode Auto:[/bold green] [dim]autopilot memilih model termurah yang andal per permintaan[/dim]")
+            return True, "", active_workspace        # "" = Auto (no model locked)
+        if arg:
+            if registry.get(arg) is None:
+                console.print(f"[yellow]Model tidak dikenal: {escape(arg)}. Ketik /model untuk daftar, atau /model auto.[/yellow]")
+                return True, None, active_workspace
+            selected = arg
+        else:
+            selected = _display_model_selector(registry, current_model)
         if selected:
-            console.print(f"\n[bold green]✅ Model changed to: {selected}[/bold green]")
+            console.print(f"\n[bold green]✅ Model dipilih:[/bold green] {escape(selected)} "
+                          "[dim](dikunci: kalau error, alasannya ditampilkan dan tidak diganti otomatis)[/dim]")
         return True, selected, active_workspace
+
+    elif command == "cache":
+        from brain.utils import cache as cache_registry
+
+        if arg.lower() == "clear":
+            console.print(f"[green]✓ {cache_registry.clear()} entri cache dihapus[/green]")
+            return True, None, active_workspace
+        rows = [c for c in cache_registry.stats() if c["entries"] or c["hits"] or c["misses"]]
+        if not rows:
+            console.print("[dim]Cache masih kosong di sesi terminal ini.[/dim]")
+            return True, None, active_workspace
+        table = Table(box=box.SIMPLE, title="Cache")
+        for col in ("Nama", "Entri", "Hit", "Miss", "Hit rate"):
+            table.add_column(col, justify="left" if col == "Nama" else "right")
+        for row in rows:
+            rate = f"{row['hit_rate']:.0%}" if row["hit_rate"] is not None else "-"
+            table.add_row(row["name"], f"{row['entries']}/{row['max']}", str(row["hits"]), str(row["misses"]), rate)
+        console.print(table)
+        return True, None, active_workspace
 
     elif command in ("tree", "t", "files", "browse", "ls"):
         if arg:
@@ -902,19 +907,19 @@ def _handle_ide_command(
 
     elif command in ("code", "c"):
         cfg = terminal_config or TerminalFormatConfig()
-        cfg_path = terminal_cfg_path or (project_root / "config" / "terminal_format.json")
+        cfg_path = terminal_cfg_path or (project_root / "brain" / "config" / "terminal_format.json")
         handle_code_command(arg, console, cfg, SESSION_CODE_TRACKER, cfg_path)
         return True, None, active_workspace
 
     elif command in ("format", "fmt"):
         cfg = terminal_config or TerminalFormatConfig()
-        cfg_path = terminal_cfg_path or (project_root / "config" / "terminal_format.json")
+        cfg_path = terminal_cfg_path or (project_root / "brain" / "config" / "terminal_format.json")
         handle_format_command(arg, console, cfg, cfg_path)
         return True, None, active_workspace
 
     elif command in ("theme",):
         cfg = terminal_config or TerminalFormatConfig()
-        cfg_path = terminal_cfg_path or (project_root / "config" / "terminal_format.json")
+        cfg_path = terminal_cfg_path or (project_root / "brain" / "config" / "terminal_format.json")
         handle_format_command(f"theme {arg}".strip(), console, cfg, cfg_path)
         return True, None, active_workspace
 
@@ -932,7 +937,7 @@ def _handle_ide_command(
             else:
                 console.print("[yellow]⚠️  Belum ada respons AI yang tersimpan di sesi ini.[/yellow]")
         else:
-            cfg_path = terminal_cfg_path or (project_root / "config" / "terminal_format.json")
+            cfg_path = terminal_cfg_path or (project_root / "brain" / "config" / "terminal_format.json")
             handle_format_command(f"md {arg}".strip(), console, cfg, cfg_path)
         return True, None, active_workspace
 
@@ -952,7 +957,10 @@ def _display_help() -> None:
             ("/search <pola>, /s", "Cari file berdasarkan nama"),
         ]),
         ("Model", [
-            ("/model, /m", "Pilih model"),
+            ("/model, /m", "Pilih model (dikunci: error ditampilkan, tidak diganti otomatis)"),
+            ("/model auto", "Mode Auto: model termurah yang andal per permintaan"),
+            ("/model <id>", "Langsung pakai model itu"),
+            ("/cache [clear]", "Statistik cache (hit, miss), atau kosongkan"),
             ("/status, /info, /i", "Model, proyek, sandbox, dan provider aktif"),
         ]),
         ("Memori", [
@@ -1266,7 +1274,8 @@ async def process_input(
         kind = event.get("type")
         if kind == "route":
             console.print(cli_ui.route_line(
-                str(event.get("task_type")), str(event.get("difficulty")), str(event.get("model"))
+                str(event.get("task_type")), str(event.get("difficulty")), str(event.get("model")),
+                reason=str(event.get("reason") or ""), locked=bool(event.get("locked")),
             ))
             activity.start("Menunggu model")
         elif kind == "remembered":
@@ -1297,6 +1306,7 @@ async def process_input(
             user_input=user_input,
             session_id=session_id,
             override_model=override_model,
+            model_locked=override_model is not None,   # a model chosen with /model or --model stays the model
             stream=stream,
             on_content_chunk=on_content if stream else None,
             on_thinking_chunk=on_thinking if stream else None,
@@ -1571,7 +1581,7 @@ async def chat_mode(project: str | None = None) -> None:
                 )
                 if handled:
                     if new_model is not None:
-                        override_model = new_model
+                        override_model = new_model or None   # "" from /model auto means no model locked
                     if new_ws != active_workspace:
                         active_workspace = new_ws
                     continue
@@ -1814,7 +1824,7 @@ def _update_cmd() -> int:
 
 def _tools_cmd(action: str, names: list[str]) -> int:
     """``python main.py tools [install ...]``: what the media tools can use, and installing what is missing."""
-    from utils import toolkit
+    from brain.utils import toolkit
 
     def show() -> list[dict[str, Any]]:
         entries = toolkit.status()
@@ -1886,7 +1896,12 @@ def _start_trading_backend() -> tuple[Any, str]:
     """
     import subprocess
 
-    from web.trading_server import DEFAULT_PORT, code_is_stale, port_problem, prepare_port
+    from addons.trading.web.trading_server import (
+        DEFAULT_PORT,
+        code_is_stale,
+        port_problem,
+        prepare_port,
+    )
 
     problem = port_problem("127.0.0.1", DEFAULT_PORT)
     replaced = False
@@ -1907,7 +1922,9 @@ def _start_trading_backend() -> tuple[Any, str]:
         # Not allowed yet: open port 80 once with sudo, here in the terminal, then carry on.
         problem = prepare_port("127.0.0.1", DEFAULT_PORT, say=lambda text: console.print(f"[yellow]{text}[/yellow]"))
     if problem is None:
-        log = (Path(__file__).resolve().parent / TRADING_LOG).open("ab")
+        from brain.config.paths import log_file
+
+        log = log_file(TRADING_LOG).open("ab")
         try:
             proc = subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "trading"],
@@ -1917,9 +1934,11 @@ def _start_trading_backend() -> tuple[Any, str]:
         finally:
             log.close()
         return proc, (f"[bold green]✔ Trading (EA MT4):[/bold green] [underline]http://127.0.0.1/trading[/underline] "
-                      f"{'[dim](server lama diganti)[/dim] ' if replaced else ''}[dim](log: {TRADING_LOG})[/dim]")
+                      f"{'[dim](server lama diganti)[/dim] ' if replaced else ''}[dim](log: data/logs/{TRADING_LOG})[/dim]")
     if "already in use" in problem or "belum berhenti" in problem:
         return None, f"[yellow]⚠ {problem}[/yellow]"
+    if not platform_compat.IS_LINUX:
+        return None, f"[yellow]⚠ {problem} Halaman Trading memakai panel server web (tanpa data EA MT4).[/yellow]"
     return None, ("[yellow]⚠ Linux belum mengizinkan port 80, jadi halaman Trading memakai panel server web "
                   f"(tanpa data EA MT4).[/yellow]\n[dim]  Untuk EA MT4, jalankan sekali lalu start ulang: {SYSCTL_PORT_80}[/dim]")
 
@@ -1942,14 +1961,14 @@ def _choose_web_port(host: str, port: int, strict: bool = False, replace: bool =
     use"). Now: another SquidWings on it can be replaced (``--replace``, or chosen at the prompt);
     anything else moves to the next free port, unless ``--strict-port``.
     """
-    from utils import ports
+    from brain.utils import ports
 
     if ports.port_free(host, port):
         return port
     holder = ports.holder(host, port)
     alternative = ports.next_free_port(host, port)
     console.print(f"[yellow]⚠ Port {port} sedang dipakai {holder.describe()}.[/yellow]")
-    stop_hint = f"kill {holder.pid}" if holder.pid else f"ss -ltnp | grep :{port}"
+    stop_hint = platform_compat.stop_hint(holder.pid) if holder.pid else platform_compat.find_port_hint(port)
 
     if strict:
         console.print(f"[red]Tidak jalan karena --strict-port.[/red] Bebaskan port-nya dulu ({stop_hint}) "
@@ -1991,9 +2010,51 @@ def _choose_web_port(host: str, port: int, strict: bool = False, replace: bool =
     return alternative
 
 
+def _addon_cmd(action: str, names: list[str]) -> int:
+    """``addon list``, ``addon install <name>`` (packages + switch on), ``addon enable`` (switch on only),
+    ``addon remove <name>`` (switch off; files and data stay)."""
+    from addons import manager
+
+    if action == "list" or not names:
+        for item in manager.status():
+            state = "[green]aktif[/green]" if item["on"] else "[dim]mati[/dim]"
+            missing = f"  [yellow]program belum ada: {', '.join(item['missing_programs'])}[/yellow]" if item["missing_programs"] else ""
+            console.print(f"  {item['name']:<9} {state}  {item['description']}{missing}")
+        console.print("\n[dim]python main.py addon install <nama>   pasang dan nyalakan\n"
+                      "python main.py addon remove <nama>    matikan (file dan data tetap)[/dim]")
+        return 0
+    code = 0
+    for name in names:
+        if action == "remove":
+            result = manager.remove(name)
+        else:
+            result = manager.install(name, deps=action == "install")
+        if not result.get("ok"):
+            console.print(f"[red]✗ {name}: {result.get('error') or 'gagal'}[/red]")
+            for step in result.get("steps", []):
+                if not step["ok"]:
+                    console.print(f"  [red]{step['step']}[/red]\n{escape(step['log'])}")
+            code = 1
+            continue
+        for step in result.get("steps", []):
+            mark = "[green]✓[/green]" if step["ok"] else "[yellow]![/yellow]"
+            console.print(f"  {mark} {step['step']}" + ("" if step["ok"] else f"\n    {escape(step['log'])}"))
+        console.print(f"[green]✓ {name}: {'aktif' if result.get('on') else 'mati'}[/green]")
+        if result.get("missing_programs"):
+            console.print(f"  [yellow]Program yang masih harus dipasang: {', '.join(result['missing_programs'])}[/yellow]")
+        manual = result.get("manual") or []
+        if manual:
+            console.print(f"  Langkah manual ({manager.os_key()}):")
+            for line in manual:
+                console.print(f"   - {line}")
+        if action != "remove":
+            console.print("  [dim]Restart server web/trading supaya add-on ini ikut dimuat.[/dim]")
+    return code
+
+
 def _skills_cmd(action: str, query: str = "") -> int:
     """GitHub skill sources: show them, clone what is missing, pull the newest, relink Claude Code, or search."""
-    from brain.skills import sources as skill_sources
+    from skills import sources as skill_sources
 
     if action == "search":
         # Plain output on purpose: Claude Code sessions in other folders read it to find stored skills.
@@ -2020,6 +2081,19 @@ def _skills_cmd(action: str, query: str = "") -> int:
         console.print(f"  {src['repo']:42} {mark}")
     console.print(f"  Active: {len(info['active'])}  ({', '.join(info['active'])})")
     console.print(f"  Stored: {len(info['stored'])}  (load one with load_skill by exact name)")
+    import skills
+    from skills import adapters
+
+    loaded = skills.load_all()
+    adapted = [f"{name} ({a.upstream}{', offline' if a.fallback else ''})"
+               for name, a in sorted(adapters.all_adapters().items()) if name in loaded]
+    if adapted:
+        console.print(f"  Adapters: {', '.join(adapted)}")
+    pool = [s.name for s in skills.pool_members(skills.DESIGN_POOL)]
+    if pool:
+        console.print(f"  Design pool (bergiliran): {', '.join(pool)}")
+    cap = skills.index_max()
+    console.print(f"  Indeks per prompt: {f'maks {cap} skill' if cap else 'semua skill, paling relevan dulu'} (SKILL_INDEX_MAX)")
     if info["required_missing"]:
         console.print(f"  [red]Required skill missing: {', '.join(info['required_missing'])}[/red]")
         return 1
@@ -2088,12 +2162,19 @@ Examples:
     tools_parser.add_argument("action", nargs="?", choices=["status", "install"], default="status")
     tools_parser.add_argument("names", nargs="*", help="What to install (default: everything that is missing)")
 
-    # skills command: GitHub skill sources (brain/skills/sources.json)
+    # skills command: GitHub skill sources (skills/sources.json)
     skills_parser = subparsers.add_parser(
         "skills", help="Skills from GitHub: status, clone missing (sync), pull newest (update), link into Claude Code",
     )
     skills_parser.add_argument("action", nargs="?", choices=["status", "sync", "update", "link", "search"], default="status")
     skills_parser.add_argument("query", nargs="*", help="For search: what you need, e.g. gsap plugins")
+
+    # addon command: optional parts (trading, video Studio), off until installed
+    addon_parser = subparsers.add_parser(
+        "addon", help="Add-ons (trading, studio): list, install and switch on, or switch off",
+    )
+    addon_parser.add_argument("action", nargs="?", choices=["list", "install", "enable", "remove"], default="list")
+    addon_parser.add_argument("names", nargs="*", help="Which add-ons, e.g. trading studio")
 
     # web command
     web_parser = subparsers.add_parser("web", help="Start the Web GUI server")
@@ -2136,9 +2217,16 @@ Examples:
             notify = console.print if args.command == "web" else _update_notices.append
             repo_update.start_background(notify)
 
+    if not os.getenv("PYTEST_CURRENT_TEST"):
+        # Logs, the audit chain, and reports that older versions wrote into the root go to data/.
+        from brain.config.paths import tidy_root
+
+        for line in tidy_root():
+            console.print(f"[dim]↳ dirapikan: {line}[/dim]")
+
     if args.command in ("chat", "web", None):
         # Clone missing GitHub skills, pull them once a day, link the chosen ones into Claude Code.
-        from brain.skills import sources as skill_sources
+        from skills import sources as skill_sources
 
         skill_sources.start_background()
 
@@ -2160,19 +2248,21 @@ Examples:
         sys.exit(_tools_cmd(args.action, args.names))
     elif args.command == "skills":
         sys.exit(_skills_cmd(args.action, " ".join(args.query)))
+    elif args.command == "addon":
+        sys.exit(_addon_cmd(args.action, args.names))
     elif args.command == "trading":
-        from config.edition import ENTERPRISE_NOTE, trading_enabled
+        from brain.config.edition import ENTERPRISE_NOTE, trading_enabled
 
         if not trading_enabled():
             console.print(f"[yellow]{ENTERPRISE_NOTE}[/yellow]")
             sys.exit(2)
-        from web.trading_server import run as run_trading
+        from addons.trading.web.trading_server import run as run_trading
 
         sys.exit(run_trading(args.host, args.port, tunnel=getattr(args, "tunnel", False)))
     elif args.command == "web":
         from rich.panel import Panel
 
-        from utils.tunnel import CloudflareTunnel
+        from brain.utils.tunnel import CloudflareTunnel
         from web.server import open_to_public, run_server
 
         port = _choose_web_port(args.host, args.port, strict=args.strict_port, replace=args.replace)
@@ -2218,7 +2308,7 @@ Examples:
                 "membaca semua chat.[/bold yellow]"
             )
 
-        from config.edition import trading_enabled
+        from brain.config.edition import trading_enabled
 
         trading_proc = None
         if getattr(args, "trading", True) and trading_enabled():

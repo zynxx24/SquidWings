@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from tool.execute.execute_web_search import web_reader
-from tool.execute.execute_web_search.web_reader import Page, PageUnavailableError
+from tools.web_search import web_reader
+from tools.web_search.web_reader import Page, PageUnavailableError
 
 ARTICLE = """
 <html><head><title>Python 3.14 dirilis</title>
@@ -159,7 +159,7 @@ async def test_web_read_reports_refusals_instead_of_raising(monkeypatch: pytest.
 
 
 def test_tool_calls_are_reported_while_still_being_written() -> None:
-    from model.stream.stream_handler import StreamAggregator, StreamState
+    from brain.model.stream.stream_handler import StreamAggregator, StreamState
 
     seen: list[tuple[int, str, str]] = []
     aggregator = StreamAggregator(on_tool_delta=lambda *call: seen.append(call))
@@ -173,8 +173,8 @@ def test_tool_calls_are_reported_while_still_being_written() -> None:
 
 
 def test_tool_results_are_not_cut_for_a_cheap_model() -> None:
-    from agent.agent_loop import AgentLoop
-    from agent.harness import Harness, scaffold_for
+    from brain.agent.agent_loop import AgentLoop
+    from brain.harness import Harness, scaffold_for
 
     loop = AgentLoop(None, None, harness=Harness(scaffold=scaffold_for("x-flash")))  # type: ignore[arg-type]
     big = {"success": True, "result": "x" * 15_000}
@@ -191,13 +191,13 @@ def test_tool_results_are_not_cut_for_a_cheap_model() -> None:
     ],
 )
 def test_search_api_answers_are_understood(provider: str, body: str) -> None:
-    from tool.execute.execute_web_search.web_search_tool import _parse_provider
+    from tools.web_search.web_search_tool import _parse_provider
 
     assert _parse_provider(provider, body) == [{"title": "A", "url": "https://a.test", "snippet": "isi"}]
 
 
 async def test_a_configured_search_api_is_tried_first(monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_web_search import web_search_tool as tool
+    from tools.web_search import web_search_tool as tool
 
     asked: list[str] = []
 
@@ -214,7 +214,7 @@ async def test_a_configured_search_api_is_tried_first(monkeypatch: pytest.Monkey
 
 
 async def test_unrelated_bing_hits_are_retried_then_passed_over(monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_web_search import web_search_tool as tool
+    from tools.web_search import web_search_tool as tool
 
     asked: list[tuple[str, int]] = []
     junk = [{"title": "Contact us", "url": "https://company.test/contact", "snippet": "Jakarta office"}]
@@ -239,7 +239,7 @@ async def test_unrelated_bing_hits_are_retried_then_passed_over(monkeypatch: pyt
 
 
 def test_relevance_counts_hits_that_mention_the_query() -> None:
-    from tool.execute.execute_web_search.web_search_tool import relevance
+    from tools.web_search.web_search_tool import relevance
 
     hits = [{"title": "Seafood Jimbaran", "url": "https://a.test", "snippet": ""},
             {"title": "Lowyat forum", "url": "https://b.test", "snippet": "condo"}]
@@ -250,7 +250,7 @@ def test_relevance_counts_hits_that_mention_the_query() -> None:
 async def test_duckduckgo_is_reached_through_doh_with_its_real_name(monkeypatch: pytest.MonkeyPatch) -> None:
     import httpx
 
-    from tool.execute.execute_web_search import web_search_tool as tool
+    from tools.web_search import web_search_tool as tool
 
     seen: dict[str, Any] = {}
 
@@ -269,14 +269,14 @@ async def test_duckduckgo_is_reached_through_doh_with_its_real_name(monkeypatch:
 
 
 def test_duckduckgo_bot_check_is_a_refusal_not_an_empty_answer() -> None:
-    from tool.execute.execute_web_search import web_search_tool as tool
+    from tools.web_search import web_search_tool as tool
 
     with pytest.raises(tool.ProviderRefusalError):
         tool._parse_provider(tool._PROVIDER, "<html><form id='challenge-form' action='/anomaly.js'></form></html>")
 
 
 def test_engines_repeating_each_other_count_once() -> None:
-    from tool.execute.execute_web_search.web_search_tool import _dedupe
+    from tools.web_search.web_search_tool import _dedupe
 
     hits = [{"title": "Berita Teknologi - Kompas", "url": "https://www.kompas.com/tekno", "snippet": ""},
             {"title": "Berita Teknologi - Kompas", "url": "https://kompas.com/tekno?utm=x", "snippet": ""},

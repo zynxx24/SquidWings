@@ -4,26 +4,25 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
-from agent.agent_loop import AgentLoop
-from dataclasses import replace
-
-from agent.harness import Harness, scaffold_for
+from brain.agent.agent_loop import AgentLoop
+from brain.harness import Harness, scaffold_for
 
 
 def _capped(model: str):
     """A run with a tool cap (tiers themselves no longer cap): the priority order is what these tests pin."""
     scaffold = scaffold_for(model)
     return scaffold if "opus" in model else replace(scaffold, max_tools=16)
-from agent.harness.guards import normalize_arguments
-from agent.harness.tool_select import select_tools, toolbox_hint
-from config.constants import TaskType
-from tool.execute.execute_toolbox import CATALOG, deferred_names
-from tool.register_tools import register_all_tools
-from tool.registry.tool_registry import WORKSPACE_TOOLS, ToolRegistry, is_read_only
+from brain.config.constants import TaskType
+from brain.harness.guards import normalize_arguments
+from brain.harness.tool_select import select_tools, toolbox_hint
+from tools.register_tools import register_all_tools
+from tools.registry.tool_registry import WORKSPACE_TOOLS, ToolRegistry, is_read_only
+from tools.toolbox import CATALOG, deferred_names
 
 
 @pytest.fixture(scope="module")
@@ -38,7 +37,7 @@ def names(tools: list[dict[str, Any]]) -> set[str]:
 @pytest.fixture()
 def session(tmp_path, monkeypatch):
     """An active session workspace, as the web server sets one per chat."""
-    from utils import workspace_context
+    from brain.utils import workspace_context
 
     token = workspace_context._active_workspace.set(str(tmp_path))
     yield tmp_path
@@ -89,7 +88,7 @@ def test_a_named_hidden_tool_needs_its_whole_name(schemas):
 
 
 def test_unlocked_tools_come_back_in_later_turns_of_the_same_chat(schemas, session):
-    from utils import session_settings
+    from brain.utils import session_settings
 
     session_settings.unlock_tools(session, ["zakat_calc"])
     for model in ("x-flash", "x-opus"):
@@ -130,7 +129,7 @@ def test_invented_names_resolve(alias, target):
 
 
 def test_an_unknown_tool_points_at_find_tools():
-    from utils.exceptions import ToolError
+    from brain.utils.exceptions import ToolError
 
     with pytest.raises(ToolError, match="find_tools"):
         asyncio.run(register_all_tools().execute("compute_mortgage_thing", {}))
@@ -234,7 +233,7 @@ def test_two_unknown_arguments_are_not_guessed():
 
 # ── Skills: main ones first, the rest when the case calls for them ────────────
 def test_code_tasks_only_list_code_and_general_skills():
-    from brain import skills
+    import skills
 
     index = skills.index_text([], "code")
     assert "fix-bug" in index and "teman-curhat" not in index and "jawab-tugas" not in index
@@ -242,7 +241,7 @@ def test_code_tasks_only_list_code_and_general_skills():
 
 
 def test_google_maps_skill_is_dormant_until_its_context_appears():
-    from brain import skills
+    import skills
 
     assert "google-maps" not in skills.index_text([], "activity")
     assert skills.woken("tolong rekap hasil scrape google maps klinik gigi") == ["google-maps"]
@@ -251,7 +250,7 @@ def test_google_maps_skill_is_dormant_until_its_context_appears():
 
 
 def test_an_awake_google_maps_skill_brings_its_tools(schemas, session):
-    from agent.harness.briefing import skill_guidance
+    from brain.harness.briefing import skill_guidance
 
     text = "tolong rekap hasil scrape google maps klinik gigi di bandung"
     guide, used = skill_guidance(text, TaskType.ACTIVITY, _capped("x-flash").skill_chars)
@@ -267,7 +266,7 @@ def test_trading_skill_brings_the_risk_calculators(schemas):
 
 
 def test_load_skill_does_not_reveal_dormant_skills(session):
-    from tool.execute.execute_skills.skill_tool import load_skill
+    from tools.skills.skill_tool import load_skill
 
     out = asyncio.run(load_skill("nope"))
     assert out["ok"] is False and "google-maps" not in out["error"] and "fix-bug" in out["error"]
@@ -275,7 +274,7 @@ def test_load_skill_does_not_reveal_dormant_skills(session):
 
 
 def test_every_tool_a_skill_names_exists():
-    from brain import skills
+    import skills
 
     registry = register_all_tools()
     for skill in skills.load_all().values():

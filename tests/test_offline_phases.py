@@ -8,9 +8,9 @@ import yaml
 from fastapi.testclient import TestClient
 
 from brain.classifier.intent_classifier import IntentClassifier
-from config.constants import TaskType
-from config.settings import Settings, get_settings
-from model.registry.model_info import ModelCapabilities, ModelInfo
+from brain.config.constants import TaskType
+from brain.config.settings import Settings, get_settings
+from brain.model.registry.model_info import ModelCapabilities, ModelInfo
 from web import server
 
 

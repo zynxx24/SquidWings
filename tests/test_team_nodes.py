@@ -14,12 +14,12 @@ from typing import Any
 import httpx
 import pytest
 
-from agent import team_flow, team_orchestrator, team_outputs
-from agent.orchestrator import AgentResponse
-from agent.team_orchestrator import TeamOrchestrator, TeamStore, team_templates
-from agent.team_outputs import OutputError
-from config.constants import ResponseStatus
-from config.settings import get_settings
+from brain.agent import team_flow, team_orchestrator, team_outputs
+from brain.agent.orchestrator import AgentResponse
+from brain.agent.team_orchestrator import TeamOrchestrator, TeamStore, team_templates
+from brain.agent.team_outputs import OutputError
+from brain.config.constants import ResponseStatus
+from brain.config.settings import get_settings
 
 TOKEN = "123:RAHASIA-BOT"
 PASSWORD = "sandi-rahasia"

@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from security import (
+from brain.security import (
     AuditChain,
     Decision,
     Guard,
@@ -29,7 +29,7 @@ from security import (
     apply_headers,
     build_csp,
 )
-from security.secrets_vault import VaultLockedError
+from brain.security.secrets_vault import VaultLockedError
 
 # Built from fragments so the source never contains a literal destructive
 # command that a shell-safety scanner could trip on.
@@ -125,7 +125,7 @@ class TestPolicyEngine(unittest.TestCase):
         self.assertIs(eng.evaluate("execute_command", {"command": "cat x"}).decision, Decision.DENY)
 
     def test_yaml_policy_file(self) -> None:
-        path = Path(__file__).parent.parent / "security" / "policy.yaml"
+        path = Path(__file__).parent.parent / "brain" / "security" / "policy.yaml"
         if not path.exists():
             self.skipTest("policy.yaml missing")
         try:

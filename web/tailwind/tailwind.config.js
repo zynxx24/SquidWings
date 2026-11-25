@@ -6,7 +6,7 @@
 //   npx tailwindcss@3.4.17 -c web/tailwind/tailwind.config.js -i web/tailwind/soft.css -o web/static/css/soft.css --minify
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ['./web/static/**/*.html', './web/static/js/app.js', './web/static/trading/*.js', './web/static/router/*.js'],
+  content: ['./web/static/**/*.html', './web/static/js/app.js', './addons/*/web/static/**/*.html', './addons/trading/web/static/*.js', './web/static/router/*.js'],
   // tw- prefix: page class names such as .grid, .inline or .hidden must never pick up a Tailwind utility.
   prefix: 'tw-',
   corePlugins: { preflight: false },

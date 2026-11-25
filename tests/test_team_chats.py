@@ -6,7 +6,7 @@ import json
 import time
 from pathlib import Path
 
-from agent.team_chats import KEEP_SECONDS, MAX_CHATS, MAX_KEPT_TURNS, ChatLog, Limiter
+from brain.agent.team_chats import KEEP_SECONDS, MAX_CHATS, MAX_KEPT_TURNS, ChatLog, Limiter
 
 
 def test_a_chat_gets_a_few_messages_a_minute_and_one_warning() -> None:

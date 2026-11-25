@@ -15,8 +15,17 @@ import numpy as np
 import pytest
 
 os.environ.setdefault("TRADING_BRAIN_SIZE", "kecil")
-from trading.quant import analyst, brain, cycles, levels, memory, playbook, riskmath, sessions
-from trading.quant.memory import PLANS
+from addons.trading.quant import (
+    analyst,
+    brain,
+    cycles,
+    levels,
+    memory,
+    playbook,
+    riskmath,
+    sessions,
+)
+from addons.trading.quant.memory import PLANS
 
 
 def ts(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> float:
@@ -490,7 +499,7 @@ class Model:
 
 
 def test_the_simulation_tags_every_trade_and_judges_the_best_rule_as_one_of_many():
-    from trading.quant import llm_trader, papersim
+    from addons.trading.quant import llm_trader, papersim
 
     bars = walk(400, seed=4)
     clock = Clock(bars[-1]["t"] + 3600 + 20)
@@ -527,7 +536,7 @@ def test_the_simulation_tags_every_trade_and_judges_the_best_rule_as_one_of_many
 
 
 def test_significance_counts_every_rule_that_was_tried():
-    from trading.quant import papersim
+    from addons.trading.quant import papersim
 
     lucky, flat = papersim.Stats(), papersim.Stats()
     for points in (1.0, 1.2, 0.8, 1.1, -0.5, 0.9, 1.0, -0.4, 1.3, 0.7):

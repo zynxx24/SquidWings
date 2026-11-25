@@ -1,12 +1,12 @@
 """
-Unit tests for utils.cli_formatter
+Unit tests for brain.utils.cli_formatter
 """
 
 from pathlib import Path
 
 from rich.console import Console
 
-from utils.cli_formatter import (
+from brain.utils.cli_formatter import (
     CodeBlockInfo,
     CodeSessionTracker,
     TerminalFormatConfig,
@@ -30,10 +30,10 @@ def test_parse_tag():
     assert b_type == "file"
     assert t_path == "src/app.py"
 
-    lang, b_type, t_path = parse_tag("replace:config/settings.json")
+    lang, b_type, t_path = parse_tag("replace:brain/config/settings.json")
     assert lang == "json"
     assert b_type == "replace"
-    assert t_path == "config/settings.json"
+    assert t_path == "brain/config/settings.json"
 
 
 def test_code_session_tracker():

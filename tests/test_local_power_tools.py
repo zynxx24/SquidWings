@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from tool.execute.execute_local_ops.power_tools import (
+from tools.local_ops.power_tools import (
     archive,
     file_copy,
     file_find,
@@ -231,7 +231,7 @@ async def test_unzip_refuses_symlinks_and_private_targets(ws: Path) -> None:
 
 
 async def test_unzip_limits(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_local_ops import power_tools
+    from tools.local_ops import power_tools
 
     with zipfile.ZipFile(ws / "many.zip", "w") as zf:
         for i in range(5):
@@ -260,9 +260,8 @@ async def test_media_convert_validates_before_running(ws: Path) -> None:
 
 
 async def test_media_convert_without_ffmpeg(ws: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from tool.execute.execute_local_ops import power_tools
-
-    from utils import toolkit
+    from brain.utils import toolkit
+    from tools.local_ops import power_tools
 
     monkeypatch.setattr(power_tools.shutil, "which", lambda _name: None)
     monkeypatch.setattr(toolkit, "ffmpeg_exe", lambda: None)      # no system ffmpeg and no bundled copy
@@ -292,11 +291,11 @@ async def test_media_convert_real_ffmpeg(ws: Path) -> None:
 
 
 def test_new_tools_are_registered_and_offered() -> None:
-    from agent.harness.tiers import scaffold_for
-    from agent.harness.tool_select import select_tools
-    from config.constants import TaskType
-    from tool.register_tools import register_all_tools
-    from tool.registry.tool_registry import WORKSPACE_TOOLS
+    from brain.config.constants import TaskType
+    from brain.harness.tiers import scaffold_for
+    from brain.harness.tool_select import select_tools
+    from tools.register_tools import register_all_tools
+    from tools.registry.tool_registry import WORKSPACE_TOOLS
 
     registry = register_all_tools()
     new = {"file_find", "file_read_many", "file_copy", "file_replace_all", "archive", "media_convert"}

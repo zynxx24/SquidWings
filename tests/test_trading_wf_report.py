@@ -7,8 +7,8 @@ import math
 import numpy as np
 import pytest
 
+from addons.trading.quant import daily, forecast, wf_report
 from tests.test_trading_daily import walk
-from trading.quant import daily, forecast, wf_report
 
 pytestmark = pytest.mark.enterprise
 
@@ -128,9 +128,13 @@ def test_main_without_a_d1_file_says_how_to_get_one(monkeypatch, capsys):
     assert "History Center" in capsys.readouterr().out
 
 
-def test_the_report_goes_to_an_ignored_folder():
+def test_the_report_goes_to_an_ignored_folder(monkeypatch):
     import subprocess
 
-    root = wf_report.REPORT_DIR.parents[1]
-    out = subprocess.run(["git", "check-ignore", str(wf_report.REPORT_DIR / "x.md")], cwd=root, capture_output=True, text=True)
+    from brain.config import paths
+
+    monkeypatch.delenv("SQUIDWINGS_DATA_DIR", raising=False)   # the default place, inside the repo
+    folder = paths.report_dir("trading")
+    assert folder.is_relative_to(paths.ROOT / "data")
+    out = subprocess.run(["git", "check-ignore", str(folder / "x.md")], cwd=paths.ROOT, capture_output=True, text=True)
     assert out.returncode == 0, "report files must never be committed"

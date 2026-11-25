@@ -10,9 +10,9 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from trading import mt5_rules
-from trading.mt5_adapter import SimBackend, TradingError, fingerprint, make_backend
-from web import mt5_api
+from addons.trading import mt5_rules
+from addons.trading.mt5_adapter import SimBackend, TradingError, fingerprint, make_backend
+from addons.trading.web import mt5_api
 from web.server import app
 
 TOKEN = "test-token-123"
@@ -66,7 +66,7 @@ def test_local_use_needs_no_token(client, monkeypatch):
 
 
 def test_public_access_needs_a_token(monkeypatch):
-    from security import web_access
+    from brain.security import web_access
     monkeypatch.delenv("MT5_TRADE_TOKEN")
     monkeypatch.setattr(web_access, "_public_mode", True)
     c = TestClient(app, client=("127.0.0.1", 50000))   # a tunnel arrives from loopback too
@@ -120,7 +120,7 @@ def test_owner_can_drop_the_token_for_remote_trading(client, monkeypatch):
 
 def test_tunnel_visitor_is_not_this_computer(monkeypatch):
     """cloudflared connects from loopback; its headers and the public Host give it away."""
-    from security import web_access
+    from brain.security import web_access
     monkeypatch.setattr(web_access, "_public_mode", True)
     tunnel = TestClient(app, client=("127.0.0.1", 50000), base_url="https://abc.trycloudflare.com")
     assert tunnel.post("/api/mt5/connect", json={"backend": "sim"}).status_code == 401
@@ -379,7 +379,7 @@ def test_order_preview_reports_risk(client):
 def test_mt5_fill_policy_follows_the_symbol(monkeypatch):
     from types import SimpleNamespace
 
-    from trading.mt5_adapter import Mt5Backend
+    from addons.trading.mt5_adapter import Mt5Backend
 
     fake = SimpleNamespace(ORDER_FILLING_FOK=0, ORDER_FILLING_IOC=1, ORDER_FILLING_RETURN=2)
 

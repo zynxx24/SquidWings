@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from tool.execute.execute_toolbox import CATALOG, GROUPS, deferred_names, find_tools, match, search
+from tools.toolbox import CATALOG, GROUPS, deferred_names, find_tools, match, search
 
 
 def run(name: str, **kwargs: Any) -> dict[str, Any]:
@@ -33,7 +33,7 @@ def ok(name: str, **kwargs: Any) -> dict[str, Any]:
 
 @pytest.fixture()
 def ws(tmp_path, monkeypatch):
-    from utils import workspace_context
+    from brain.utils import workspace_context
 
     monkeypatch.setattr(workspace_context, "_active_workspace", workspace_context._active_workspace)
     token = workspace_context._active_workspace.set(str(tmp_path))
@@ -60,7 +60,7 @@ def test_every_schema_is_valid_openai_function_format():
 
 
 def test_toolbox_names_never_shadow_core_tools():
-    from tool.register_tools import register_all_tools
+    from tools.register_tools import register_all_tools
 
     reg = register_all_tools()
     assert set(CATALOG) <= set(reg.get_all_names())
@@ -127,12 +127,12 @@ def test_find_tools_searches_in_both_languages():
 
 
 def test_find_tools_unlocks_for_this_session_only(tmp_path, monkeypatch):
-    from utils import session_settings
+    from brain.utils import session_settings
 
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir()
     b.mkdir()
-    monkeypatch.setattr("tool.execute.execute_toolbox.get_active_workspace", lambda: str(a))
+    monkeypatch.setattr("tools.toolbox.get_active_workspace", lambda: str(a))
     out = asyncio.run(find_tools(query="cicilan pinjaman bunga"))
     assert "loan_payment" in out["unlocked"] and out["tools"][0]["call"].startswith(out["tools"][0]["name"])
     assert "loan_payment" in session_settings.load(a).tools
@@ -140,7 +140,7 @@ def test_find_tools_unlocks_for_this_session_only(tmp_path, monkeypatch):
 
 
 def test_unlocked_tools_are_bounded(tmp_path):
-    from utils import session_settings
+    from brain.utils import session_settings
 
     for i in range(30):
         session_settings.unlock_tools(tmp_path, [f"t{i}"])
@@ -295,7 +295,7 @@ def test_date_info_reads_indonesian_dates():
 
 @pytest.mark.parametrize("text", ["2026-08-17", "17/08/2026", "17-08-2026", "17 Agustus 2026", "17 agt 2026"])
 def test_parse_date_formats(text):
-    from tool.execute.execute_toolbox.units_time_tools import parse_date
+    from tools.toolbox.units_time_tools import parse_date
 
     assert parse_date(text).date().isoformat() == "2026-08-17"
 
@@ -364,7 +364,7 @@ def test_countdown_has_a_direction():
 
 
 def test_time_now_honours_the_zone():
-    from tool.execute.execute_local_ops.local_ops_tool import time_now
+    from tools.local_ops.local_ops_tool import time_now
 
     jakarta = asyncio.run(time_now("WIB"))
     tokyo = asyncio.run(time_now("Asia/Tokyo"))
@@ -826,7 +826,7 @@ def test_geo_distance_jakarta_bandung():
 
 
 def test_parse_point_formats():
-    from tool.execute.execute_toolbox.geo_maps_tools import parse_point
+    from tools.toolbox.geo_maps_tools import parse_point
 
     assert parse_point("6°10'31.4\"S 106°49'37.9\"E") == pytest.approx((-6.17539, 106.82719), abs=1e-4)
     assert parse_point([-6.2, 106.8]) == (-6.2, 106.8)
@@ -908,7 +908,7 @@ def test_places_need_an_import_first(ws):
 
 
 def test_places_are_per_session(tmp_path):
-    from utils import workspace_context
+    from brain.utils import workspace_context
 
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir()
@@ -946,7 +946,7 @@ def test_gmaps_scrape_explains_when_not_installed(ws, monkeypatch):
 # ── Live tools: offline, with the network stubbed ─────────────────────────────
 @pytest.fixture()
 def fake_net(monkeypatch):
-    from tool.execute.execute_toolbox import _net
+    from tools.toolbox import _net
 
     calls: list[tuple[str, str]] = []
     answers: dict[str, Any] = {}
@@ -1010,14 +1010,14 @@ def test_live_tools_fail_readably_offline(fake_net):
 
 
 def test_net_refuses_unlisted_hosts():
-    from tool.execute.execute_toolbox import _net
+    from tools.toolbox import _net
 
     with pytest.raises(_net.NetError, match="not an allowed host"):
         asyncio.run(_net.get_json("169.254.169.254", "/latest/meta-data"))
 
 
 def test_net_cache_is_keyed_by_session(monkeypatch):
-    from tool.execute.execute_toolbox import _net
+    from tools.toolbox import _net
 
     _net.clear_cache()
     hits = []
@@ -1051,7 +1051,7 @@ def test_every_network_tool_is_marked():
     for name in ("geocode", "reverse_geocode", "osm_nearby", "weather", "currency_convert", "public_holidays",
                  "wiki_summary", "dictionary_en", "gmaps_scrape"):
         assert CATALOG[name].network, name
-    from tool.execute.execute_toolbox import read_only_tools
+    from tools.toolbox import read_only_tools
 
     assert "weather" not in read_only_tools() and "calc" in read_only_tools()
 

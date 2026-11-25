@@ -10,17 +10,17 @@ from typing import Any
 
 import pytest
 
-from agent import session_stack
+from brain.agent import session_stack
+from brain.config.constants import TaskType
 from brain.system_prompt.base_system_prompt import SystemPromptManager
-from config.constants import TaskType
-from tool.execute.execute_code_intel import quality_tools
-from tool.execute.execute_local_memory import vault_context, vault_tool
-from utils.workspace_context import (
+from brain.utils.workspace_context import (
     get_active_ponytail,
     get_active_workspace,
     set_active_ponytail,
     set_active_workspace,
 )
+from tools.code_intel import quality_tools
+from tools.local_memory import vault_context, vault_tool
 
 
 @pytest.fixture(autouse=True)

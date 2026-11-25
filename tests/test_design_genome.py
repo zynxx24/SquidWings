@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tool.execute.execute_toolbox import design_genome as g
+from tools.toolbox import design_genome as g
 
 
 @pytest.fixture(autouse=True)
@@ -51,7 +51,7 @@ def test_the_ai_default_purple_blue_is_rare() -> None:
 
 
 def test_style_pick_takes_a_genome_id_and_still_knows_the_classics() -> None:
-    from tool.execute.execute_toolbox.style_tools import style_pick, styles
+    from tools.toolbox.style_tools import style_pick, styles
 
     picked = style_pick("web", style="g05-00beef")
     assert picked["style"] == "g05-00beef" and picked["source"] == "genome" and picked["fonts_css"].startswith("https://")
@@ -60,7 +60,7 @@ def test_style_pick_takes_a_genome_id_and_still_knows_the_classics() -> None:
 
 
 def test_design_explore_writes_a_sheet_of_distinct_options(tmp_path: Path) -> None:
-    from tool.execute.execute_toolbox.style_tools import design_explore
+    from tools.toolbox.style_tools import design_explore
 
     out = design_explore("web", "warung kopi di Bandung", 9, workspace_path=str(tmp_path))
     page = (tmp_path / out["file"]).read_text(encoding="utf-8")

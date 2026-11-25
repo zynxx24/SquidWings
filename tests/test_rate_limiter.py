@@ -4,12 +4,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from config.constants import TaskType
-from model.connection.api_client import APIClient
-from model.registry.model_info import ModelInfo
-from model.registry.model_registry import ModelRegistry
-from model.settings.fallback import FallbackStrategy
-from model.settings.rate_limiter import RateLimiter, TokenBucket
+from brain.config.constants import TaskType
+from brain.model.connection.api_client import APIClient
+from brain.model.registry.model_info import ModelInfo
+from brain.model.registry.model_registry import ModelRegistry
+from brain.model.settings.fallback import FallbackStrategy
+from brain.model.settings.rate_limiter import RateLimiter, TokenBucket
 
 
 def test_token_bucket_consume_and_refill() -> None:

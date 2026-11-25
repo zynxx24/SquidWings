@@ -56,7 +56,7 @@ Smart round robin:
 
 ## Pemakaian token
 
-Setiap request ke model dicatat, termasuk lewat `API_BASE_URL` di `.env` dan `config/providers.yaml`: provider, akun, model, input, output, cached, total, latensi, dan berhasil atau gagal. Periode: 1 jam (per 5 menit), 24 jam (per jam), 1 minggu (per 6 jam), 1 bulan (per hari), dan semua. Rincian bisa dikelompokkan per provider, akun, atau model.
+Setiap request ke model dicatat, termasuk lewat `API_BASE_URL` di `.env` dan `brain/config/providers.yaml`: provider, akun, model, input, output, cached, total, latensi, dan berhasil atau gagal. Periode: 1 jam (per 5 menit), 24 jam (per jam), 1 minggu (per 6 jam), 1 bulan (per hari), dan semua. Rincian bisa dikelompokkan per provider, akun, atau model.
 
 - **Input** sudah termasuk token cached. Untuk Claude: input + cache read + cache write.
 - **Cached** = token prompt yang dibaca dari cache provider. Hit % = cached ÷ input.

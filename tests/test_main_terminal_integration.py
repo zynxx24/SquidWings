@@ -9,9 +9,9 @@ from unittest.mock import MagicMock
 
 from rich.console import Console
 
+from brain.model.registry.model_registry import ModelRegistry
+from brain.utils.cli_formatter import TerminalFormatConfig
 from main import _display_help, _handle_ide_command, process_input
-from model.registry.model_registry import ModelRegistry
-from utils.cli_formatter import TerminalFormatConfig
 
 
 def test_display_help_contains_new_commands():
@@ -86,10 +86,10 @@ def test_handle_ide_command_code_and_format(tmp_path: Path):
 
 
 def real_orchestrator(tmp_path: Path, *replies: dict) -> Any:
-    from agent.orchestrator import Orchestrator
+    from brain.agent.orchestrator import Orchestrator
+    from brain.config.settings import Settings
     from brain.memory.conversation_store import ConversationStore
-    from config.settings import Settings
-    from model.registry.model_info import ModelCapabilities, ModelInfo
+    from brain.model.registry.model_info import ModelCapabilities, ModelInfo
 
     queue = list(replies)
 
