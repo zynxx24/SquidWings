@@ -6,6 +6,7 @@ Fitur tambahan yang **mati bawaan** dan butuh setup manual. Bagian lain harness 
 |---|---|---|
 | `trading/` | Model kuant, EA MT4, MT5, panel trading, tool `trading_snapshot` | [trading/README.md](trading/README.md) |
 | `studio/` | Editor video motion dengan chat revisi dan render MP4 | [studio/README.md](studio/README.md) |
+| `ide/` | IDE untuk file dan proyek buatan AI: editor, diff perubahan AI per giliran, kembalikan, pratinjau | [ide/README.md](ide/README.md) |
 
 ```bash
 python main.py addon list              # status semua add-on

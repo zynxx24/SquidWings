@@ -1,10 +1,10 @@
 # web/
 
-Server web (FastAPI) dan halaman chat. Halaman add-on (trading, Studio) ada di folder add-on masing-masing dan dipasang di `/static/<add-on>/` saat add-on aktif.
+Server web (FastAPI) dan halaman chat. Halaman add-on (trading, Studio, IDE) ada di folder add-on masing-masing dan dipasang di `/static/<add-on>/` saat add-on aktif.
 
 | File / folder | Isi |
 |---|---|
-| `server.py` | Server utama: chat, upload, terminal, preview, halaman, dan pemasangan API add-on |
+| `server.py` | Server utama: chat, upload, terminal, preview, halaman, pemasangan API add-on, dan perubahan file per giliran (`/api/session/{id}/changes`) |
 | `team_api.py` | API alur kerja (tim agent): simpan, aktif/nonaktif, jalankan, tes satu node, kredensial |
 | `router_api.py` | API halaman Router (provider, model default, harga, token) |
 | `data_api.py` | API Tabel data: sumber, tabel, baris, kolom, dan relasi antar tabel |

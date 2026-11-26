@@ -1,5 +1,15 @@
 # Catatan perubahan
 
+## 2026-11-26 (malam): add-on IDE, perubahan file AI tercatat, tampilan chat
+
+- **Add-on baru: IDE** (`python main.py addon install ide`, menu IDE atau Alt+6). Semua folder chat dan proyek buatan AI dalam satu tempat: pohon file, editor CodeMirror dengan warna sintaks untuk puluhan bahasa, cari di semua file, buka cepat (Ctrl+P), pratinjau halaman HTML, Markdown, dan server pengembangan yang sedang jalan, unduh .zip, serta file baru, folder, ganti nama, dan hapus ke sampah proyek.
+- **Setiap perubahan AI tercatat per giliran**, siapa pun alat yang menulisnya (tool file, perintah shell, build). Di IDE ada tab Perubahan AI: diff per file, kembalikan satu file atau satu giliran, dan "Minta AI jelaskan". Edit tangan di antara giliran tidak dianggap perubahan AI.
+- **IDE mengikuti AI langsung**: file yang terbuka ikut diperbarui saat AI mengubahnya. Kalau kamu sedang mengedit file yang sama, kamu memilih versi mana yang dipakai, jadi tidak ada yang tertimpa diam-diam.
+- **Tanya AI dari IDE** (Ctrl+I): pertanyaan tentang file atau bagian yang dipilih dikirim ke chat proyek itu, dengan tombol cepat Jelaskan, Cari bug dan perbaiki, Rapikan, dan Tulis tes.
+- **Chat: kartu "file diubah AI"** di bawah setiap jawaban yang mengubah file, dengan +/− baris per file, tombol Buka di IDE (langsung ke diff-nya), dan Urungkan perubahan. Kartunya muncul lagi saat chat lama dibuka.
+- **Chat: blok kode** menunjukkan jumlah baris, punya tombol Bungkus untuk baris panjang, dan blok di atas 30 baris diringkas dengan tombol Tampilkan semua.
+- **Chat: file yang dibagikan AI** tampil sebagai kartu (jenis, nama, Unduh, buka di IDE), berjajar rapi, bukan deretan tautan.
+
 ## 2026-11-26 (malam): template Harness lengkap
 
 - **Template "Harness lengkap lewat Telegram (semua node)"**: satu alur yang memakai kesepuluh jenis node. `/catat` dirapikan AI jadi catatan berlabel lalu disimpan ke Tabel data, `/lihat` menampilkan 10 catatan terakhir beserta arti labelnya lewat relasi, `/kurs` membaca kurs dari API publik (node HTTP), `/fokus` mulai sesi fokus 25 menit dan mengabari saat habis. Pesan lain dinilai AI: kerja berat direncanakan, dikerjakan dengan semua alat, lalu diperiksa; selain itu dijawab Asisten. Semua jawaban lewat satu Merge ke Telegram dan tercatat di database. Tabel `catatan`, `label`, dan relasinya dibuat otomatis saat template dipakai.

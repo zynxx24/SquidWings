@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IDE</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/page.css">
+<link rel="stylesheet" href="/static/ide/ide.css">
+<script src="/static/js/page.js"></script>
+</head>
+<body class="page-ide">
+<div id="ide" class="ide">
+  <header class="ide-top">
+    <button id="side-toggle" class="ib only-narrow" type="button" aria-label="Tampilkan panel samping" title="Panel samping">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <button id="proj-btn" class="proj-btn" type="button" aria-haspopup="dialog" title="Ganti proyek (Ctrl+O)">
+      <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span id="proj-name">Pilih proyek</span>
+      <svg viewBox="0 0 24 24" class="ico caret" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
+    <nav id="crumbs" class="crumbs" aria-label="Lokasi file"></nav>
+    <div class="top-actions">
+      <button id="act-quick" class="tb" type="button" title="Buka file cepat (Ctrl+P)">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="hide-narrow">Buka cepat</span><kbd class="hide-narrow">Ctrl P</kbd>
+      </button>
+      <button id="act-preview" class="tb" type="button" title="Pratinjau halaman atau Markdown (Ctrl+Shift+V)" aria-pressed="false">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="hide-narrow">Pratinjau</span>
+      </button>
+      <a id="act-zip" class="tb" href="#" title="Unduh proyek ini sebagai .zip" download>
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg><span class="hide-narrow">.zip</span>
+      </a>
+      <button id="act-ask" class="tb primary" type="button" title="Tanya AI tentang file atau bagian yang dipilih (Ctrl+I)">
+        <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg><span>Tanya AI</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="ide-body">
+    <aside id="side" class="side" aria-label="Panel samping">
+      <nav class="side-tabs" role="tablist" aria-label="Bagian">
+        <button data-pane="files" class="on" role="tab" aria-selected="true">File</button>
+        <button data-pane="search" role="tab" aria-selected="false">Cari</button>
+        <button data-pane="changes" role="tab" aria-selected="false">Perubahan AI <span id="changes-count" class="count hidden"></span></button>
+      </nav>
+
+      <section id="pane-files" class="pane">
+        <div class="pane-tools">
+          <span id="files-meta" class="pane-meta"></span>
+          <button id="new-file" class="ib" type="button" title="File baru" aria-label="File baru"><svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M12 13v6M9 16h6"/></svg></button>
+          <button id="new-folder" class="ib" type="button" title="Folder baru" aria-label="Folder baru"><svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M12 11v5M9.5 13.5h5"/></svg></button>
+          <button id="collapse-all" class="ib" type="button" title="Tutup semua folder" aria-label="Tutup semua folder"><svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="m7 15 5-5 5 5"/><path d="M5 20h14"/></svg></button>
+          <button id="refresh" class="ib" type="button" title="Muat ulang daftar file" aria-label="Muat ulang daftar file"><svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+        </div>
+        <input id="tree-filter" class="side-input" type="search" placeholder="Saring nama file" aria-label="Saring nama file">
+        <div id="tree" class="tree" role="tree" aria-label="File proyek" tabindex="0"></div>
+      </section>
+
+      <section id="pane-search" class="pane hidden">
+        <input id="search-q" class="side-input" type="search" placeholder="Cari di semua file" aria-label="Cari di semua file">
+        <div class="search-opts">
+          <label class="opt"><input id="search-case" type="checkbox">Aa</label>
+          <label class="opt"><input id="search-regex" type="checkbox">.*</label>
+          <span id="search-meta" class="pane-meta"></span>
+        </div>
+        <div id="search-results" class="results" aria-live="polite"></div>
+      </section>
+
+      <section id="pane-changes" class="pane hidden">
+        <p class="pane-note">Setiap giliran chat yang mengubah file tercatat di sini, siapa pun alat yang menulisnya. Klik file untuk melihat diff.</p>
+        <div id="timeline" class="timeline"></div>
+      </section>
+    </aside>
+
+    <main class="main">
+      <div id="tabs" class="tabs" role="tablist" aria-label="File terbuka"></div>
+      <div id="banner" class="banner hidden" role="status"></div>
+      <div class="stage">
+        <div id="editor-host" class="editor-host hidden"></div>
+        <div id="viewer" class="viewer hidden"></div>
+        <section id="home" class="home">
+          <div class="home-head">
+            <h1>Proyek buatan AI</h1>
+            <p>Setiap chat punya folder sendiri. Pilih satu untuk melihat, mengubah, dan menelusuri apa yang dikerjakan AI.</p>
+            <input id="proj-filter" class="side-input" type="search" placeholder="Cari proyek" aria-label="Cari proyek">
+          </div>
+          <div id="proj-list" class="proj-list" aria-live="polite"></div>
+        </section>
+      </div>
+      <footer class="status" aria-live="polite">
+        <span id="st-file" class="st-item"></span>
+        <span id="st-ai" class="st-item st-ai"></span>
+        <span class="st-gap"></span>
+        <span id="st-pos" class="st-item"></span>
+        <span id="st-lang" class="st-item"></span>
+        <span id="st-save" class="st-item"></span>
+      </footer>
+    </main>
+
+    <aside id="preview" class="preview hidden" aria-label="Pratinjau">
+      <header class="preview-head">
+        <select id="preview-src" aria-label="Sumber pratinjau"></select>
+        <button id="preview-reload" class="ib" type="button" title="Muat ulang" aria-label="Muat ulang pratinjau"><svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/></svg></button>
+        <a id="preview-open" class="ib" href="#" target="_blank" rel="noopener" title="Buka di tab baru" aria-label="Buka pratinjau di tab baru"><svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9"/><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5"/></svg></a>
+        <button id="preview-close" class="ib" type="button" title="Tutup" aria-label="Tutup pratinjau"><svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </header>
+      <div id="preview-body" class="preview-body"></div>
+    </aside>
+  </div>
+</div>
+
+<div id="scrim" class="scrim hidden"></div>
+
+<div id="quick" class="dialog hidden" role="dialog" aria-modal="true" aria-label="Buka file cepat">
+  <div class="dialog-box quick-box">
+    <input id="quick-q" class="quick-input" placeholder="Ketik nama file" aria-label="Nama file" autocomplete="off">
+    <div id="quick-list" class="quick-list" role="listbox"></div>
+  </div>
+</div>
+
+<div id="projects" class="dialog hidden" role="dialog" aria-modal="true" aria-label="Ganti proyek">
+  <div class="dialog-box quick-box">
+    <input id="projects-q" class="quick-input" placeholder="Cari proyek" aria-label="Cari proyek" autocomplete="off">
+    <div id="projects-list" class="quick-list" role="listbox"></div>
+  </div>
+</div>
+
+<div id="ask" class="dialog hidden" role="dialog" aria-modal="true" aria-labelledby="ask-title">
+  <form id="ask-form" class="dialog-box ask-box">
+    <h2 id="ask-title">Tanya AI</h2>
+    <p id="ask-context" class="ask-context"></p>
+    <textarea id="ask-q" rows="4" placeholder="Misalnya: kenapa fungsi ini lambat? atau: tambahkan validasi email" aria-label="Pertanyaan atau perintah"></textarea>
+    <div class="ask-quick" id="ask-quick">
+      <button type="button" data-q="Jelaskan kode ini dengan singkat.">Jelaskan</button>
+      <button type="button" data-q="Cari bug di kode ini lalu perbaiki langsung di filenya.">Cari bug dan perbaiki</button>
+      <button type="button" data-q="Rapikan kode ini tanpa mengubah perilakunya, lalu jalankan tesnya kalau ada.">Rapikan</button>
+      <button type="button" data-q="Tulis tes untuk kode ini dan jalankan.">Tulis tes</button>
+    </div>
+    <p class="ask-note">Dikirim ke chat proyek ini. AI bekerja di folder yang sama, jadi perubahannya langsung muncul di sini.</p>
+    <div class="ask-actions">
+      <button type="button" class="tb" id="ask-cancel">Batal</button>
+      <button type="submit" class="tb primary">Kirim ke chat</button>
+    </div>
+  </form>
+</div>
+
+<div id="menu" class="menu hidden" role="menu"></div>
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+<script src="/static/js/marked.min.js"></script>
+<script src="/static/js/purify.min.js"></script>
+<script src="/static/ide/vendor/codemirror.js"></script>
+<script src="/static/ide/ide.js"></script>
+</body>
+</html>

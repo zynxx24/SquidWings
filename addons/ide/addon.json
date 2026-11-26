@@ -1,0 +1,19 @@
+{
+  "name": "ide",
+  "title": "IDE proyek AI",
+  "description": "Lihat dan edit semua file dan proyek yang dibuat AI di tiap chat: pohon file, editor kode CodeMirror dengan warna sintaks, pencarian, pratinjau halaman, dan linimasa perubahan AI per giliran dengan diff dan tombol kembalikan.",
+  "files": [
+    "addons/ide/web/ide_api.py",
+    "addons/ide/web/static/index.html",
+    "addons/ide/web/static/ide.js",
+    "addons/ide/web/static/ide.css",
+    "addons/ide/web/static/vendor/codemirror.js"
+  ],
+  "programs": [],
+  "manual": {
+    "windows": ["Tidak ada langkah tambahan: editornya sudah ikut di repo (vendor/codemirror.js)."],
+    "linux": ["Tidak ada langkah tambahan: editornya sudah ikut di repo (vendor/codemirror.js)."],
+    "macos": ["Tidak ada langkah tambahan: editornya sudah ikut di repo (vendor/codemirror.js)."]
+  },
+  "start": "python main.py web, lalu buka menu IDE (Alt+6)"
+}

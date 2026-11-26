@@ -30,6 +30,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from brain.agent import session_stack
 from brain.agent.orchestrator import Orchestrator
@@ -39,14 +40,22 @@ from brain.config.settings import get_settings
 from brain.model.router.groups import group_of, provider_labels
 from brain.model.settings.model_picker import is_chat_model
 from brain.security import sandbox
-from brain.security.headers import embeddable_headers, shell_headers
+from brain.security.headers import LOOPBACK_FRAMES, csp_with, embeddable_headers, shell_headers
 from brain.security.web_access import (
     WebSecurityMiddleware,
     is_local_request,
     is_loopback_host,
     set_public_mode,
 )
-from brain.utils import cache, daily_brief, local_ocr, preview, shared_files, web_terminal
+from brain.utils import (
+    cache,
+    daily_brief,
+    file_history,
+    local_ocr,
+    preview,
+    shared_files,
+    web_terminal,
+)
 from brain.utils.extract import DOCUMENT_SUFFIXES, Extracted, extract, intent_of, save_images
 from brain.utils.extract import Image as ExtractedImage
 from brain.utils.helpers import format_tokens, generate_session_id, is_valid_session_id
@@ -161,6 +170,7 @@ if _TEAMS_ENABLED:
 from brain.config.edition import (  # noqa: E402
     ENTERPRISE_NOTE,
     STUDIO_NOTE,
+    addon_enabled,
     edition,
     studio_enabled,
     studio_module,
@@ -201,6 +211,10 @@ if studio_enabled():   # optional module: the video Studio
 
     app.include_router(studio_router)
 studio_context = studio_module("addons.studio.studio_context")
+if addon_enabled("ide"):   # optional module: the IDE for the projects the AI made
+    from addons.ide.web.ide_api import router as ide_router
+
+    app.include_router(ide_router)
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -278,9 +292,10 @@ _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
 # The pages the chat page opens inside itself, and their files.
 # Add-ons keep their pages in their own folder and are served under /static/<add-on>/.
 ADDON_STATIC = {"trading": Path(__file__).resolve().parents[1] / "addons" / "trading" / "web" / "static",
-                "studio": Path(__file__).resolve().parents[1] / "addons" / "studio" / "web" / "static"}
+                "studio": Path(__file__).resolve().parents[1] / "addons" / "studio" / "web" / "static",
+                "ide": Path(__file__).resolve().parents[1] / "addons" / "ide" / "web" / "static"}
 _APP_PAGES = {"trading": ADDON_STATIC["trading"] / "index.html", "router": STATIC_DIR / "router" / "index.html",
-              "studio": ADDON_STATIC["studio"] / "index.html"}
+              "studio": ADDON_STATIC["studio"] / "index.html", "ide": ADDON_STATIC["ide"] / "index.html"}
 _ENTERPRISE_PAGE = """<!doctype html><html lang="id"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Trading · tidak terpasang</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.6 system-ui,sans-serif;
@@ -333,6 +348,23 @@ async def serve_studio(embed: bool = False) -> HTMLResponse:
     return _page(_APP_PAGES["studio"], embeddable_headers())
 
 
+IDE_NOTE = "Add-on IDE belum aktif. Nyalakan dengan: python main.py addon install ide, lalu jalankan ulang server."
+
+
+@app.get("/ide", response_class=HTMLResponse)
+async def serve_ide(embed: bool = False) -> HTMLResponse:
+    """The main page opened on the IDE. ``?embed=1`` is the IDE itself, for its frame."""
+    if not embed:
+        return _shell()
+    if not addon_enabled("ide"):
+        return HTMLResponse(content=(_ENTERPRISE_PAGE % IDE_NOTE).replace("Trading · tidak terpasang", "IDE · tidak terpasang")
+                            .replace("Modul trading tidak terpasang", "IDE tidak terpasang"),
+                            headers={**_NO_CACHE, **embeddable_headers()})
+    # Its preview shows the AI's dev servers (other loopback ports) as well as the project's own pages.
+    return _page(_APP_PAGES["ide"], {"Content-Security-Policy": csp_with(frame_src=LOOPBACK_FRAMES, frame_ancestors="'self'"),
+                                     "X-Frame-Options": "SAMEORIGIN"})
+
+
 @app.get("/studio/frame", response_class=HTMLResponse)
 async def serve_studio_frame() -> HTMLResponse:
     """Frames of a Studio video side by side, drawn by the Studio's own renderer (for studio_still)."""
@@ -347,6 +379,8 @@ if trading_enabled() and ADDON_STATIC["trading"].is_dir():
     app.mount("/static/trading", StaticFiles(directory=str(ADDON_STATIC["trading"])), name="static-trading")
 if studio_enabled() and ADDON_STATIC["studio"].is_dir():
     app.mount("/static/studio", StaticFiles(directory=str(ADDON_STATIC["studio"])), name="static-studio")
+if addon_enabled("ide") and ADDON_STATIC["ide"].is_dir():
+    app.mount("/static/ide", StaticFiles(directory=str(ADDON_STATIC["ide"])), name="static-ide")
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -804,7 +838,7 @@ async def health_check() -> dict[str, Any]:
 async def client_config() -> dict[str, Any]:
     """Feature flags the frontend needs to render its navigation."""
     settings = get_settings()
-    return {"edition": edition(), "features": {"teams": settings.teams_enabled, "trading": trading_enabled()}}
+    return {"edition": edition(), "features": {"teams": settings.teams_enabled, "trading": trading_enabled(), "ide": addon_enabled("ide")}}
 
 
 @app.get("/api/security")
@@ -978,6 +1012,42 @@ async def session_file(session_id: str, relative: str, download: bool = False) -
         headers={"Content-Security-Policy": _MEDIA_TAB_CSP if kind != "file" else "sandbox",
                  "X-Content-Type-Options": "nosniff"},
     )
+
+
+@app.get("/api/session/{session_id}/changes")
+async def session_changes(session_id: str) -> dict[str, Any]:
+    """The files the AI added, changed or removed in this chat's folder, turn by turn (oldest first)."""
+    if not is_valid_session_id(session_id):
+        raise HTTPException(status_code=404, detail="Unknown session")
+    folder = _session_folder(session_id)
+    turns = await asyncio.to_thread(file_history.FileHistory(folder).turns) if folder.is_dir() else []
+    return {"turns": [t.public() for t in turns], "ide": addon_enabled("ide")}
+
+
+class RestoreInput(BaseModel):
+    turn: str = Field(min_length=1, max_length=40)
+    path: str | None = Field(default=None, max_length=1000)
+
+
+@app.post("/api/session/{session_id}/changes/restore")
+async def session_restore(session_id: str, payload: RestoreInput) -> dict[str, Any]:
+    """Undo one turn's changes, or one file of it. The undo is written down as a turn of its own."""
+    if not is_valid_session_id(session_id):
+        raise HTTPException(status_code=404, detail="Unknown session")
+    history = file_history.FileHistory(_session_folder(session_id))
+    try:
+        turn = await asyncio.to_thread(history.restore, payload.turn, payload.path)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Perubahan itu tidak ada.") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    return {"turn": turn.public() if turn else None}
+
+
+def _session_folder(session_id: str) -> Path:
+    """The folder a chat's turns work in: SQUIDWINGS_WORKSPACE when set, else the chat's own folder."""
+    explicit = os.getenv("SQUIDWINGS_WORKSPACE", "").strip()
+    return Path(explicit) if explicit else session_workspace(session_id, create=False)
 
 
 @app.get("/api/session/{session_id}/stack")
@@ -1323,7 +1393,33 @@ async def _run_live_turn(
     # "[web] <title>": a quick title now, the AI's own (at most 28 characters) once it answers
     title_task = _start_naming(orch, session_id, "web", message)
     # This chat's folder, vault, graph, and Ponytail mode.
-    session_stack.enter(session_id)
+    stack = session_stack.enter(session_id)
+    # What the AI changes in the folder during this turn, whatever writes it (brain/utils/file_history.py).
+    # Only a help: when the folder cannot be read, the turn goes on without it.
+    folder = getattr(stack, "workspace", None)
+    history = file_history.FileHistory(folder) if folder else None
+    history_started = 0.0
+    if history is not None:
+        try:
+            history_started = await asyncio.to_thread(history.begin)
+        except OSError as exc:
+            logger.warning(f"[ws] File history for {session_id} is off this turn: {exc}")
+            history = None
+    recorded = False
+
+    async def record_files() -> None:
+        nonlocal recorded
+        if recorded or history is None:
+            return
+        recorded = True
+        try:
+            turn = await asyncio.to_thread(history.end, history_started, message, session_id)
+        except OSError as exc:
+            logger.warning(f"[ws] File history for {session_id} not recorded: {exc}")
+            return
+        if turn is not None:
+            live.emit({"type": "files", "turn": turn.public()})
+
     try:
         response = await orch.process(
             user_input=message,
@@ -1345,6 +1441,7 @@ async def _run_live_turn(
         if not content_buf and response.content:
             live.emit({"type": "content", "content": response.content})
         latency = (time.time() - start_time) * 1000
+        await record_files()
         titled = await _finish_naming(orch, session_id, "web", title_task)
         if titled:
             live.emit({"type": "meta", "event": "title", "session_id": session_id, "title": titled})
@@ -1369,6 +1466,9 @@ async def _run_live_turn(
         logger.error(f"[ws] Orchestrator processing error: {proc_err}")
         live.emit({"type": "error", "content": str(proc_err)})
     finally:
+        # A stopped or failed turn may still have written files: they are the AI's too.
+        with contextlib.suppress(Exception):
+            await asyncio.shield(record_files())
         live.finish()
 
 

@@ -11,7 +11,7 @@ Otak dan harness SquidWings dalam satu folder: memahami permintaan, memilih mode
 | `model/` | Koneksi provider: API client, registry model, router (rotasi akun, harga, log token), streaming |
 | `system_prompt/` | Prompt sistem per jenis tugas dan per tier, cadangan Ponytail |
 | `config/` | `settings.py` (`.env`), `paths.py` (lokasi `data/`), `edition.py` (saklar add-on), kredensial, `models_config.yaml`, `providers.yaml` |
-| `utils/` | `cache.py` (semua cache), `platform_compat.py` (Windows/macOS/Linux), workspace per chat, logger, CLI, terminal web, OCR, suara, `datastore/` (sumber data, Tabel data bawaan, relasi antar tabel, operasi node Tabel data) |
+| `utils/` | `cache.py` (semua cache), `platform_compat.py` (Windows/macOS/Linux), workspace per chat, logger, CLI, terminal web, OCR, suara, `datastore/` (sumber data, Tabel data bawaan, relasi antar tabel, operasi node Tabel data), `file_history.py` (file yang diubah AI per giliran: diff dan kembalikan) |
 | `security/` | Sandbox perintah, `policy.yaml`, path jail, audit chain, prompt shield, akses web |
 
 ## Dua mode model

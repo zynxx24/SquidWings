@@ -312,6 +312,66 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); }
 .code-copy:hover { background: rgb(255 255 255 / 10%); }
 .prose pre { margin: 0; padding: 12px 14px; overflow-x: auto; background: var(--code-bg); color: var(--code-text); }
 .prose pre code { padding: 0 !important; background: none !important; font: 13px/1.55 var(--mono); }
+.code-head { gap: 10px; }
+.code-lang { color: #c5c9d1; font-weight: 600; }
+.code-lines { flex: 1; color: #8b919c; }
+.code-acts { display: flex; gap: 2px; }
+.code-wrap[aria-pressed="true"] { background: rgb(255 255 255 / 12%); color: #fff; }
+.code { position: relative; }
+.code.wrapped pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* About 30 lines, then the block fades out into its expand button. */
+.code.folded pre { max-height: calc(30 * 13px * 1.55 + 24px); overflow: hidden;
+  -webkit-mask-image: linear-gradient(#000 calc(100% - 64px), transparent); mask-image: linear-gradient(#000 calc(100% - 64px), transparent); }
+.code-expand {
+  display: block; width: 100%; padding: 7px; border-top: 1px solid rgb(255 255 255 / 8%);
+  background: var(--code-head); color: #c5c9d1; font: 12px var(--mono); cursor: pointer;
+}
+.code-expand:hover { color: #fff; background: #262a31; }
+
+/* Files the agent shared: a card each, side by side. */
+.file-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0.4em 0 0.9em; }
+.file-chip {
+  display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 100%; flex: 0 1 340px;
+  padding: 8px 8px 8px 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface);
+}
+.file-chip .fx { flex: none; width: 40px; padding: 5px 0; border-radius: 7px; background: var(--accent-soft); color: var(--text); font: 700 10.5px var(--mono); text-align: center; }
+.file-chip .fn { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
+.file-chip .fa {
+  flex: none; padding: 4px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2);
+  color: var(--text); font-size: 12.5px; text-decoration: none; cursor: pointer;
+}
+.file-chip .fa:hover { border-color: var(--accent-line); background: var(--accent-soft); }
+
+/* What the AI changed in this turn. The accent tick on the left is the same mark the IDE uses. */
+.files-card { position: relative; margin: 6px 0 4px; padding: 10px 12px 10px 16px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+.files-card::before { content: ""; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+.files-card.undone { opacity: 0.6; }
+.files-card.undone::before { background: var(--line-strong); }
+.fc-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13.5px; }
+.fc-ico { display: inline-grid; place-items: center; color: var(--accent); }
+.fc-sum { color: var(--muted); font-size: 12.5px; }
+.fc-stat { margin-left: auto; font: 12px var(--mono); }
+.fc-plus { color: var(--ok); } .fc-minus { color: var(--err); }
+.fc-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.fc-list li { display: flex; align-items: center; gap: 8px; min-height: 26px; }
+.fc-mark { flex: none; width: 18px; border-radius: 4px; font: 700 10.5px/17px var(--mono); text-align: center; }
+.fc-mark.added { color: var(--ok); background: var(--ok-soft); }
+.fc-mark.modified { color: var(--warn); background: var(--warn-soft); }
+.fc-mark.deleted { color: var(--err); background: var(--err-soft); }
+.fc-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 4px; border-radius: 5px; text-align: left; font: 12.5px var(--mono); color: var(--text); cursor: pointer; }
+.fc-path:hover { background: var(--surface-2); }
+.fc-n { flex: none; font: 12px var(--mono); color: var(--faint); }
+.fc-more { margin: 4px 0 0 26px; padding: 2px 4px; color: var(--accent); font-size: 12.5px; cursor: pointer; }
+.fc-foot { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.fc-btn { padding: 5px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.fc-btn:hover { border-color: var(--line-strong); }
+.fc-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.fc-btn.primary:hover { background: var(--accent-hover); }
+.fc-btn:disabled { opacity: 0.6; cursor: default; }
+@media (max-width: 640px) {
+  .file-chip { flex-basis: 100%; }
+  .fc-stat { margin-left: 0; }
+}
 
 /* ── Composer ───────────────────────────────────────── */
 .composer {

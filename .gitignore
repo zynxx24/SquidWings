@@ -121,3 +121,6 @@ tunnel-*.log
 
 # Skills cloned from GitHub (skills/sources.json); fetched at start-up, never committed
 skills/.sources/
+
+# IDE add-on editor build (npm install in addons/ide/build)
+addons/ide/build/node_modules/

@@ -126,6 +126,16 @@
       newTab: () => (LOCAL ? `http://${location.hostname}/trading` : '/trading'),
     },
     router: { title: 'Router & token', path: '/router', loading: 'Membuka router model', src: () => '/router?embed=1', newTab: () => '/router' },
+    ide: {
+      title: 'IDE', path: '/ide', loading: 'Membuka IDE',
+      src: () => {
+        const want = S.ideOpen || { session: S.session || '' };
+        S.ideOpen = null;
+        const query = new URLSearchParams({ embed: '1', ...Object.fromEntries(Object.entries(want).filter(([, v]) => v)) });
+        return `/ide?${query}`;
+      },
+      newTab: () => '/ide',
+    },
     studio: {
       title: 'Studio video', path: '/studio', loading: 'Membuka studio video',
       src: () => `/studio?embed=1&session=${encodeURIComponent(S.studioSession || S.session || '')}${S.studioProject ? `&project=${encodeURIComponent(S.studioProject)}` : ''}`,
@@ -416,10 +426,12 @@
       if (frames.studio) { S.studioProject = ''; S.studioSession = ''; tellFrame(frames.studio.frame, { type: 'sq-studio-open', session: id }); }
       showTitle(data.title || 'Chat');
       clearThread();
+      const answers = [];
       for (const message of data.messages || []) {
         if (message.role === 'user') addUser(userLabel(message.content));
-        else if (message.role === 'assistant') addHistoryAnswer(message);
+        else if (message.role === 'assistant') answers.push(addHistoryAnswer(message));
       }
+      attachFileCards(id, answers);
       scrollDown(true);
       if (!S.booting) showView('chat');
       closeDrawers();
@@ -550,6 +562,44 @@
     container.querySelectorAll('a[href]').forEach(link => {
       if (SHARED_FILE.test(link.getAttribute('href'))) { link.setAttribute('download', ''); link.removeAttribute('target'); }
     });
+    fileChips(container);
+  }
+
+  /* A shared file on a line of its own becomes a card: its type, its name, download, and open in the IDE.
+     Cards next to each other sit together in one row that wraps. */
+  function fileChips(container) {
+    container.querySelectorAll('p').forEach(par => {
+      const links = par.querySelectorAll('a[href]');
+      if (links.length !== 1 || par.children.length !== 1) return;
+      const link = links[0];
+      const href = link.getAttribute('href') || '';
+      if (!SHARED_FILE.test(href) || par.textContent.trim() !== link.textContent.trim()) return;
+      const [, session, rest] = href.match(/^\/api\/session\/([^/]+)\/files\/([^?#]+)/) || [];
+      if (!rest) return;
+      let relative = '';
+      try { relative = rest.split('/').map(decodeURIComponent).join('/'); } catch { relative = rest; }
+      const name = relative.split('/').pop();
+      const ext = ((name.match(/\.([^.]+)$/) || [])[1] || 'file').slice(0, 4).toUpperCase();
+      const chip = document.createElement('div');
+      chip.className = 'file-chip';
+      chip.innerHTML = `<span class="fx">${esc(ext)}</span><span class="fn" title="${esc(relative)}">${esc(name)}</span>
+        <a class="fa" href="${esc(href)}" download>Unduh</a>${S.features.ide ? '<button type="button" class="fa" data-ide>IDE</button>' : ''}`;
+      const ide = chip.querySelector('[data-ide]');
+      if (ide) ide.onclick = () => openIde({ session: decodeURIComponent(session), path: relative });
+      par.replaceWith(chip);
+    });
+    container.querySelectorAll('.file-chip').forEach(chip => {
+      if (chip.parentElement.classList.contains('file-chips')) return;
+      const group = document.createElement('div');
+      group.className = 'file-chips';
+      chip.before(group);
+      let next = chip;
+      while (next && next.classList && next.classList.contains('file-chip')) {
+        const after = next.nextElementSibling;
+        group.append(next);
+        next = after;
+      }
+    });
   }
 
   // Money and quantities line up on the right, so a laba rugi or neraca reads down its columns.
@@ -572,12 +622,33 @@
       if (pre.parentElement.classList.contains('code')) return;
       if (window.hljs) window.hljs.highlightElement(code);
       const language = (code.className.match(/language-([\w-]+)/) || [])[1] || 'code';
+      const lines = code.textContent.replace(/\n$/, '').split('\n').length;
       const wrap = document.createElement('div');
       wrap.className = 'code';
-      wrap.innerHTML = `<div class="code-head"><span>${esc(language)}</span><button class="code-copy" type="button">Salin</button></div>`;
-      wrap.querySelector('button').onclick = e => copyText(code.textContent, e.currentTarget);
+      wrap.innerHTML = `<div class="code-head"><span class="code-lang">${esc(language)}</span><span class="code-lines">${lines} baris</span>
+        <span class="code-acts"><button class="code-copy code-wrap" type="button" aria-pressed="false" title="Bungkus baris panjang">Bungkus</button>
+        <button class="code-copy" type="button" data-copy>Salin</button></span></div>`;
+      wrap.querySelector('[data-copy]').onclick = e => copyText(code.textContent, e.currentTarget);
+      wrap.querySelector('.code-wrap').onclick = e => {
+        const on = wrap.classList.toggle('wrapped');
+        e.currentTarget.setAttribute('aria-pressed', String(on));
+      };
       pre.replaceWith(wrap);
       wrap.appendChild(pre);
+      // A long block shows its start; the rest is one click away, so the answer around it stays readable.
+      if (lines > 30) {
+        wrap.classList.add('folded');
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'code-expand';
+        more.textContent = `Tampilkan semua ${lines} baris`;
+        more.onclick = () => {
+          const open = wrap.classList.toggle('folded');
+          more.textContent = open ? `Tampilkan semua ${lines} baris` : 'Ringkas lagi';
+          if (open) wrap.scrollIntoView({ block: 'nearest' });
+        };
+        wrap.appendChild(more);
+      }
     });
   }
 
@@ -647,6 +718,19 @@
     turn.history(message.tool_trace);
     turn.finish();
     turn.foot({ model: message.model_used, tokens: message.token_count, text: message.content });
+    turn.row.dataset.ts = String(message.timestamp || 0);
+    return turn;
+  }
+
+  /* Each answer that changed files gets its card back: the turn belongs to the first answer written after it began. */
+  async function attachFileCards(session, answers) {
+    let data;
+    try { data = await api(`/api/session/${encodeURIComponent(session)}/changes`); } catch { return; }
+    if (session !== S.session) return;
+    for (const change of (data.turns || []).filter(x => x.by === 'ai')) {
+      const owner = answers.find(a => Number(a.row.dataset.ts) >= change.started);
+      if (owner && !owner.row.querySelector('.files-card')) owner.files(change);
+    }
   }
 
   function createTurn() {
@@ -849,6 +933,58 @@
         stopClock();
         out.insertAdjacentHTML('beforeend', '<div class="notice soft">Dihentikan.</div>');
       },
+      /* What this turn did to the chat's folder: every file the AI added, changed or removed, whatever wrote it. */
+      files(change) {
+        if (!change || !change.changes || !change.changes.length) return;
+        row.querySelector('.files-card')?.remove();
+        const MARK = { added: ['A', 'baru'], modified: ['M', 'diubah'], deleted: ['D', 'dihapus'] };
+        const list = change.changes;
+        const shown = list.slice(0, 6);
+        const card = document.createElement('section');
+        card.className = 'files-card';
+        card.setAttribute('aria-label', 'File yang diubah AI');
+        const counts = ['added', 'modified', 'deleted'].map(k => [k, list.filter(c => c.status === k).length]).filter(([, n]) => n);
+        const fileRow = c => `<li><span class="fc-mark ${c.status}" title="${MARK[c.status][1]}">${MARK[c.status][0]}</span>
+            <button type="button" class="fc-path" data-path="${esc(c.path)}" title="${S.features.ide ? 'Lihat perubahan di IDE' : esc(c.path)}">${esc(c.path)}</button>
+            <span class="fc-n">${c.binary ? 'biner' : `<span class="fc-plus">+${c.added}</span> <span class="fc-minus">−${c.removed}</span>`}</span></li>`;
+        card.innerHTML = `
+          <header class="fc-head">
+            <span class="fc-ico">${icon('code', 15)}</span>
+            <b>${list.length} file diubah AI</b>
+            <span class="fc-sum">${counts.map(([k, n]) => `${n} ${MARK[k][1]}`).join(' · ')}</span>
+            <span class="fc-stat"><span class="fc-plus">+${change.added || 0}</span> <span class="fc-minus">−${change.removed || 0}</span></span>
+          </header>
+          <ul class="fc-list">${shown.map(fileRow).join('')}</ul>
+          ${list.length > shown.length ? `<button type="button" class="fc-more">Tampilkan ${list.length - shown.length} file lagi</button>` : ''}
+          <footer class="fc-foot">
+            ${S.features.ide ? '<button type="button" class="fc-btn primary" data-act="ide">Buka di IDE</button>' : ''}
+            <button type="button" class="fc-btn" data-act="undo" title="Kembalikan semua file ini ke sebelum jawaban ini">Urungkan perubahan</button>
+          </footer>`;
+        const session = S.session;
+        card.querySelectorAll('.fc-path').forEach(b => {
+          b.onclick = () => {
+            const item = list.find(c => c.path === b.dataset.path);
+            if (S.features.ide) openIde({ session, turn: change.id, diff: b.dataset.path });
+            else if (item && item.status !== 'deleted') toast('Nyalakan add-on IDE untuk melihat isi dan diff-nya: python main.py addon install ide');
+          };
+        });
+        const more = card.querySelector('.fc-more');
+        if (more) more.onclick = () => { card.querySelector('.fc-list').innerHTML = list.map(fileRow).join(''); more.remove(); card.querySelectorAll('.fc-path').forEach(b => { b.onclick = () => openIde({ session, turn: change.id, diff: b.dataset.path }); }); };
+        const ide = card.querySelector('[data-act="ide"]');
+        if (ide) ide.onclick = () => openIde({ session, turn: change.id, path: (list.find(c => c.status !== 'deleted') || {}).path || '' });
+        card.querySelector('[data-act="undo"]').onclick = async e => {
+          const button = e.currentTarget;
+          if (!confirm(`Kembalikan ${list.length} file ke keadaan sebelum jawaban ini? Pengembaliannya juga tercatat.`)) return;
+          button.disabled = true;
+          try {
+            await api(`/api/session/${encodeURIComponent(session)}/changes/restore`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turn: change.id }) });
+            card.classList.add('undone');
+            button.textContent = 'Sudah dikembalikan';
+            toast('File dikembalikan ke sebelum jawaban ini.');
+          } catch (err) { button.disabled = false; toast(err.message); }
+        };
+        row.insertBefore(card, row.querySelector('.turn-foot'));
+      },
       foot({ model, tokens, ms, harness, text }) {
         const foot = row.querySelector('.turn-foot');
         const bits = [];
@@ -963,6 +1099,7 @@
       else if (m.type === 'reset') turn.reset();
       else if (m.type === 'progress') turn.progress(m);
       else if (m.type === 'meta' && m.event === 'title' && m.session_id === S.session) showTitle(m.title);
+      else if (m.type === 'files' && m.turn) turn.files(m.turn);
       else if (m.type === 'done') {
         turn.finish();
         turn.foot({ model: m.model_used, tokens: m.total_tokens, ms: m.latency_ms, harness: m.harness });
@@ -1344,7 +1481,14 @@
     else if (e.data.type === 'sq-models') refreshModels(true);
     else if (e.data.type === 'sq-nav' && (e.data.view === 'chat' || APPS[e.data.view])) showView(e.data.view);
     else if (e.data.type === 'sq-chat' && typeof e.data.text === 'string' && e.data.text.trim()) {
-      // The Studio hands its notes to the agent: they go into this chat as a message.
+      // The Studio hands its notes to the agent, the IDE a question about a file: they go into a chat as a message.
+      // The IDE names the chat its project belongs to, so the AI works in that same folder.
+      const wanted = typeof e.data.session === 'string' ? e.data.session : '';
+      if (wanted && wanted !== S.session && S.sessions.some(x => x.session_id === wanted)) {
+        if (S.busy) { toast('Tunggu balasan selesai dulu, lalu kirim lagi dari IDE.'); return; }
+        openSession(wanted).then(() => { $('input').value = e.data.text; sendMessage(); });
+        return;
+      }
       showView('chat');
       if (S.busy) { $('input').value = e.data.text; toast('Pesan dari Studio siap dikirim setelah balasan ini selesai.'); return; }
       $('input').value = e.data.text;
@@ -1361,6 +1505,16 @@
     showView('studio');
   }
   window.SQ_openStudio = openStudio;
+
+  /** Open the IDE on this chat's folder, at a file or at the diff of one of the AI's turns. */
+  function openIde(where = {}) {
+    if (!S.features.ide) { toast('Add-on IDE belum aktif: python main.py addon install ide, lalu jalankan ulang server.'); return; }
+    const want = { session: S.session || '', ...where };
+    if (frames.ide && frames.ide.state !== 'failed') tellFrame(frames.ide.frame, { type: 'sq-ide-open', ...want });
+    else S.ideOpen = want;
+    showView('ide');
+  }
+  window.SQ_openIde = openIde;
   document.addEventListener('click', e => {
     const link = e.target instanceof Element ? e.target.closest('a[href]') : null;
     if (!link || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
@@ -1390,10 +1544,10 @@
     e.preventDefault();
     showView(link.dataset.view);
   }));
-  // Alt+1 chat, Alt+2 team, Alt+3 trading, Alt+4 router, Alt+5 studio.
+  // Alt+1 chat, Alt+2 team, Alt+3 trading, Alt+4 router, Alt+5 studio, Alt+6 IDE.
   window.addEventListener('keydown', e => {
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
-    const name = { 1: 'chat', 2: 'team', 3: 'trading', 4: 'router', 5: 'studio' }[e.key];
+    const name = { 1: 'chat', 2: 'team', 3: 'trading', 4: 'router', 5: 'studio', 6: 'ide' }[e.key];
     if (name) { e.preventDefault(); showView(name); }
   });
 
@@ -1518,6 +1672,7 @@
       { group: 'Halaman', label: 'Trading', hint: 'Alt+3', icon: 'chart', run: go('trading') },
       { group: 'Halaman', label: 'Router & token', hint: 'Alt+4', icon: 'router', run: go('router') },
       { group: 'Halaman', label: 'Studio video', hint: 'Alt+5', icon: 'film', run: go('studio') },
+      ...(S.features.ide ? [{ group: 'Halaman', label: 'IDE: file dan proyek buatan AI', hint: 'Alt+6', icon: 'code', run: go('ide') }] : []),
     ];
     if (window.SquidPage) for (const p of SquidPage.paletteList()) {
       list.push({ group: 'Palet warna', label: `Palet ${p.label}`, icon: 'theme', run: () => { SquidPage.applyPalette(p.id, true); showPalette(); } });
@@ -1584,7 +1739,7 @@
     if (document.querySelector('.kbd-sheet')) return;
     const rows = [
       ['Ctrl+K', 'Palet perintah: cari chat dan aksi'], ['Ctrl+Shift+O', 'Chat baru'], ['Ctrl+B', 'Tampilkan/sembunyikan daftar chat'],
-      ['Ctrl+`', 'Terminal'], ['Alt+1 … Alt+5', 'Chat, tim, trading, router, studio'], ['Enter', 'Kirim'], ['Shift+Enter', 'Baris baru'],
+      ['Ctrl+`', 'Terminal'], ['Alt+1 … Alt+6', 'Chat, tim, trading, router, studio, IDE'], ['Enter', 'Kirim'], ['Shift+Enter', 'Baris baru'],
       ['Esc', 'Tutup panel atau menu'], ['Ctrl+/', 'Daftar ini'], ['Klik kanan chat', 'Ganti nama, sematkan, ekspor, hapus'],
     ];
     const wrap = document.createElement('div');
@@ -1638,6 +1793,7 @@
       $('nav-team').classList.toggle('hidden', S.features.teams === false);
       // Trading is an optional module: without it the link goes, and /trading shows what it is.
       $('nav-trading').classList.toggle('hidden', S.features.trading === false);
+      $('nav-ide').classList.toggle('hidden', !S.features.ide);
       await loadModels();
       await loadSessions();
       const last = store.get('session');
