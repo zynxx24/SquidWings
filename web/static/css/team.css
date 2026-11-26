@@ -398,3 +398,19 @@
   #view-team .flow-row, #view-team .node-icon, #view-team .wf-plus { transition: none; }
 }
 #view-team:not(.hidden) .home-top, #view-team:not(.hidden) .wf-top { animation: hero-in 520ms var(--out, var(--ease)) both; }
+
+/* Loops: a dashed line back up the flow, labelled with its branch and limit. */
+#view-team .edge.loop { stroke: var(--info); stroke-dasharray: 7 5; }
+#view-team .edge.loop.selected { stroke: var(--accent); stroke-width: 3; }
+#view-team .loop-label { fill: var(--info); font: 600 11.5px var(--sans); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; pointer-events: none; }
+#view-team .edge-hit.moving { stroke: color-mix(in srgb, var(--accent) 30%, transparent); }
+#view-team .loop-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 6px 0; font-size: var(--fs-sm); }
+#view-team .loop-row select { flex: 1 1 140px; min-width: 0; }
+#view-team .loop-row input[type="number"] { width: 64px; }
+#view-team .loop-add { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+#view-team .db-pick { display: flex; gap: 6px; align-items: center; }
+#view-team .db-pick select { flex: 1; min-width: 0; }
+#view-team .rivals { margin: 8px 0; }
+#view-team .rival { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: var(--fs-sm); }
+#view-team .harness-check { align-items: flex-start; padding: 10px 12px; margin-bottom: 10px; border: 1px solid var(--accent-line); border-radius: var(--r-md); background: var(--accent-soft); }
+#view-team .harness-check span { line-height: 1.45; }

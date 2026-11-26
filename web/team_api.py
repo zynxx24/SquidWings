@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator
 from dataclasses import asdict
@@ -49,6 +50,8 @@ class TeamInput(BaseModel):
     starts: list[str] = Field(default_factory=list, max_length=MAX_TEAM_MEMBERS)
     layout: dict[str, list[float]] = Field(default_factory=dict)
     active: bool = True
+    folder: str = Field(default="team", max_length=300)
+    loops: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_TEAM_MEMBERS)
 
 
 def team_view(team: Any) -> dict[str, Any]:
@@ -93,6 +96,22 @@ async def list_templates(request: Request) -> dict[str, Any]:
     manager = service(request)
     models = [m.id for m in manager.orchestrator.registry.get_all() if m.supports_tools]
     return {"templates": [template_view(t) for t in team_templates(models)]}
+
+
+@router.get("/folders")
+async def folders(request: Request) -> dict[str, Any]:
+    """The chat folders a flow can work in, newest first, so Telegram and a web chat can share one workspace."""
+    service(request)
+    from brain.utils import workspace_context
+
+    root = workspace_context.SESSIONS_ROOT
+    found = []
+    if root.is_dir():
+        for folder in root.iterdir():
+            if folder.is_dir() and not folder.name.startswith("."):
+                with contextlib.suppress(OSError):
+                    found.append({"id": f"s:{folder.name}", "name": folder.name, "modified": folder.stat().st_mtime})
+    return {"folders": sorted(found, key=lambda f: f["modified"], reverse=True)}
 
 
 @router.get("/integrations")
@@ -306,7 +325,7 @@ async def create_team(payload: TeamInput, request: Request) -> dict[str, Any]:
         team = service(request).create_team(
             payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id,
             payload.reviewer_id, payload.schedule, payload.mode, payload.style, payload.starts, payload.layout,
-            payload.active,
+            payload.active, payload.folder, payload.loops,
         )
         return team_view(team)
     except ValueError as exc:
@@ -319,7 +338,7 @@ async def update_team(team_id: str, payload: TeamInput, request: Request) -> dic
         team = await service(request).update_team(
             team_id, payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id,
             payload.reviewer_id, payload.schedule, payload.mode, payload.style, payload.starts, payload.layout,
-            payload.active,
+            payload.active, payload.folder, payload.loops,
         )
         return team_view(team)
     except KeyError as exc:

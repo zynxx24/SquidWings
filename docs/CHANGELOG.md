@@ -1,5 +1,15 @@
 # Catatan perubahan
 
+## 2026-11-26 (malam): Telegram tidak lagi membuat folder per pesan, harness lewat Telegram, ulangi, garis bisa digeser
+
+- **Satu folder per alur.** Setiap run alur sekarang bekerja di folder alur itu (`[team] <nama alur>`), bukan folder baru per pesan. File dari pesan sebelumnya tetap ada, jadi AI di Telegram bisa melanjutkan pekerjaannya. Di Pemicu ada pilihan **Folder kerja**: folder alur ini (bawaan), folder baru tiap run (untuk alur yang membangun proyek terpisah), atau folder chat web yang sudah ada, supaya Telegram dan web memakai folder yang sama.
+- **Satu pesan, satu alur.** Pesan dari kamu tanpa kata pemicu hanya dijawab satu alur Telegram: yang terakhir disimpan. Alur dengan kata pemicu (misalnya `/atur`) tetap menangkap pesannya sendiri. Di Pemicu tampil daftar alur Telegram aktif lain yang juga menangkap semua pesan, dengan tombol Matikan.
+- **Node agent "Harness penuh".** Agent memakai harness yang sama dengan chat: semua alat dan skill, tanpa batas langkah, model boleh Auto, dan seluruh percakapan diingat (tersimpan sebagai chat, bisa dilanjutkan di web dengan tag tg). Template baru **Harness lewat Telegram (seperti chat lokal)**.
+- **File dikirim ke Telegram.** File yang dibagikan AI (`share_file`) selama run dikirim ke chat Telegram sebagai file: gambar sebagai foto, video dan audio diputar langsung, lainnya sebagai dokumen (batas bot 50 MB). Tiap file dikirim sekali.
+- **Ulangi dari node sebelumnya.** Jalur IF atau Switch bisa mengirim pekerjaan kembali ke node sebelumnya, misalnya "bila hasil belum lolos, agent penulis mengerjakan ulang", dengan batas 1 sampai 20 kali. Node yang diulang mendapat isi yang dicek dan alasan dari AI kenapa belum lolos. Buat dengan menarik garis dari jalur itu ke node sebelumnya, atau lewat bagian Ulangi di panel node. Garisnya putus-putus dengan label jumlah ulangannya.
+- **Garis bisa digeser.** Seret garis ke node lain untuk memindah ujungnya; klik untuk memilih, lalu sisipkan node atau putus.
+- **Node Database bisa memakai sumber dari Tabel data** (file, Google Sheets, PostgreSQL, MySQL, MongoDB, tabel bawaan), dengan tombol **+ Sumber** di node itu. Sumber yang baru dibuat langsung dipakai node itu, dan tabel log dibuat otomatis bila belum ada.
+
 ## 2026-11-26 (malam): add-on IDE, perubahan file AI tercatat, tampilan chat
 
 - **Add-on baru: IDE** (`python main.py addon install ide`, menu IDE atau Alt+6). Semua folder chat dan proyek buatan AI dalam satu tempat: pohon file, editor CodeMirror dengan warna sintaks untuk puluhan bahasa, cari di semua file, buka cepat (Ctrl+P), pratinjau halaman HTML, Markdown, dan server pengembangan yang sedang jalan, unduh .zip, serta file baru, folder, ganti nama, dan hapus ke sampah proyek.

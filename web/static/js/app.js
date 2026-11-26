@@ -357,7 +357,9 @@
       const where = m ? m[1].toLowerCase() : '';
       let title = (m ? (s.title || '').slice(m[0].length) : s.title) || 'Chat';
       if (/^\[?\s*no answer\b/i.test(title)) title = 'Chat tanpa judul';   // an old title made from a failed reply
-      const tag = where ? `<span class="session-tag t-${where}" title="Dimulai dari ${where === 'web' ? 'web' : where === 'team' ? 'tim agent' : 'terminal'}">${where === 'terminal' ? 'cli' : where}</span>` : '';
+      const WHERE = { web: ['web', 'web'], team: ['tim agent', 'team'], terminal: ['terminal', 'cli'], telegram: ['Telegram', 'tg'] };
+      const [whereTitle, whereShort] = WHERE[where] || [where, where];
+      const tag = where ? `<span class="session-tag t-${esc(where)}" title="Dimulai dari ${esc(whereTitle)}">${esc(whereShort)}</span>` : '';
       html += `<div class="session ${s.session_id === S.session ? 'active' : ''}" data-id="${esc(s.session_id)}" style="--i:${Math.min(n++, 14)}">
         <button class="session-open" title="${esc(s.title)} · klik kanan untuk menu">${pins.has(s.session_id) ? `<span class="session-pin" aria-label="disematkan">${icon('pin', 12)}</span>` : ''}${tag}<span class="session-name">${esc(title)}</span></button>
         <button class="session-del" aria-label="Hapus chat ${esc(s.title)}">${icon('trash', 14)}</button>

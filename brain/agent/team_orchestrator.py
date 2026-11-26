@@ -44,6 +44,7 @@ from brain.agent.team_outputs import (
     http_request,
     save_to_database,
     send_chat_action,
+    send_file,
     send_rich,
     send_telegram,
 )
@@ -56,6 +57,7 @@ from brain.utils import session_settings, shared_files, workspace_context
 from brain.utils.datastore import access as data_access
 from brain.utils.datastore.access import Access
 from brain.utils.datastore.base import DataError
+from brain.utils.helpers import is_valid_session_id
 from brain.utils.logger import get_logger
 from brain.utils.markdown_compact import fit_markdown
 from brain.utils.session_names import quick_title
@@ -92,6 +94,9 @@ FINISHING_ROUNDS = {"lead": 4, "revision": 3, "reviewer": 3}
 OUTPUT_KINDS = {"telegram", "database"}
 # A bot that answers the public: several customers at once, each one at a time, on a small budget.
 MAX_PUBLIC_RUNS = 3
+MAX_LOOP_TIMES = 20
+# An agent node in full-harness mode may leave the model choice to Auto, as the chat does.
+AUTO_MODEL = "auto"
 MAX_WAITING_PER_CHAT = 3
 PUBLIC_MESSAGE_CHARS = 1000
 PUBLIC_BUDGET = {"run_seconds": 240, "member_seconds": 120, "rounds": 8, "tokens": 40_000}
@@ -251,6 +256,11 @@ class Team:
     layout: dict[str, list[float]] = field(default_factory=dict)
     # Off: the schedule and the Telegram trigger rest, without losing their settings. A manual run still works.
     active: bool = True
+    # Where the runs work: "team" (one folder for this flow, kept between runs), "run" (a new folder each run),
+    # or "s:<folder>" (an existing chat folder, so Telegram and the web chat share one workspace).
+    folder: str = "team"
+    # Lines back up the flow: when a gate or switch takes ``branch``, run again from ``to``, at most ``max`` times.
+    loops: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -275,6 +285,12 @@ class TeamRun:
     budget: dict[str, Any] = field(default_factory=dict)
     # The AI's short title (at most 28 characters); the run's folder is "[team] <title>".
     title: str = ""
+    # How often each loop ("<from>:<branch>") went back up in this run.
+    loops: dict[str, int] = field(default_factory=dict)
+    # The session whose folder the run worked in (the flow's own, a chat's, or the run's), and the files it shared.
+    session: str = ""
+    files: list[str] = field(default_factory=list)
+    files_sent: list[str] = field(default_factory=list)
 
     @property
     def finished(self) -> bool:
@@ -753,6 +769,30 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
             "lead_id": None,
             "reviewer_id": None,
             "schedule": {"mode": "telegram", "keyword": "", "task": "", "history": 8},
+        },
+        {
+            "key": "harness-telegram",
+            "name": "Harness lewat Telegram (seperti chat lokal)",
+            "description": (
+                "Chat dari Telegram dikerjakan oleh harness yang sama dengan chat web: semua alat dan skill, tanpa "
+                "batas langkah, ingat seluruh percakapan, bekerja di satu folder tetap, dan file yang dibagikan AI "
+                "dikirim balik ke Telegram. Pilih folder chat web di Pemicu agar Telegram dan web memakai folder dan "
+                "percakapan yang sama."
+            ),
+            "members": [
+                {
+                    **member("harness", "Harness", "Mengerjakan pesanmu seperti di chat lokal", "auto"),
+                    "instructions": (
+                        "Kerjakan pesan pemilik sampai selesai, seperti di chat web. File yang sudah jadi dibagikan dengan "
+                        "share_file supaya terkirim ke Telegram."
+                    ),
+                    "config": {"harness": True},
+                },
+                node("balas", "Balas di Telegram", "telegram", {"chat_id": ""}, "harness"),
+            ],
+            "lead_id": None,
+            "reviewer_id": None,
+            "schedule": {"mode": "telegram", "keyword": "", "task": "", "history": 0},
         },
         {
             "key": "telegram-chat",
@@ -1296,6 +1336,8 @@ class TeamOrchestrator:
         self._telegram: asyncio.Task[None] | None = None
         self._telegram_offset: int | None = None
         self._workspaces: dict[str, Path] = {}
+        # The files a run's folder had already shared when it started (a flow's folder outlives its runs).
+        self._shared_at_start: dict[str, set[str]] = {}
         # Customers writing to a public bot: how often, what was said, and who is being answered now.
         self._limiter = Limiter()
         self._chats = ChatLog(store.directory / "chats.json")
@@ -1324,6 +1366,8 @@ class TeamOrchestrator:
         starts: list[str] | None = None,
         layout: dict[str, Any] | None = None,
         active: bool = True,
+        folder: str = "team",
+        loops: list[dict[str, Any]] | None = None,
     ) -> Team:
         style = self._style(style)
         if style == "flow":
@@ -1342,6 +1386,8 @@ class TeamOrchestrator:
             style=style,
             starts=self._starts(parsed, starts, style),
             layout=self._layout(parsed, layout),
+            folder=self._folder(folder),
+            loops=self._loops(parsed, loops, style),
         )
         if not team.name:
             raise ValueError("Team name cannot be empty.")
@@ -1379,7 +1425,11 @@ class TeamOrchestrator:
                 raise ValueError(f"Node \"{label}\": {exc}") from None
             model_id = str(member.get("model_id") or "")
             needs_model = kind == "agent" or uses_ai(config)
-            if needs_model and self.orchestrator.registry.get(model_id) is None:
+            # A full-harness agent may leave the model to Auto, like the chat does.
+            auto_ok = kind == "agent" and config.get("harness") and model_id in {"", AUTO_MODEL}
+            if auto_ok:
+                model_id = AUTO_MODEL
+            elif needs_model and self.orchestrator.registry.get(model_id) is None:
                 raise ValueError(f"Node \"{label}\": model belum dipilih atau tidak dikenal ({model_id or 'kosong'}).")
             branch = str(member.get("branch") or "")
             if branch and branch not in BRANCHES:
@@ -1435,6 +1485,63 @@ class TeamOrchestrator:
             return []
         ids = {m.id for m in members}
         return [s for s in dict.fromkeys(starts or []) if s in ids]
+
+    @staticmethod
+    def _folder(folder: str | None) -> str:
+        value = str(folder or "team").strip()
+        if value in {"team", "run"}:
+            return value
+        kind, _, name = value.partition(":")
+        if kind != "s" or not name or "/" in name or "\\" in name or name.startswith("."):
+            raise ValueError("Folder kerja tidak dikenal. Pilih folder alur ini, folder baru tiap run, atau folder chat.")
+        if not (workspace_context.SESSIONS_ROOT / name).is_dir():
+            raise ValueError(f"Folder chat '{name}' tidak ada lagi.")
+        return value
+
+    @staticmethod
+    def _loops(members: list[TeamMember], loops: list[dict[str, Any]] | None, style: str) -> list[dict[str, Any]]:
+        """Lines that go back up the flow, from a gate's or switch's branch to a node before it."""
+        if not loops:
+            return []
+        if style != "flow":
+            raise ValueError("Ulangi hanya ada di alur (flow).")
+        by_id = {m.id: m for m in members}
+        kept: list[dict[str, Any]] = []
+        for item in loops:
+            source, target = str(item.get("from") or ""), str(item.get("to") or "")
+            branch = str(item.get("branch") or "")
+            node = by_id.get(source)
+            if node is None or target not in by_id:
+                raise ValueError("Garis ulangi menunjuk node yang tidak ada.")
+            if node.kind not in BRANCHING_KINDS:
+                raise ValueError(f'Garis ulangi hanya bisa dari IF atau Switch, bukan dari "{node.name}".')
+            if branch not in (("A", "B") if node.kind == "gate" else BRANCHES):
+                raise ValueError(f'Jalur "{branch}" tidak ada di "{node.name}".')
+            if target != source and target not in TeamOrchestrator._upstream(by_id, source):
+                raise ValueError(f'Garis ulangi dari "{node.name}" harus kembali ke node sebelum node itu.')
+            try:
+                times = int(item.get("max") or 3)
+            except (TypeError, ValueError):
+                raise ValueError("Jumlah ulangan harus angka.") from None
+            if not 1 <= times <= MAX_LOOP_TIMES:
+                raise ValueError(f"Ulangan 1 sampai {MAX_LOOP_TIMES} kali.")
+            if any((x["from"], x["branch"]) == (source, branch) for x in kept):
+                raise ValueError(f'Jalur {branch} dari "{node.name}" sudah punya garis ulangi.')
+            kept.append({"from": source, "branch": branch, "to": target, "max": times})
+        return kept
+
+    @staticmethod
+    def _upstream(by_id: dict[str, TeamMember], node_id: str) -> set[str]:
+        """Every node a node depends on, directly or through others."""
+        seen: set[str] = set()
+        todo = list(by_id[node_id].depends_on) if node_id in by_id else []
+        while todo:
+            current = todo.pop()
+            if current in seen or current not in by_id:
+                continue
+            seen.add(current)
+            todo.extend(by_id[current].depends_on)
+        return seen
 
     @staticmethod
     def _layout(members: list[TeamMember], layout: dict[str, Any] | None) -> dict[str, list[float]]:
@@ -1500,6 +1607,8 @@ class TeamOrchestrator:
         starts: list[str] | None = None,
         layout: dict[str, Any] | None = None,
         active: bool = True,
+        folder: str = "team",
+        loops: list[dict[str, Any]] | None = None,
     ) -> Team:
         # A customer's chat is a run too, but it must not lock the owner out of changing the bot.
         if any(not run.finished and run.trigger.get("audience") != "public" for run in self.store.list_runs(team_id)):
@@ -1523,6 +1632,8 @@ class TeamOrchestrator:
             starts=self._starts(parsed, starts, style),
             layout=self._layout(parsed, layout),
             active=bool(active),
+            folder=self._folder(folder),
+            loops=self._loops(parsed, loops, style),
             created_at=existing.created_at,
             updated_at=time.time(),
             reviewer_id=reviewer_id or None,
@@ -1531,6 +1642,9 @@ class TeamOrchestrator:
             mode=self._mode(mode),
         )
         self.store.put_team(replacement)
+        if replacement.folder == "team" and replacement.name != existing.name:
+            # The flow's own folder follows its name: "[team] <name>".
+            name_session_folder(team_id, "team", replacement.name)
         return replacement
 
     def set_active(self, team_id: str, active: bool) -> Team:
@@ -1571,6 +1685,35 @@ class TeamOrchestrator:
             if name_session_folder(run.id, "team", run.title or quick_title(run.task)):
                 done += 1
         return done
+
+    def _place(self, team: Team, run: TeamRun) -> tuple[str, Path | None]:
+        """The session and folder a run works in. None as the folder means "the session's own folder"."""
+        if team.folder == "run":
+            return run.id, None
+        if team.folder.startswith("s:"):
+            folder = workspace_context.SESSIONS_ROOT / team.folder[2:]
+            if folder.is_dir():
+                marker = ""
+                with contextlib.suppress(OSError):
+                    marker = (folder / workspace_context.ID_FILE).read_text(encoding="utf-8").strip()
+                session_id = marker if is_valid_session_id(marker) else folder.name
+                return (session_id if is_valid_session_id(session_id) else team.id), folder
+            logger.warning("[teams] Folder %s of %s is gone; using the flow's own folder", team.folder, team.name)
+        reserve_session_name(team.id, "team", team.name)
+        return team.id, None
+
+    @staticmethod
+    def _new_shares(workspace: Path, before: set[str], since: float) -> list[str]:
+        """Files shared during this run: new to the list, or shared before and written again since it started."""
+        found = []
+        for relative in shared_files.shared(workspace):
+            path = shared_files.resolve(workspace, relative)
+            if path is None:
+                continue
+            with contextlib.suppress(OSError):
+                if relative not in before or path.stat().st_mtime >= since:
+                    found.append(relative)
+        return found
 
     async def _name_run(self, run: TeamRun) -> None:
         """Title the run before its folder is made, so the folder is "[team] <title>" from the start."""
@@ -1635,10 +1778,20 @@ class TeamOrchestrator:
         run.status = "running"
         run.started_at = time.time()
         self._checkpoint(run, "run_started")
-        await self._name_run(run)
-        # Everyone in a run shares one folder, so one agent can read another's files.
-        stack = session_stack.enter(run.id)
+        if team.folder == "run":
+            await self._name_run(run)
+        elif not run.title:
+            # The flow's folder is already named; a run of it needs no model call just for a title.
+            run.title = quick_title(self._message(run))
+            self.store.put_run(run)
+        # Everyone in a run shares one folder, so one agent can read another's files. By default that is the
+        # flow's own folder, kept between runs: a Telegram chat does not leave a new folder behind each message.
+        session_id, place = self._place(team, run)
+        stack = session_stack.enter(session_id, workspace=place)
         self._workspaces[run.id] = Path(stack.workspace)
+        run.session = session_id
+        shared_before = set(shared_files.shared(stack.workspace))
+        self._shared_at_start[run.id] = shared_before
         if team.mode == "video":
             session_settings.activate_skills(stack.workspace, [VIDEO_SKILL])
         elif team.mode == "motion":
@@ -1688,7 +1841,9 @@ class TeamOrchestrator:
                 await asyncio.gather(*(self._run_node(run, team, m, mode="after") for m in layer))
             self._finish_result(run, team)
             render_note = ""
-            if team.mode == "video" and not self._has_video(stack.workspace):
+            fresh = self._new_shares(Path(stack.workspace), shared_before, run.started_at or 0.0)
+            handed: list[str] = []
+            if team.mode == "video" and not self._has_video(fresh):
                 # The render worked but nobody called share_file. Hand over the newest render
                 # rather than failing a run that did make its video.
                 rendered = shared_files.find_new_videos(stack.workspace, run.started_at or 0.0)
@@ -1701,12 +1856,14 @@ class TeamOrchestrator:
                     rendered = [video] if video else []
                 if rendered:
                     shared_files.add(stack.workspace, rendered[0])
+                    handed.append(rendered[0])
                     logger.info("[teams] Run %s: shared %s, which no agent had shared", run_id, rendered[0])
             # A revision or a fallback answer can drop the video an agent shared earlier in the run.
-            run.result = f"{run.result}{shared_files.missing_from(stack.workspace, run.id, run.result)}".strip()
+            run.files = list(dict.fromkeys([*self._new_shares(Path(stack.workspace), shared_before, run.started_at or 0.0), *handed]))
+            run.result = f"{run.result}{shared_files.missing_from(stack.workspace, session_id, run.result, only=run.files)}".strip()
             run.result = f"{run.result}{self._studio_buttons(Path(stack.workspace), run)}".strip()
             run.status = "completed"
-            if team.mode == "video" and not self._has_video(stack.workspace):
+            if team.mode == "video" and not self._has_video(run.files):
                 # Agents can finish with a report and no file. That is not a finished video.
                 run.status = "failed"
                 run.error = self._no_video_reason(run, team, render_note)
@@ -1724,6 +1881,7 @@ class TeamOrchestrator:
         finally:
             run.completed_at = time.time()
             self._workspaces.pop(run.id, None)
+            self._shared_at_start.pop(run.id, None)
             self._checkpoint(run, "run_finished")
 
     @staticmethod
@@ -1829,14 +1987,15 @@ class TeamOrchestrator:
         for project in studio_doc.projects(workspace):
             if project["modified"] < (run.started_at or 0) - 1:
                 continue
-            link = f"/studio?{urlencode({'session': run.id, 'project': project['name']})}"
+            link = f"/studio?{urlencode({'session': run.session or run.id, 'project': project['name']})}"
             if link not in (run.result or ""):
                 lines.append(f"[▶ Lihat & edit video \"{project['name']}\" di Studio]({link})")
         return ("\n\n" + "\n\n".join(lines)) if lines else ""
 
     @staticmethod
-    def _has_video(workspace: Any) -> bool:
-        return any(shared_files.kind_of(name) == "video" for name in shared_files.shared(workspace))
+    def _has_video(names: list[str]) -> bool:
+        """Whether this run shared a video (the folder may hold the videos of earlier runs too)."""
+        return any(shared_files.kind_of(name) == "video" for name in names)
 
     @staticmethod
     def _after_answer(team: Team) -> set[str]:
@@ -1985,6 +2144,8 @@ class TeamOrchestrator:
             raise RuntimeError(response.error_message or "Model gate gagal menjawab")
         run.total_tokens += response.total_tokens
         run.agents[member.id]["tokens"] = run.agents[member.id].get("tokens", 0) + response.total_tokens
+        # The model's one-line reason, handed to the node a loop sends the work back to.
+        run.agents[member.id]["reason"] = " ".join(str(response.content or "").split())[:600]
         return parse_decision(response.content)
 
     async def _holds(self, run: TeamRun, member: TeamMember, condition: dict[str, Any], text: str, tag: str) -> bool:
@@ -2063,6 +2224,11 @@ class TeamOrchestrator:
         elif member.kind == "datatable":
             state["content"], state["note"] = await asyncio.to_thread(
                 self._datatable, member.config, self._template_values(run, team, text))
+        elif member.kind == "database" and member.config.get("source"):
+            state["note"] = await asyncio.to_thread(self._log_to_source, member.config, {
+                "run_id": run.id, "team_name": team.name, "node_id": member.id, "task": self._message(run),
+                "content": text, "created_at": datetime.now().isoformat(timespec="seconds"),
+            })
         elif member.kind == "database":
             await save_to_database(str(member.config["database"]), str(member.config["table"]), {
                 "run_id": run.id,
@@ -2136,7 +2302,58 @@ class TeamOrchestrator:
                 ready.append({"label": render_template(str(button["label"]), values), "kind": str(button["kind"]), "url": url})
         sent = await send_rich(composed.parts, chat_id, html=composed.html, buttons=ready,
                                silent=bool(config.get("silent")), fallback=[message] if composed.html else None)
-        return f"{sent} pesan terkirim" + (" · dengan jendela web" if page_url else "") + page_note
+        files_note = await self._send_run_files(run, chat_id, self._shares_so_far(run))
+        return f"{sent} pesan terkirim" + (" · dengan jendela web" if page_url else "") + page_note + files_note
+
+    def _shares_so_far(self, run: TeamRun) -> list[str]:
+        workspace = self._workspaces.get(run.id)
+        before = self._shared_at_start.get(run.id)
+        if workspace is None or before is None:
+            return list(run.files)
+        return self._new_shares(workspace, before, run.started_at or 0.0)
+
+    async def _send_run_files(self, run: TeamRun, chat_id: str, files: list[str]) -> str:
+        """Send the files the run shared and that this chat did not get yet, as files in Telegram.
+        Returns a note for the node; a file Telegram refuses is said in the chat instead of lost."""
+        workspace = self._workspaces.get(run.id) or (session_workspace(run.session, create=False) if run.session else None)
+        if workspace is None:
+            return ""
+        sent, failed = 0, []
+        for relative in files:
+            if relative in run.files_sent:
+                continue
+            path = shared_files.resolve(workspace, relative)
+            if path is None:
+                continue
+            run.files_sent.append(relative)
+            try:
+                await send_file(path, chat_id)
+                sent += 1
+            except (OutputError, OSError) as exc:
+                failed.append(f"{path.name}: {exc}")
+        if failed:
+            with contextlib.suppress(OutputError):
+                await send_telegram("File tidak terkirim:\n" + "\n".join(failed), chat_id)
+        return f" · {sent} file terkirim" if sent else ""
+
+    @staticmethod
+    def _log_to_source(config: dict[str, Any], record: dict[str, Any]) -> str:
+        """One log row in a Tabel data source. The table is made with the log's columns when it does not exist;
+        an existing table keeps its own columns and gets the ones it has."""
+        from brain.utils.datastore import registry
+
+        try:
+            backend = registry.open_backend(str(config["source"]))
+            wanted = str(config["table"])
+            found = next((t for t in backend.tables() if t.name.lower() == wanted.lower()), None)
+            if found is None:
+                backend.create_table(wanted, list(record))
+                found = backend.table(wanted)
+            columns = set(found.columns) if found.columns else set(record)
+            backend.insert(found.name, {k: v for k, v in record.items() if k in columns} or {"content": record["content"]})
+        except DataError as exc:
+            raise OutputError(str(exc)) from None
+        return f"Tersimpan di {config['source']}, tabel {found.name}"
 
     @staticmethod
     def _datatable(config: dict[str, Any], values: dict[str, str]) -> tuple[str, str]:
@@ -2183,6 +2400,57 @@ class TeamOrchestrator:
         finally:
             state["completed_at"] = time.time()
             self._checkpoint(run, "agent_finished", member.id)
+        if member.kind in BRANCHING_KINDS and state["status"] == "completed":
+            await self._maybe_loop(run, team, member, text)
+
+    def _loop_region(self, team: Team, start: str, end: str) -> list[TeamMember]:
+        """The nodes a loop runs again: ``start``, ``end``, and every node on a path between them."""
+        by_id = {m.id: m for m in team.members}
+        before_end = self._upstream(by_id, end) | {end}
+        after_start: set[str] = {start}
+        changed = True
+        while changed:
+            changed = False
+            for m in team.members:
+                if m.id not in after_start and any(d in after_start for d in m.depends_on):
+                    after_start.add(m.id)
+                    changed = True
+        return [m for m in team.members if m.id in before_end and m.id in after_start]
+
+    async def _maybe_loop(self, run: TeamRun, team: Team, gate: TeamMember, checked: str) -> None:
+        """A gate or switch took a branch that has a line back up the flow: run that part again, telling the
+        node it goes back to what was checked and why it did not pass. At most the loop's ``max`` times; after
+        that the branch's own lines (if any) carry on."""
+        state = run.agents[gate.id]
+        loop = next((x for x in team.loops if x["from"] == gate.id and x["branch"] == state.get("branch")), None)
+        if loop is None:
+            return
+        key = f"{gate.id}:{loop['branch']}"
+        done = run.loops.get(key, 0)
+        if done >= int(loop["max"]):
+            state["note"] = f"{state.get('note', '')} · sudah diulang {done}x, lanjut".strip(" ·")
+            return
+        if time.time() >= self._run_ends(run):
+            state["note"] = f"{state.get('note', '')} · waktu habis, tidak diulang".strip(" ·")
+            return
+        run.loops[key] = done + 1
+        region = self._loop_region(team, loop["to"], gate.id)
+        reason = str(state.get("reason") or state.get("note") or "")
+        retry = (
+            f"[PERCOBAAN {done + 1} BELUM LOLOS]\n"
+            f"Hasil sebelumnya dicek oleh \"{gate.name}\" dan belum memenuhi syarat"
+            f"{f': {reason}' if reason else '.'}\n"
+            f"Yang dicek:\n{fit_markdown(checked, MAX_REPORT_CHARS)}\n"
+            "Perbaiki itu dan kerjakan lagi."
+        )
+        for member in region:
+            previous = run.agents[member.id]
+            previous.update(status="queued", error="", content="", branch="", note="")
+            previous.pop("reason", None)
+        run.agents[loop["to"]]["retry"] = retry
+        self._checkpoint(run, "loop_started", gate.id)
+        for layer in execution_layers(region):
+            await asyncio.gather(*(self._run_node(run, team, m) for m in layer))
 
     async def _review_loop(self, run: TeamRun, team: Team, lead: TeamMember) -> None:
         """Let the reviewer send the draft back until it passes or rounds run out."""
@@ -2339,6 +2607,9 @@ class TeamOrchestrator:
     ) -> str:
         """The task plus only the reports this member should see."""
         context = f"[TEAM TASK]\n{run.task}"
+        retry = run.agents.get(member.id, {}).get("retry")
+        if retry:
+            context += f"\n\n{retry}"
         if mode in {"lead", "revision"}:
             excluded = {team.lead_id, team.reviewer_id}
             agents = {m.id for m in team.members if m.kind == "agent"}
@@ -2476,26 +2747,31 @@ class TeamOrchestrator:
             limits = replace(limits, only_tools=frozenset({*PUBLIC_TOOLS, *data_tools}))
         elif data_tools:
             limits = replace(limits, extra_tools=data_tools)
+        harness = bool(member.config.get("harness")) and not public
         try:
-            # The task made inside inherits this access, so every tool call of this agent sees only what its node was granted.
-            with data_access.restrict(access):
-                call = self.orchestrator.process(
-                    user_input=self._member_prompt(
-                        member, run.task, mode, public, self._flow_role(team, member),
-                        chat=run.trigger.get("source") == "telegram" and bool(run.trigger.get("text")),
-                    ),
-                    session_id=f"{run.id}-{member.id}-{suffix}",
-                    override_model=member.model_id,
-                    stream=False,
-                    workspace_context=self._member_context(run, team, member, mode, feedback),
-                    task_hint=run.task,
-                    persist=False,
-                    limits=limits,
-                    on_event=self._track_activity(run, member.id),
-                )
-                response: AgentResponse = await asyncio.wait_for(
-                    call, timeout=max(1.0, limits.deadline - time.time()) + HARD_TIMEOUT_GRACE_SECONDS,
-                )
+            if harness:
+                response = await self._run_harness(run, team, member)
+            else:
+                # The task made inside inherits this access, so every tool call of this agent sees only what its node
+                # was granted.
+                with data_access.restrict(access):
+                    call = self.orchestrator.process(
+                        user_input=self._member_prompt(
+                            member, run.task, mode, public, self._flow_role(team, member),
+                            chat=run.trigger.get("source") == "telegram" and bool(run.trigger.get("text")),
+                        ),
+                        session_id=f"{run.id}-{member.id}-{suffix}",
+                        override_model=member.model_id,
+                        stream=False,
+                        workspace_context=self._member_context(run, team, member, mode, feedback),
+                        task_hint=run.task,
+                        persist=False,
+                        limits=limits,
+                        on_event=self._track_activity(run, member.id),
+                    )
+                    response = await asyncio.wait_for(
+                        call, timeout=max(1.0, limits.deadline - time.time()) + HARD_TIMEOUT_GRACE_SECONDS,
+                    )
             if response.status not in {ResponseStatus.SUCCESS, ResponseStatus.FALLBACK_USED}:
                 raise RuntimeError(response.error_message or response.content or "Model request failed")
             agent.update(
@@ -2519,6 +2795,38 @@ class TeamOrchestrator:
             agent.pop("activity", None)
             agent["completed_at"] = time.time()
             self._checkpoint(run, "agent_finished", member.id)
+
+    async def _run_harness(self, run: TeamRun, team: Team, member: TeamMember) -> AgentResponse:
+        """An agent that works like the chat itself: the same harness, every tool, no step budget, and the
+        conversation kept in the run's session, so the next message (from Telegram or from the web chat of the
+        same folder) remembers this one."""
+        text = self._node_input(run, member, team) or self._message(run)
+        retry = run.agents[member.id].get("retry")
+        if retry:
+            text = f"{text}\n\n{retry}"
+        session_id = run.session or run.id
+        model = None if member.model_id in {"", AUTO_MODEL} else member.model_id
+        notes = [member.instructions.strip()] if member.instructions.strip() else []
+        if run.trigger.get("source") == "telegram":
+            notes.append(
+                "The owner writes to you from Telegram. Answer as in the chat; a file you share with share_file is "
+                "sent to them on Telegram as a file."
+            )
+        response: AgentResponse = await self.orchestrator.process(
+            user_input=text,
+            session_id=session_id,
+            override_model=model,
+            model_locked=model is not None,
+            stream=False,
+            workspace_context="\n".join(notes) or None,
+            persist=True,
+            on_event=self._track_activity(run, member.id),
+        )
+        store = getattr(self.orchestrator, "conversation_store", None)
+        if store is not None and run.trigger.get("source") == "telegram":
+            with contextlib.suppress(Exception):
+                store.set_source(session_id, "telegram")
+        return response
 
     async def cancel_run(self, run_id: str) -> TeamRun:
         run = self.store.get_run(run_id)
@@ -2674,7 +2982,7 @@ class TeamOrchestrator:
                 continue
             private = chat.get("type") == "private"
             if owner:
-                teams = [team for team in owner_teams if telegram_message(team.schedule, text) is not None]
+                teams = self._owner_flows_for(owner_teams, text)
                 if not teams and private:
                     # Nothing of the owner's own takes it: the public bot answers, but as to its owner.
                     teams = [team for team in self._public_teams() if telegram_message(team.schedule, text) is not None][:1]
@@ -2686,6 +2994,17 @@ class TeamOrchestrator:
             else:
                 logger.info("[teams] Ignored a Telegram message from chat %s: not the owner and no bot for customers there", chat_id)
         return taken
+
+    @staticmethod
+    def _owner_flows_for(flows: list[Team], text: str) -> list[Team]:
+        """Which of the owner's Telegram flows a message goes to. A flow with a trigger word takes the messages
+        that start with it. Every other message goes to ONE flow without a trigger word, the one changed most
+        recently, so one message never wakes several flows (and several folders) at once."""
+        keyed = [t for t in flows if t.schedule.get("keyword") and telegram_message(t.schedule, text) is not None]
+        if keyed:
+            return keyed
+        open_flows = [t for t in flows if not t.schedule.get("keyword") and telegram_message(t.schedule, text) is not None]
+        return sorted(open_flows, key=lambda t: t.updated_at, reverse=True)[:1]
 
     # ── Telegram chats ────────────────────────────────────────────────────────
     @staticmethod
@@ -2843,6 +3162,10 @@ class TeamOrchestrator:
                 await self._alert(team, f"satu pengirim ({run.trigger.get('sender', '?')}) tidak terjawab. {reason}")
             else:
                 await self._say(chat_id, f"{team.name} gagal: {reason}"[:3800])
+        if run.status == "completed" and run.files:
+            # Files the flow made reach the chat too, also when no Telegram node sent them.
+            await self._send_run_files(run, chat_id, run.files)
+            self.store.put_run(run)
         if reply:
             self._chats.add(team.id, chat_id, "Asisten", reply)
         if public:

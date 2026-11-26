@@ -34,7 +34,7 @@ _active_session: ContextVar[str] = ContextVar("active_session", default="")
 _active_ponytail: ContextVar[str] = ContextVar("active_ponytail", default="")
 
 
-TAGS = ("terminal", "web", "team")
+TAGS = ("terminal", "web", "team", "telegram")
 TITLE_MAX = 28                      # characters of title after the tag: "[web] " + at most 28
 NAMES_FILE = ".names.json"
 ID_FILE = ".session-id"

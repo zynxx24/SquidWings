@@ -161,8 +161,9 @@ def test_templates_are_valid_and_spend_the_strong_model_on_review(tmp_path: Path
 
 
 def test_templates_work_with_a_single_model() -> None:
-    used = [m["model_id"] for t in team_templates(["only"]) for m in t["members"] if m.get("kind", "agent") == "agent"]
-    assert used and all(model == "only" for model in used)
+    agents = [m for t in team_templates(["only"]) for m in t["members"] if m.get("kind", "agent") == "agent"]
+    # A full-harness agent leaves the choice to Auto, like the chat; every other one gets a registered model.
+    assert agents and all(m["model_id"] == ("auto" if (m.get("config") or {}).get("harness") else "only") for m in agents)
     assert team_templates([]) == []
 
 
@@ -270,13 +271,10 @@ def test_one_damaged_team_does_not_hide_the_others(tmp_path):
 
 def test_a_video_run_needs_a_shared_video_file(tmp_path):
     from brain.agent.team_orchestrator import TeamOrchestrator
-    from brain.utils import shared_files
 
-    assert TeamOrchestrator._has_video(tmp_path) is False
-    shared_files.add(tmp_path, "catatan.md")
-    assert TeamOrchestrator._has_video(tmp_path) is False, "a report is not a video"
-    shared_files.add(tmp_path, "renders/share.mp4")
-    assert TeamOrchestrator._has_video(tmp_path) is True
+    assert TeamOrchestrator._has_video([]) is False
+    assert TeamOrchestrator._has_video(["catatan.md"]) is False, "a report is not a video"
+    assert TeamOrchestrator._has_video(["catatan.md", "renders/share.mp4"]) is True
 
 
 

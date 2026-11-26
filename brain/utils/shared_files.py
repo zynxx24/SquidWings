@@ -74,11 +74,12 @@ def markdown(session_id: str, relative: str, label: str = "") -> str:
     return f"![{text}]({url})" if kind_of(relative) != "file" else f"[Unduh {text}]({url})"
 
 
-def missing_from(workspace: str | Path, session_id: str, text: str) -> str:
-    """Markdown for every shared file the text does not show yet, ready to append to it."""
+def missing_from(workspace: str | Path, session_id: str, text: str, only: list[str] | None = None) -> str:
+    """Markdown for every shared file the text does not show yet, ready to append to it. ``only`` limits it to
+    some of the shared files (the ones of one run, in a folder that many runs share)."""
     links = [
         markdown(session_id, relative)
-        for relative in shared(workspace)
+        for relative in (shared(workspace) if only is None else only)
         if url_for(session_id, relative) not in text and resolve(workspace, relative)
     ]
     return "".join(f"\n\n{link}" for link in links)

@@ -98,7 +98,7 @@ async def test_reports_are_saved_for_later_members(tmp_path):
     manager, fake = make(tmp_path, {"-script-": ["BRIEF: api di gambut"]})
     team = manager.create_team("t", "", [member("script"), member("animator", "script"), member("lead")], "lead")
     run = await finish(manager, team.id)
-    saved = session_workspace(run.id) / REPORTS_DIR / "script.md"
+    saved = session_workspace(run.session) / REPORTS_DIR / "script.md"
     assert "BRIEF: api di gambut" in saved.read_text(encoding="utf-8")
     animator = next(c for c in fake.calls if "-animator-" in c["session_id"])
     assert f"{REPORTS_DIR}/script.md" in animator["workspace_context"]
@@ -127,7 +127,7 @@ async def test_a_leftover_piece_is_rendered_and_shared(tmp_path, monkeypatch):
     assert run.status == "completed", run.error
     from brain.agent.session_stack import session_workspace
 
-    assert "pieces/x/renders/share.mp4" in shared_files.shared(session_workspace(run.id))
+    assert "pieces/x/renders/share.mp4" in shared_files.shared(session_workspace(run.session))
 
 
 def test_leftover_render_explains_a_missing_kit_or_piece(tmp_path):

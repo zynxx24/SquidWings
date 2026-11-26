@@ -171,7 +171,7 @@
       case 'set': return (config.text || 'belum diisi').split('\n')[0].slice(0, 40);
       case 'http': return `${config.method || 'GET'} ${(config.url || '').replace(/^https?:\/\//, '').slice(0, 26) || 'URL belum diisi'}`;
       case 'telegram': return config.chat_id || 'Chat bawaan';
-      case 'database': return `${config.database || 'sqlite'} · ${config.table || 'hasil_alur'}`;
+      case 'database': return `${config.source || config.database || 'sqlite'} · ${config.table || 'hasil_alur'}`;
       case 'datatable': {
         const op = (OPERATIONS.find(o => o[0] === (config.operation || 'get')) || OPERATIONS[0])[1];
         return config.table ? `${op} · ${config.table}` : 'Tabel belum dipilih';
@@ -198,7 +198,7 @@
     const out = [];
     switch (kindOf(member)) {
       case 'agent':
-        if (!modelKnown(member.model_id)) out.push('Model belum dipilih');
+        if (!modelKnown(member.model_id) && !(c.harness && [undefined, '', 'auto'].includes(member.model_id))) out.push('Model belum dipilih');
         break;
       case 'datatable': {
         if (!c.source) out.push('Tabel data belum dipilih');
@@ -246,7 +246,7 @@
     renderIssues();
   }
 
-  const snapshot = () => JSON.stringify({ members: S.members, starts: S.starts, schedule: S.schedule, trigger: S.trigger });
+  const snapshot = () => JSON.stringify({ members: S.members, starts: S.starts, schedule: S.schedule, trigger: S.trigger, loops: S.loops, folder: S.folder });
   /* Called before every change. Typing in one box within a second counts as one step. */
   function checkpoint(merge = '') {
     const now = Date.now();
@@ -263,6 +263,8 @@
     S.starts = data.starts;
     S.schedule = data.schedule;
     S.trigger = data.trigger;
+    S.loops = data.loops || [];
+    S.folder = data.folder || 'team';
     if (S.ndv && S.ndv !== TRIGGER && !memberById(S.ndv)) closeNdv();
     markDirty();
     render();
@@ -471,20 +473,31 @@
       html.push(`<path class="edge-hit" d="${d}" data-from="${esc(edge.from)}" data-to="${esc(edge.to)}"><title>Klik untuk menyisipkan node atau memutus sambungan</title></path>`);
       if (isSelected) mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     });
+    (S.loops || []).forEach((loop, index) => {
+      const from = memberById(loop.from);
+      const to = memberById(loop.to);
+      if (!from || !to) return;
+      const a = outPoint(from, loop.branch);
+      const b = inPoint(to);
+      // Under both nodes and back: a loop never hides behind the forward lines.
+      const low = Math.max(a.y, b.y, from.y + heightOf(from), to.y + heightOf(to)) + 70;
+      const midX = (a.x + b.x) / 2;
+      const d = `M${a.x} ${a.y}C${a.x + 110} ${a.y} ${a.x + 110} ${low} ${midX} ${low}C${b.x - 110} ${low} ${b.x - 110} ${b.y} ${b.x} ${b.y}`;
+      const isSelected = selected && selected.loop === index;
+      html.push(`<path class="edge loop ${isSelected ? 'selected' : ''}" d="${d}" marker-end="url(#arrow)"/>`);
+      html.push(`<text class="loop-label" x="${midX}" y="${low - 8}" text-anchor="middle">ulangi bila ${esc(branchName(from, loop.branch))} · maks ${Number(loop.max) || 3}x</text>`);
+      html.push(`<path class="edge-hit" d="${d}" data-loop="${index}"><title>Garis ulangi. Klik untuk menghapus; jumlahnya diatur di node ${esc(from.name)}</title></path>`);
+      if (isSelected) mid = { x: midX, y: low, loop: true };
+    });
     $('edge-lines').innerHTML = html.join('');
     $('edge-lines').querySelectorAll('.edge-hit').forEach(hit => {
-      hit.onpointerdown = e => e.stopPropagation();
-      hit.onclick = e => {
-        e.stopPropagation();
-        S.selectedEdge = { from: hit.dataset.from, to: hit.dataset.to };
-        selectNode(null);
-        renderEdges();
-      };
+      hit.onpointerdown = e => edgePointerDown(e, hit);
     });
     const tools = $('edge-tools');
     if (mid) {
       tools.style.left = `${mid.x}px`;
       tools.style.top = `${mid.y}px`;
+      $('edge-insert').classList.toggle('hidden', Boolean(mid.loop));
       tools.classList.remove('hidden');
     } else {
       tools.classList.add('hidden');
@@ -592,6 +605,96 @@
     window.addEventListener('pointerup', up);
   }
 
+  /* A click selects a line. Dragging it moves its end to another node (dropped on empty board, it stays). */
+  function edgePointerDown(event, hit) {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    const loopIndex = hit.dataset.loop !== undefined ? Number(hit.dataset.loop) : null;
+    const edge = loopIndex === null
+      ? { from: hit.dataset.from, to: hit.dataset.to }
+      : { from: S.loops[loopIndex].from, to: S.loops[loopIndex].to, branch: S.loops[loopIndex].branch };
+    const start = { x: event.clientX, y: event.clientY };
+    let dragging = false;
+    const draft = $('edge-draft');
+    const fromItem = edge.from === TRIGGER ? TRIGGER : memberById(edge.from);
+    const port = loopIndex !== null ? edge.branch
+      : (edge.from !== TRIGGER && isBranching(memberById(edge.from)) ? (memberById(edge.to).branch || '') : '');
+    const move = e => {
+      if (!dragging && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 6) return;
+      if (!dragging) {
+        dragging = true;
+        draft.classList.remove('hidden');
+        $('board').classList.add('connecting');
+        hit.closest('svg').querySelectorAll(`[data-from="${CSS.escape(edge.from)}"][data-to="${CSS.escape(edge.to)}"]`).forEach(x => x.classList.add('moving'));
+      }
+      draft.setAttribute('d', edgePath(outPoint(fromItem, port), canvasPoint(e)));
+      document.querySelectorAll('#nodes .node.drop').forEach(n => n.classList.remove('drop'));
+      const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('#nodes .node');
+      if (over && over.dataset.id !== edge.from && over.dataset.id !== TRIGGER) over.classList.add('drop');
+    };
+    const up = e => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      draft.classList.add('hidden');
+      $('board').classList.remove('connecting');
+      document.querySelectorAll('#nodes .node.drop').forEach(n => n.classList.remove('drop'));
+      if (!dragging) {
+        S.selectedEdge = loopIndex === null ? edge : { loop: loopIndex };
+        selectNode(null);
+        renderEdges();
+        return;
+      }
+      const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('#nodes .node');
+      const toId = target ? target.dataset.id : '';
+      if (!toId || toId === TRIGGER || toId === edge.from || toId === edge.to) { renderEdges(); return; }
+      if (loopIndex !== null) {
+        if (!isAncestor(toId, memberById(edge.from))) { toast('Garis ulangi harus kembali ke node sebelum node ini.'); renderEdges(); return; }
+        checkpoint();
+        S.loops[loopIndex].to = toId;
+        afterChange();
+        return;
+      }
+      rewire(edge.from, edge.to, toId, port);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }
+
+  /* Move a line's end from one node to another, in one undo step. */
+  function rewire(fromId, oldTo, newTo, port) {
+    const target = memberById(newTo);
+    if (!target) return;
+    if (fromId !== TRIGGER) {
+      const from = memberById(fromId);
+      if (newTo === fromId || isAncestor(newTo, from)) {
+        if (isBranching(from) && port) {
+          checkpoint();
+          const old = memberById(oldTo);
+          old.depends_on = (old.depends_on || []).filter(id => id !== fromId);
+          if (!branchParent(old)) old.branch = '';
+          S.loops = (S.loops || []).filter(l => !(l.from === fromId && l.branch === port));
+          S.loops.push({ from: fromId, branch: port, to: newTo, max: 3 });
+          afterChange();
+          return;
+        }
+        toast('Garis ke belakang hanya bisa dari jalur IF atau Switch.');
+        return;
+      }
+    }
+    checkpoint();
+    if (fromId === TRIGGER) {
+      S.starts = [...new Set([...S.starts.filter(id => id !== oldTo), newTo])];
+    } else {
+      const old = memberById(oldTo);
+      old.depends_on = (old.depends_on || []).filter(id => id !== fromId);
+      if (!branchParent(old)) old.branch = '';
+      target.depends_on = [...new Set([...(target.depends_on || []), fromId])];
+      if (isBranching(memberById(fromId))) target.branch = port;
+    }
+    S.selectedEdge = null;
+    afterChange();
+  }
+
   /* ── Connections ─────────────────────────────────── */
   function isAncestor(ancestorId, member, seen = new Set()) {
     if (!member || seen.has(member.id)) return false;
@@ -611,13 +714,39 @@
     }
     const from = memberById(fromId);
     if (!from) return;
-    if (from.id === to.id || isAncestor(to.id, from)) { toast('Sambungan ini membuat putaran. Alur harus berjalan maju.'); return; }
+    if (from.id === to.id || isAncestor(to.id, from)) {
+      // Back up the flow: only a branch of IF or Switch can do that, as a loop with a limit ("ulangi").
+      if (isBranching(from) && branch && from.id !== to.id) { addLoop(from.id, branch, to.id); return; }
+      toast('Garis ke belakang hanya bisa dari jalur IF atau Switch, sebagai "ulangi dari node ini".');
+      return;
+    }
     const deps = new Set(to.depends_on || []);
     if (deps.has(from.id) && (!isBranching(from) || to.branch === branch)) { toast('Sudah tersambung.'); return; }
     checkpoint();
     deps.add(from.id);
     to.depends_on = [...deps];
     to.branch = isBranching(from) ? branch : (branchParent(to) ? to.branch : '');
+    afterChange();
+  }
+
+  function addLoop(fromId, branch, toId, max = 3) {
+    checkpoint();
+    S.loops = (S.loops || []).filter(l => !(l.from === fromId && l.branch === branch));
+    S.loops.push({ from: fromId, branch, to: toId, max });
+    afterChange();
+    const gate = memberById(fromId);
+    toast(`Bila ${gate ? gate.name : 'node ini'} memilih jalur ${branchName(gate, branch)}, alur diulang dari ${memberById(toId).name} (maks ${max}x). Atur jumlahnya di node itu.`);
+  }
+
+  function branchName(member, branch) {
+    if (member && kindOf(member) === 'gate') return branch === 'A' ? 'benar' : 'salah';
+    return branch;
+  }
+
+  function removeLoop(index) {
+    checkpoint();
+    S.loops.splice(index, 1);
+    S.selectedEdge = null;
     afterChange();
   }
 
@@ -704,6 +833,7 @@
       else m.branch = '';
     });
     S.starts = S.starts.filter(s => s !== id);
+    S.loops = (S.loops || []).filter(l => l.from !== id && l.to !== id);
     delete S.tests[id];
     if (S.ndv === id) closeNdv();
     selectNode(null);
@@ -1179,12 +1309,21 @@
       case 'telegram': return telegramFields(member);
       case 'database': {
         const options = (S.integrations || {}).databases || [{ id: 'sqlite', label: 'SQLite (file lokal)', ready: true }];
-        const chosen = options.find(o => o.id === (config.database || 'sqlite')) || options[0];
-        return `<label class="field"><span>Database</span><select data-config="database">${options.map(o =>
-            `<option value="${esc(o.id)}" ${o.id === chosen.id ? 'selected' : ''}>${esc(o.label)}${o.ready ? '' : ' (belum siap)'}</option>`).join('')}</select></label>
-          ${chosen.reason ? `<p class="hint hint-warn">${esc(chosen.reason)} <button class="link-btn" type="button" data-go-creds>Buka Kredensial</button></p>` : ''}
+        const sources = S.dataSources || [];
+        const value = config.source ? `src:${config.source}` : `db:${config.database || 'sqlite'}`;
+        const chosen = config.source ? null : (options.find(o => o.id === (config.database || 'sqlite')) || options[0]);
+        const missing = config.source && !sources.some(x => x.name === config.source);
+        return `<div class="field"><span>Simpan ke</span><div class="db-pick">
+            <select data-db-target aria-label="Simpan ke">
+              <optgroup label="Database log bawaan">${options.map(o => `<option value="db:${esc(o.id)}" ${value === `db:${o.id}` ? 'selected' : ''}>${esc(o.label)}${o.ready ? '' : ' (belum siap)'}</option>`).join('')}</optgroup>
+              <optgroup label="Sumber di Tabel data">${sources.map(x => `<option value="src:${esc(x.name)}" ${value === `src:${x.name}` ? 'selected' : ''}>${esc(x.label || x.name)}</option>`).join('')}
+                ${missing ? `<option value="src:${esc(config.source)}" selected>${esc(config.source)} (sudah tidak ada)</option>` : ''}</optgroup>
+            </select>
+            <button class="btn btn-ghost btn-small" type="button" data-db-add title="Tambah sumber data: tabel bawaan, file, Google Sheets, PostgreSQL, MySQL, MongoDB">+ Sumber</button>
+          </div></div>
+          ${chosen && chosen.reason ? `<p class="hint hint-warn">${esc(chosen.reason)} <button class="link-btn" type="button" data-go-creds>Buka Kredensial</button></p>` : ''}
           <label class="field"><span>Nama tabel log</span><input data-config="table" value="${esc(config.table || 'hasil_alur')}" maxlength="63"></label>
-          <p class="hint">Tiap eksekusi mencatat satu baris: tugas, isi, waktu. Untuk tabel dengan kolom sendiri, pakai node Tabel data.</p>`;
+          <p class="hint">Tiap eksekusi mencatat satu baris: tugas, isi, waktu. Tabelnya dibuat otomatis bila belum ada. Untuk tabel dengan kolom sendiri, pakai node Tabel data.</p>`;
       }
       default: return '';
     }
@@ -1533,6 +1672,7 @@
     let body;
     if (kind === 'agent') {
       body = `
+        <label class="check harness-check"><input type="checkbox" data-harness ${config.harness ? 'checked' : ''}><span><b>Harness penuh</b>, seperti chat lokal: semua alat dan skill, tanpa batas langkah, ingat seluruh percakapan, bekerja di folder alur ini</span></label>
         <label class="field"><span>Model</span><select data-field="model_id"></select></label>
         <label class="field"><span>Instruksi</span><textarea data-field="instructions" data-tpl rows="8" maxlength="4000" placeholder="Apa yang dikerjakan agent ini dan bentuk hasilnya. Contoh: Ringkas berita dari input jadi 5 poin.">${esc(member.instructions)}</textarea></label>
         <label class="field"><span>Peran (opsional)</span><input data-field="role" value="${esc(member.role)}" maxlength="120" placeholder="Misalnya: peneliti, penulis, analis data"></label>
@@ -1544,6 +1684,7 @@
         </details>`;
     } else if (kind === 'datatable') body = datatableFields(member);
     else body = kindFields(member);
+    if (isBranching(member)) body += loopFields(member);
     box.innerHTML = `${body}
       ${fork ? `<div class="field"><span>Jalur dari ${esc(fork.name)}</span>
         ${(kindOf(fork) === 'switch'
@@ -1553,8 +1694,52 @@
         <label class="check"><input type="radio" name="branch" value="" ${!member.branch ? 'checked' : ''}>Semua jalur</label>
       </div>` : ''}`;
     bindParams(box, member);
+    if (isBranching(member)) bindLoops(box, member);
     if (kind === 'datatable') bindDatatable(box, member);
     if (kind === 'telegram') bindTelegram(box, member);
+  }
+
+  /* "Ulangi": a branch of this IF or Switch can send the work back to a node before it, a set number of times. */
+  function loopFields(member) {
+    const branches = kindOf(member) === 'gate' ? [['A', 'benar'], ['B', 'salah']] : [['A', 'A'], ['B', 'B'], ['C', 'C'], ['D', 'D']];
+    const ancestors = S.members.filter(m => isAncestor(m.id, member));
+    const mine = (S.loops || []).map((loop, index) => ({ loop, index })).filter(x => x.loop.from === member.id);
+    const free = branches.filter(([b]) => !mine.some(x => x.loop.branch === b));
+    const rows = mine.map(({ loop, index }) => `
+      <div class="loop-row" data-loop-row="${index}">
+        <span>Bila jalur <b>${esc(branchName(member, loop.branch))}</b>, ulangi dari</span>
+        <select data-loop-to aria-label="Ulangi dari node">${ancestors.map(m => `<option value="${esc(m.id)}" ${m.id === loop.to ? 'selected' : ''}>${esc(m.name)}</option>`).join('')}</select>
+        <span>maks</span><input data-loop-max type="number" min="1" max="20" value="${esc(loop.max || 3)}" aria-label="Maksimal ulangan"><span>kali</span>
+        <button class="icon-btn" type="button" data-loop-remove aria-label="Hapus ulangan ini" title="Hapus">×</button>
+      </div>`).join('');
+    return `<details class="field more" ${mine.length ? 'open' : ''}><summary>Ulangi${mine.length ? ` (${mine.length})` : ''}</summary>
+      <p class="hint">Contoh: agent menulis, IF mengecek hasilnya; bila salah, agent itu mengerjakan ulang dengan alasan kenapa belum lolos. Setelah batasnya habis, alur lanjut lewat garis jalur itu (bila ada). Bisa juga dibuat dengan menarik garis dari jalur ini ke node sebelumnya.</p>
+      ${rows}
+      ${ancestors.length && free.length ? `<div class="loop-add"><select data-loop-branch aria-label="Jalur">${free.map(([b, label]) => `<option value="${b}">Jalur ${esc(label)}</option>`).join('')}</select>
+        <button class="btn btn-ghost btn-small" type="button" data-loop-add>+ Ulangi dari node sebelumnya</button></div>`
+        : (ancestors.length ? '' : '<p class="hint">Belum ada node sebelum node ini untuk diulang.</p>')}
+    </details>`;
+  }
+
+  function bindLoops(box, member) {
+    box.querySelectorAll('[data-loop-row]').forEach(row => {
+      const index = Number(row.dataset.loopRow);
+      row.querySelector('[data-loop-to]').onchange = e => { checkpoint(); S.loops[index].to = e.target.value; afterChange(); };
+      row.querySelector('[data-loop-max]').oninput = e => {
+        checkpoint(`loop-max-${index}`);
+        S.loops[index].max = Math.max(1, Math.min(20, Number(e.target.value) || 1));
+        markDirty();
+        renderEdges();
+      };
+      row.querySelector('[data-loop-remove]').onclick = () => removeLoop(index);
+    });
+    const add = box.querySelector('[data-loop-add]');
+    if (add) {
+      add.onclick = () => {
+        const target = S.members.find(m => isAncestor(m.id, member));
+        if (target) addLoop(member.id, box.querySelector('[data-loop-branch]').value, target.id);
+      };
+    }
   }
 
   function refreshNodeCard(member) {
@@ -1574,7 +1759,24 @@
 
   function bindParams(box, member) {
     box.querySelectorAll('[data-tpl]').forEach(el => { el.addEventListener('focus', () => { S.lastTpl = el; }); });
-    box.querySelectorAll('[data-field="model_id"]').forEach(select => fillModelOptions(select, member.model_id, false));
+    const harness = Boolean((member.config || {}).harness);
+    box.querySelectorAll('[data-field="model_id"]').forEach(select => fillModelOptions(select, member.model_id || (harness ? 'auto' : ''), harness));
+    box.querySelectorAll('[data-harness]').forEach(check => {
+      check.onchange = () => {
+        checkpoint();
+        member.config = { ...(member.config || {}) };
+        if (check.checked) {
+          member.config.harness = true;
+          if (!modelKnown(member.model_id)) member.model_id = 'auto';
+        } else {
+          delete member.config.harness;
+          if (member.model_id === 'auto') member.model_id = defaultModel();
+        }
+        markDirty();
+        refreshNodeCard(member);
+        renderParams(box, member);
+      };
+    });
     box.querySelectorAll('[data-field]').forEach(input => {
       input[input.tagName === 'SELECT' ? 'onchange' : 'oninput'] = () => {
         checkpoint(`field-${member.id}-${input.dataset.field}`);
@@ -1649,6 +1851,28 @@
     box.querySelectorAll('input[name="branch"]').forEach(radio => {
       radio.onchange = () => { checkpoint(); member.branch = radio.value; afterChange(); };
     });
+    const dbTarget = box.querySelector('[data-db-target]');
+    if (dbTarget) {
+      dbTarget.onchange = () => {
+        checkpoint();
+        const [where, ...rest] = dbTarget.value.split(':');
+        const name = rest.join(':');
+        member.config = { table: (member.config || {}).table || 'hasil_alur', ...(where === 'src' ? { source: name } : { database: name }) };
+        markDirty();
+        refreshNodeCard(member);
+        renderParams(box, member);
+      };
+    }
+    const dbAdd = box.querySelector('[data-db-add]');
+    if (dbAdd) {
+      dbAdd.onclick = () => {
+        if (!(window.SQData && window.SQData.addMenu)) { toast('Buka tab Tabel data untuk menambah sumber.'); return; }
+        // The source made from this menu becomes this node's target as soon as it exists.
+        S.pendingSource = { member: member.id, before: new Set((S.dataSources || []).map(x => x.name)) };
+        const r = dbAdd.getBoundingClientRect();
+        window.SQMenu.show(window.SQData.addMenu(), r.left, r.bottom, dbAdd);
+      };
+    }
     box.querySelectorAll('[data-go-creds]').forEach(button => { button.onclick = () => { if (confirmLeave()) { closeNdv(); showHome('creds'); } }; });
     box.querySelectorAll('[data-go-data]').forEach(button => { button.onclick = () => { if (confirmLeave()) { closeNdv(); showHome('data'); } }; });
     box.querySelectorAll('[data-flag]').forEach(check => {
@@ -1679,6 +1903,45 @@
       };
     });
     box.querySelectorAll('[data-grant-hide]').forEach(input => { input.oninput = () => { checkpoint(`hide-${member.id}`); saveGrants(); }; });
+  }
+
+  /* Other active Telegram flows that would also take a message without a trigger word. Only one of them answers
+     (the one changed last), so the owner sees which and can switch the others off. */
+  function rivalsNote() {
+    const schedule = S.schedule || {};
+    if (schedule.keyword) return '';
+    const rivals = (S.teams || []).filter(t => t.id !== S.team && t.active !== false && (t.schedule || {}).mode === 'telegram'
+      && !(t.schedule || {}).keyword && ((t.schedule || {}).audience === 'public') === (schedule.audience === 'public'));
+    if (!rivals.length) return '';
+    return `<div class="rivals"><p class="hint hint-warn">Alur Telegram aktif lain juga menangkap semua pesan. Satu pesan hanya dijawab satu alur: yang terakhir disimpan. Matikan yang tidak dipakai:</p>
+      ${rivals.map(t => `<div class="rival"><span>${esc(t.name)}</span><button class="btn btn-ghost btn-small" type="button" data-rival-off="${esc(t.id)}">Matikan</button></div>`).join('')}</div>`;
+  }
+
+  /* Where the runs work. One folder per flow by default, so a chat on Telegram does not leave a folder per message. */
+  function folderField() {
+    const current = S.folder || 'team';
+    const name = $('team-name').value.trim() || 'alur ini';
+    const chats = (S.folders || []).filter(f => !f.name.startsWith('[team] '));
+    const known = current === 'team' || current === 'run' || chats.some(f => f.id === current);
+    return `<label class="field"><span>Folder kerja</span><select id="flow-folder">
+        <option value="team" ${current === 'team' ? 'selected' : ''}>Satu folder untuk alur ini ([team] ${esc(name)})</option>
+        <option value="run" ${current === 'run' ? 'selected' : ''}>Folder baru tiap run</option>
+        ${chats.length ? `<optgroup label="Folder chat (berbagi dengan chat web)">${chats.map(f => `<option value="${esc(f.id)}" ${f.id === current ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</optgroup>` : ''}
+        ${known ? '' : `<option value="${esc(current)}" selected>${esc(current.slice(2))}</option>`}
+      </select></label>
+      <p class="hint">Semua run alur ini bekerja di folder yang sama, jadi file dari pesan sebelumnya tetap ada. Pilih folder chat web supaya Telegram dan web memakai folder yang sama; dengan node Harness penuh, percakapannya juga sama.</p>`;
+  }
+
+  function bindFolder(box) {
+    const select = box.querySelector('#flow-folder');
+    if (select) select.onchange = () => { checkpoint(); S.folder = select.value; markDirty(); };
+    if (!S.folders) {
+      S.folders = [];
+      api('/api/teams/folders').then(data => {
+        S.folders = data.folders || [];
+        if (S.ndv === TRIGGER) renderTrigger(box);
+      }).catch(() => {});
+    }
   }
 
   function renderTrigger(box) {
@@ -1718,7 +1981,20 @@
           <p class="hint">Seperti chat biasa: hanya chat di Kredensial yang dilayani, agent memakai semua alat, pesan berikutnya menunggu giliran, dan node Telegram tanpa Chat ID membalas ke chat itu. Isi 0 kalau tiap pesan berdiri sendiri, misalnya perintah /catat.</p>`}` : ''}
       ${mode !== 'off' ? `<label class="field"><span>${mode === 'telegram' ? 'Konteks tambahan (boleh kosong)' : 'Input yang dikirim tiap kali berjalan'}</span><textarea id="schedule-task" rows="4" maxlength="4000" placeholder="Misalnya: apa yang penting hari ini di Jakarta?">${esc(schedule.task || '')}</textarea></label>
         <p class="hint">Berjalan sendiri selama server menyala dan alur <b>Aktif</b> (saklar di kanan atas). Tekan Simpan agar berlaku.</p>` : '<p class="hint">Isi kotak input di bawah kanvas, lalu tekan Jalankan alur.</p>'}
+      ${mode === 'telegram' ? rivalsNote() : ''}
+      ${folderField()}
       <p class="hint">Node yang ditarik garis dari Pemicu adalah langkah pertama. Yang tidak tersambung tidak dijalankan.</p>`;
+    bindFolder(box);
+    box.querySelectorAll('[data-rival-off]').forEach(button => {
+      button.onclick = async () => {
+        try {
+          const team = await credApi(`/api/teams/${encodeURIComponent(button.dataset.rivalOff)}/active`, 'PUT', { active: false });
+          S.teams = (S.teams || []).map(t => (t.id === team.id ? team : t));
+          toast(`${team.name} dimatikan.`);
+          renderTrigger(box);
+        } catch (e) { toast(e.message); }
+      };
+    });
     const value = id => (box.querySelector(`#${id}`) ? box.querySelector(`#${id}`).value : undefined);
     const update = () => {
       checkpoint('trigger');
@@ -1936,6 +2212,8 @@
     S.schedule = clone(source.schedule || { mode: 'off' });
     S.mode = ['video', 'motion'].includes(source.mode) ? source.mode : 'standard';
     S.active = source.active !== false;
+    S.folder = source.folder || 'team';
+    S.loops = clone(source.loops || []);
     const flow = source.style === 'flow' ? source : (source.as_flow || source);
     S.members = clone(flow.members || []).map(m => ({ ...m, depends_on: m.depends_on || [], config: m.config || {} }));
     S.starts = [...(flow.starts || [])];
@@ -2063,6 +2341,8 @@
       starts: S.starts,
       layout: layoutOut(),
       active: S.active !== false,
+      folder: S.folder || 'team',
+      loops: (S.loops || []).filter(l => memberById(l.from) && memberById(l.to)),
     };
   }
 
@@ -2300,8 +2580,12 @@
     else { V.x -= e.deltaX; V.y -= e.deltaY; applyView(); }
   }, { passive: false });
   $('edge-tools').onpointerdown = e => e.stopPropagation();
-  $('edge-delete').onclick = () => { if (S.selectedEdge) removeEdge(S.selectedEdge.from, S.selectedEdge.to); };
-  $('edge-insert').onclick = () => { if (S.selectedEdge) insertOnEdge(S.selectedEdge.from, S.selectedEdge.to); };
+  $('edge-delete').onclick = () => {
+    if (!S.selectedEdge) return;
+    if ('loop' in S.selectedEdge) removeLoop(S.selectedEdge.loop);
+    else removeEdge(S.selectedEdge.from, S.selectedEdge.to);
+  };
+  $('edge-insert').onclick = () => { if (S.selectedEdge && !('loop' in S.selectedEdge)) insertOnEdge(S.selectedEdge.from, S.selectedEdge.to); };
   // One menu handler for the whole canvas: it looks at what was clicked. The run bar and zoom buttons keep the
   // browser's own menu, so the input box can still paste.
   window.SQMenu.on($('board'), ({ target, event, keyboard }) => {
@@ -2534,7 +2818,22 @@
     /* For the Tabel data tab: saving needs the router PIN from outside this computer, same as credentials. */
     pinApi: credApi,
     showCreds() { if (S.page === 'editor' && !confirmLeave()) return; markDirty(false); showHome('creds'); },
-    sourcesChanged() { S.dtTables = {}; refreshSources(); },
+    async sourcesChanged() {
+      S.dtTables = {};
+      await refreshSources();
+      const pending = S.pendingSource;
+      if (!pending) return;
+      const made = (S.dataSources || []).find(x => !pending.before.has(x.name));
+      const member = memberById(pending.member);
+      S.pendingSource = null;
+      if (!made || !member) return;
+      checkpoint();
+      member.config = { table: (member.config || {}).table || 'hasil_alur', source: made.name };
+      markDirty();
+      refreshNodeCard(member);
+      if (S.ndv === member.id) renderNdv();
+      toast(`Node ${member.name} sekarang menyimpan ke ${made.label || made.name}.`);
+    },
   };
   window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
 })();

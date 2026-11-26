@@ -853,6 +853,8 @@
     },
     /* Tell the editor which sources exist, for the "Data" part of an agent node. */
     sources: () => D.sources,
+    /* The "+ Sumber" menu, for the editor's nodes too. */
+    addMenu,
     dialogForm,
     relationDialog,
     /* Open a source and table, from the Data table node's "Lihat isi tabel". */

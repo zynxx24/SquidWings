@@ -582,6 +582,7 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); }
 .session-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-tag { flex: none; padding: 1px 6px; border-radius: 5px; font: 600 10px/1.5 var(--mono); text-transform: uppercase; letter-spacing: .02em; background: var(--surface-2); color: var(--muted); }
 .session-tag.t-team { background: var(--info-soft); color: var(--info); }
+.session-tag.t-telegram { background: var(--accent-soft); color: var(--text); }
 .session-tag.t-terminal { background: var(--warn-soft); color: var(--warn); }
 .session.active .session-tag { background: var(--surface); color: var(--accent); }
 .rail-link { border-radius: var(--r-sm); font-weight: 500; }

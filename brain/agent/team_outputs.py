@@ -166,6 +166,44 @@ async def send_rich(parts: list[str], chat_id: str = "", *, html: bool = True, b
     return len(parts)
 
 
+# Bots may upload up to 50 MB; a photo up to 10 MB, shown in the chat itself.
+TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024
+_PHOTO_LIMIT = 10 * 1024 * 1024
+_FILE_METHODS = {
+    ".jpg": ("sendPhoto", "photo"), ".jpeg": ("sendPhoto", "photo"), ".png": ("sendPhoto", "photo"), ".webp": ("sendPhoto", "photo"),
+    ".mp4": ("sendVideo", "video"), ".mov": ("sendVideo", "video"),
+    ".mp3": ("sendAudio", "audio"), ".m4a": ("sendAudio", "audio"),
+}
+
+
+async def send_file(path: Path, chat_id: str = "", caption: str = "") -> str:
+    """Send one file to a chat: a picture, video or song plays there, anything else is a document.
+    Returns how it went, as a short line for the node's note. Raises OutputError when Telegram refuses it."""
+    _, target = _target(chat_id)
+    token = credentials.get("telegram_bot_token")
+    size = path.stat().st_size
+    if size > TELEGRAM_FILE_LIMIT:
+        raise OutputError(f"{path.name} {size // 2**20} MB, lebih dari batas bot Telegram (50 MB).")
+    method, field_name = _FILE_METHODS.get(path.suffix.lower(), ("sendDocument", "document"))
+    if method == "sendPhoto" and size > _PHOTO_LIMIT:
+        method, field_name = "sendDocument", "document"
+    data = {"chat_id": target, **({"caption": caption[:1000]} if caption else {})}
+    try:
+        async with httpx.AsyncClient(timeout=180) as client:
+            with path.open("rb") as handle:
+                response = await client.post(f"https://api.telegram.org/bot{token}/{method}", data=data,
+                                             files={field_name: (path.name, handle)})
+    except httpx.HTTPError as exc:
+        raise OutputError(f"Tidak bisa mengirim {path.name} ({type(exc).__name__})") from None
+    if response.status_code != 200:
+        try:
+            reason = str(response.json().get("description") or "")
+        except ValueError:
+            reason = ""
+        raise OutputError(f"Telegram menolak {path.name} ({response.status_code}): {reason[:200]}")
+    return path.name
+
+
 async def send_chat_action(chat_id: str, action: str = "typing") -> None:
     """Show "typing…" in a chat while the answer is being made. Best effort: a failure changes nothing."""
     token = credentials.get("telegram_bot_token")

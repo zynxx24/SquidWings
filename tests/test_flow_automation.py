@@ -491,12 +491,13 @@ async def test_video_mode_gives_long_limits_and_wakes_animate(tmp_path: Path, se
     # The lead keeps every round and its full tokens: it still reviews and renders.
     assert limits.max_rounds == settings.team_video_member_rounds
     assert limits.tokens == settings.team_video_member_tokens
-    assert session_settings.load(tmp_path / run.id).skills == ["animate"]
+    assert run.session == video.id      # the flow's own folder, not one per run
+    assert session_settings.load(tmp_path / run.session).skills == ["animate"]
 
     plain = await finish(manager, standard.id)
     assert plain.budget["run_seconds"] == settings.team_run_seconds
     assert manager._limits(plain, "lead").max_rounds == team_orchestrator.FINISHING_ROUNDS["lead"]
-    assert session_settings.load(tmp_path / plain.id).skills == []
+    assert session_settings.load(tmp_path / plain.session).skills == []
     assert len(fake.calls) == 4
 
 
@@ -537,5 +538,5 @@ async def test_a_video_shared_mid_run_survives_a_lead_that_leaves_it_out(
     fake.process = process  # type: ignore[method-assign]
     team = manager.create_team("video", "", [agent("a"), agent("b")], "a", mode="video")
     run = await finish(manager, team.id)
-    url = shared_files.url_for(run.id, "renders/share.mp4")
+    url = shared_files.url_for(run.session, "renders/share.mp4")
     assert run.result.count(url) == 1

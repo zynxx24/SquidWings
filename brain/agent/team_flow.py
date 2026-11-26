@@ -324,6 +324,8 @@ def normalize_node_config(kind: str, config: dict[str, Any] | None, database_ids
             kept["notify_owner"] = True
         if config.get("report"):
             kept["report"] = True
+        if config.get("harness"):
+            kept["harness"] = True
         grants = _data_grants(config.get("data"))
         if grants:
             kept["data"] = grants
@@ -364,6 +366,15 @@ def normalize_node_config(kind: str, config: dict[str, Any] | None, database_ids
     if kind == "telegram":
         return _telegram_config(config)
     if kind == "database":
+        source = str(config.get("source") or "").strip().lower()
+        if source:
+            # A source from Tabel data (a sheet, a file, a database added there) instead of the built-in log database.
+            if not _SOURCE_RE.fullmatch(source):
+                raise ValueError("Nama sumber data hanya huruf kecil, angka, - dan _.")
+            table = str(config.get("table") or "hasil_alur").strip()
+            if not table or len(table) > 120:
+                raise ValueError("Nama tabel log belum diisi.")
+            return {"source": source, "table": table}
         database = str(config.get("database") or "sqlite")
         if database not in database_ids:
             raise ValueError(f"Database tidak dikenal: {database}.")
