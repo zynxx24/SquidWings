@@ -42,6 +42,14 @@ ID_RE = re.compile(r"^g(\d{2})-([0-9a-f]{6})$")
 _MATCH_WEIGHT = 3.0
 _STRAY_WEIGHT = 0.35
 _REROLLS = 10
+# Type that sells a poster tires an app used all day: these never head an app screen.
+_NOT_FOR_UI = {"display", "poster", "handmade", "loud", "condensed"}
+# The structure every model falls back to. A direction names its own; this says what it replaces.
+STRUCTURE_RULE = (
+    "Start from this layout's structure (and its skeleton when there is one), not from the default stack of a centred "
+    "hero, three feature cards, alternating full-width bands, a CTA band and a four-column footer. The first screen "
+    "must already look like the layout above; if a section could be moved to any other site unchanged, rebuild it."
+)
 # Purple-to-blue is the default look of AI-made pages. Not banned, just made rare unless the
 # personality asks for that range on purpose.
 _SLOP_HUES = (255.0, 295.0)
@@ -274,7 +282,7 @@ def _recent_sets(medium: str) -> dict[str, set[str]]:
     }
 
 
-def build(genome_id: str, medium: str = "web", avoid_recent: bool = True) -> dict[str, Any]:
+def build(genome_id: str, medium: str = "web", avoid_recent: bool = True, subject: str = "") -> dict[str, Any]:
     """The full direction for a genome id in a medium. Raises ValueError for an unknown id."""
     match = ID_RE.match(genome_id.strip().lower())
     if not match:
@@ -297,7 +305,10 @@ def build(genome_id: str, medium: str = "web", avoid_recent: bool = True) -> dic
         colours = palette(rng, person)
     if not colours["passes"]:
         raise ValueError(f"{genome_id}: no readable palette found")
-    fonts = _weighted(rng, list(d.get("fonts") or []), tags, recent["font"], key="heading")
+    font_pool = list(d.get("fonts") or [])
+    if medium == "app":
+        font_pool = [f for f in font_pool if not set(f.get("tags") or []) & _NOT_FOR_UI] or font_pool
+    fonts = _weighted(rng, font_pool, tags, recent["font"], key="heading")
     shape = _weighted(rng, list(d.get("shapes") or []), tags)
     motif_pool = list(d.get("motifs") or [])
     motif = _weighted(rng, motif_pool, tags)
@@ -308,7 +319,15 @@ def build(genome_id: str, medium: str = "web", avoid_recent: bool = True) -> dic
     scale = rng.choice(list(d.get("scales") or [{"ratio": 1.25, "name": "Major third"}]))
     # The layout comes from its own stream, so the same genome keeps its look in every medium.
     layouts = list((d.get("layouts") or {}).get(medium) or (d.get("layouts") or {}).get("web") or [])
-    layout = _weighted(random.Random(f"{seed}-{medium}"), layouts, tags, recent["layout"])
+    # An app's layout follows what the screen is for (a registration form, a camera, a roster) before the mood.
+    words = set(re.findall(r"[a-z]+", subject.lower()))
+    fitting = [x for x in layouts if words & {str(f).lower() for f in x.get("fits") or []}] if words else []
+    fresh_fitting = [x for x in fitting if x["id"] not in recent["layout"]]
+    layout_rng = random.Random(f"{seed}-{medium}")
+    if fresh_fitting or fitting:
+        layout = _weighted(layout_rng, fresh_fitting or fitting, tags)
+    else:
+        layout = _weighted(layout_rng, layouts, tags, recent["layout"])
 
     energy = int(motion.get("energy") or 2)
     rhythm = 3 if layout["id"] in {"asymmetric-grid", "sticker-collage", "magazine-spread", "card-stack",
@@ -336,9 +355,13 @@ def build(genome_id: str, medium: str = "web", avoid_recent: bool = True) -> dic
         "avoid": _SLOP_BASE_AVOID,
         "_axes": {"font": fonts["heading"], "hue": str(colours["hue"] // 30), "layout": layout["id"]},
     }
-    if medium in ("web", "video", "image"):
+    if layout.get("skeleton"):
+        out["skeleton"] = layout["skeleton"]
+    if medium in ("web", "app"):
+        out["structure"] = STRUCTURE_RULE
+    if medium in ("web", "app", "video", "image"):
         out["fonts_css"] = fonts_css(fonts)
-    if medium in ("web", "video"):
+    if medium in ("web", "app", "video"):
         out["motion"] = motion["text"]
     if medium == "image":
         out["image_recipe"] = (

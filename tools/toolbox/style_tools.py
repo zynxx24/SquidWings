@@ -13,6 +13,7 @@ one page for the user to choose from.
 
 from __future__ import annotations
 
+import json
 import random
 import re
 import time
@@ -33,10 +34,15 @@ group("design", "Design directions (style, palette, type) for web, slides, image
       "presentasi, ilustrasi, thumbnail, warna, palet, palette, font, tipografi, typography, look, estetika, aesthetic")
 
 STYLES_FILE = Path(__file__).resolve().parents[2] / "input" / "styles" / "styles.yaml"
-MEDIA = ("web", "slides", "image", "video", "document")
+MEDIA = ("web", "app", "slides", "image", "video", "document")
+# An app (dashboard, admin, a school or shop system) is checked before a web page: it needs a working screen, not a
+# landing page.
 _ALIASES = {
-    "web": ("web", "website", "situs", "landing", "landing page", "halaman", "page", "ui", "ux", "app", "aplikasi",
-            "dashboard", "frontend", "html", "css"),
+    "app": ("app", "aplikasi", "dashboard", "admin", "panel", "sistem", "system", "crud", "laravel", "inventory",
+            "inventaris", "kasir", "pos", "absensi", "ppdb", "erp", "crm", "manajemen", "management", "portal",
+            "back office", "backoffice", "monitoring", "tracker"),
+    "web": ("web", "website", "situs", "landing", "landing page", "halaman", "page", "ui", "ux", "frontend", "html",
+            "css"),
     "slides": ("slides", "slide", "pptx", "ppt", "powerpoint", "presentasi", "presentation", "deck"),
     "image": ("image", "gambar", "poster", "logo", "ilustrasi", "illustration", "banner", "thumbnail", "flyer",
               "pamflet", "brosur", "brochure", "svg", "png", "icon", "ikon", "foto", "photo", "cover", "sampul"),
@@ -48,7 +54,7 @@ _ALIASES = {
 _FITTING_SHARE = 0.8
 # Share of picks that are generated rather than hand-written. Office files keep more classics,
 # since their themes are fixed palettes.
-_GENOME_SHARE = {"web": 0.85, "image": 0.85, "video": 0.85, "slides": 0.5, "document": 0.5}
+_GENOME_SHARE = {"web": 0.85, "app": 1.0, "image": 0.85, "video": 0.85, "slides": 0.5, "document": 0.5}
 _EXPLORE_MAX = 30
 
 
@@ -138,6 +144,9 @@ def describe(entry: dict[str, Any], medium: str, rng: random.Random | None = Non
       lead=True)
 def style_pick(medium: str, subject: str = "", style: str = "", avoid: list[str] | None = None) -> dict[str, Any]:
     kind = medium_of(medium)
+    if kind == "web" and subject and medium_of(subject) == "app":
+        # "web" for a dashboard or a school system: give it an app's layout, not a landing page's.
+        kind = "app"
     by_id = {s["id"]: s for s in styles()}
     wanted = (style or "").strip().lower()
     avoided = {str(a).strip().lower() for a in avoid or []}
@@ -147,9 +156,10 @@ def style_pick(medium: str, subject: str = "", style: str = "", avoid: list[str]
         gid = wanted
         while not gid or gid in avoided:
             gid = design_genome.new_id(subject)
-        direction = design_genome.build(gid, kind)
+        direction = design_genome.build(gid, kind, subject=subject)
         design_genome.remember(direction)
         style_history.remember(kind, gid)
+        _keep_for_check(direction)
         return {
             **design_genome.public(direction),
             "ok": True,
@@ -167,6 +177,8 @@ def style_pick(medium: str, subject: str = "", style: str = "", avoid: list[str]
         entry = choose(kind, subject, avoid=sorted(avoided))
     style_history.remember(kind, entry["id"])
     out = describe(entry, kind)
+    _keep_for_check({"style": entry["id"], "medium": kind, "type": out.get("type"), "palette": out.get("palette"),
+                     "layout": out.get("layout", "")})
     others = [s["id"] for s in styles() if kind in s.get("media", []) and s["id"] != entry["id"]]
     out.update(
         ok=True,
@@ -175,6 +187,29 @@ def style_pick(medium: str, subject: str = "", style: str = "", avoid: list[str]
               "colours and fonts. Change it only if the user asks for another look."),
     )
     return out
+
+
+def _keep_for_check(direction: dict[str, Any]) -> None:
+    """Note the direction in this chat's folder, so the check after the turn can see whether the page uses it."""
+    from brain.utils.workspace_context import get_active_workspace
+
+    workspace = get_active_workspace()
+    if not workspace:
+        return
+    kind = direction.get("type") or {}
+    palette = direction.get("palette") or {}
+    record = {
+        "style": direction.get("style", ""), "medium": direction.get("medium", ""),
+        "fonts": [f for f in (kind.get("heading"), kind.get("body")) if f],
+        "colors": [v for v in palette.values() if isinstance(v, str) and v.startswith("#")],
+        "layout": str(direction.get("layout", "")).split(":", 1)[0], "at": time.time(),
+    }
+    try:
+        path = Path(workspace) / ".agent_memory" / "style.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _rgb(value: str) -> tuple[int, int, int]:

@@ -57,6 +57,9 @@ _ON_DEMAND: dict[tuple[str, ...], list[str]] = {
         "vault_graph_build", "vault_neighbours", "vault_explain", "graphify_query", "graphify_ingest",
     ],
     ("git", "commit", "diff", "branch"): ["git_status", "git_diff"],
+    # Building any screen: a direction first, so an app or a page does not fall back to the same default look.
+    ("desain", "design", "tampilan", "landing", "website", "dashboard", "aplikasi", "ui", "frontend", "halaman",
+     "blade", "laravel", "react", "vue", "css", "admin", "redesign", "ganti gaya", "style"): ["style_pick", "design_explore"],
     ("hapus", "delete", "pindah", "rename", "move", "folder", "direktori"): [
         "file_move", "file_delete", "dir_create", "file_copy",
     ],

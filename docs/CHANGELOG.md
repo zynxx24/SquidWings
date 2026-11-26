@@ -1,5 +1,12 @@
 # Catatan perubahan
 
+## 2026-11-26 (malam): desain tidak lagi itu-itu saja
+
+- **Aplikasi punya gaya aplikasi.** `style_pick` mengenali aplikasi, dashboard, panel admin, dan sistem sekolah atau toko (`medium="app"`, juga otomatis dari subjeknya). Hasilnya 14 tata letak aplikasi sungguhan, misalnya rail dan workspace, daftar dan detail, tabel dulu, langkah dengan ringkasan, roster foto, form dan pratinjau cetak, satu tugas fokus. Tata letaknya dipilih menurut kegunaan layar (pendaftaran, kamera absensi, stok, jadwal), bukan landing page. Font poster dan tulisan tangan tidak dipakai untuk layar aplikasi.
+- **Arah desain membawa kerangka.** Tiap tata letak aplikasi menyertakan `skeleton` (grid CSS layarnya), dan setiap arah web atau aplikasi menyebut struktur bawaan yang harus diganti: hero di tengah, tiga kartu, pita selang-seling, CTA.
+- **Hasil dicek setelah giliran.** Kalau halaman yang baru ditulis tidak memakai font atau warna dari arah yang dipilih, atau masih memakai ciri template bawaan (gradasi Tailwind indigo atau ungu, kerangka `max-w-7xl` yang diulang, Inter, kaca buram), verifier meminta AI memperbaikinya di giliran yang sama.
+- Permintaan membuat aplikasi, dashboard, atau tampilan apa pun sekarang langsung membawa `style_pick` dan `design_explore`.
+
 ## 2026-11-26 (malam): Telegram tidak lagi membuat folder per pesan, harness lewat Telegram, ulangi, garis bisa digeser
 
 - **Satu folder per alur.** Setiap run alur sekarang bekerja di folder alur itu (`[team] <nama alur>`), bukan folder baru per pesan. File dari pesan sebelumnya tetap ada, jadi AI di Telegram bisa melanjutkan pekerjaannya. Di Pemicu ada pilihan **Folder kerja**: folder alur ini (bawaan), folder baru tiap run (untuk alur yang membangun proyek terpisah), atau folder chat web yang sudah ada, supaya Telegram dan web memakai folder yang sama.

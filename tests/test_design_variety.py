@@ -10,7 +10,7 @@ import pytest
 from brain.classifier.intent_classifier import IntentClassifier
 from brain.config.constants import TaskType
 from brain.utils import style_history
-from tools.toolbox import CATALOG, _themes, style_tools
+from tools.toolbox import CATALOG, _themes, design_genome, style_tools
 
 
 @pytest.fixture(autouse=True)
@@ -54,6 +54,10 @@ def test_every_medium_has_many_directions_and_complete_entries():
     entries = style_tools.styles()
     assert len(entries) >= 30
     for medium in style_tools.MEDIA:
+        if medium == "app":
+            # Apps are always generated: their layouts and skeletons live in the genome.
+            assert style_tools._GENOME_SHARE["app"] == 1.0 and len(design_genome.data()["layouts"]["app"]) >= 12
+            continue
         assert sum(medium in s["media"] for s in entries) >= (7 if medium == "document" else 20), medium
     hex_colour = re.compile(r"#[0-9A-Fa-f]{6}")
     for s in entries:

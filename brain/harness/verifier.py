@@ -18,6 +18,7 @@ from typing import Any
 
 import yaml
 
+from brain.harness import design_check
 from brain.security import sandbox
 from brain.utils.logger import get_logger
 from tools.code_intel import quality_tools
@@ -182,6 +183,12 @@ def _check_sync(
             score = (quality_tools.last_score(workspace) or {}).get("score")
             if score is not None:
                 passed.append(f"aislop {score}/100")
+
+    if files and not issues and workspace:
+        look = design_check.findings(workspace, files)
+        if look:
+            listed = "\n".join(f"  {item}" for item in look)
+            issues.append(f"The design does not follow its direction:\n{listed}")
 
     if files and not issues and workspace:
         failure = _run_tests(workspace, files)
