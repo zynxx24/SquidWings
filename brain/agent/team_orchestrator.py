@@ -654,6 +654,107 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
             },
         },
         {
+            "key": "harness-full",
+            "name": "Harness lengkap lewat Telegram (semua node)",
+            "description": (
+                "Satu alur yang memakai semua jenis node. /catat menyimpan catatan berlabel ke Tabel data, /lihat "
+                "menampilkan 10 catatan terakhir beserta arti labelnya (relasi), /kurs membaca kurs dari API publik, "
+                "/fokus memulai sesi fokus 25 menit lalu mengabari saat habis. Pesan lain: AI menilai perlu kerja "
+                "berat atau tidak; kerja berat direncanakan, dikerjakan dengan semua alat, lalu diperiksa."
+            ),
+            "starter": "harness",
+            "members": [
+                node("pilah", "Pilah perintah", "switch", {"rules": [
+                    {"mode": "regex", "value": r"^/catat\b"},
+                    {"mode": "regex", "value": r"^/lihat\b"},
+                    {"mode": "regex", "value": r"^/kurs\b"},
+                ]}),
+                {
+                    **member("rapikan", "Rapikan catatan", "Mengubah pesan jadi catatan berlabel", lite, "pilah"),
+                    "branch": "A",
+                    "instructions": (
+                        "Pesan diawali /catat. Ambil isi catatannya tanpa /catat, lalu pilih satu label: kerja, ide, "
+                        "belanja, atau pribadi. Balas HANYA satu baris JSON tanpa teks lain, misalnya "
+                        '{"isi": "beli susu dan roti", "label": "belanja"}'
+                    ),
+                },
+                node("simpan", "Simpan catatan", "datatable", {
+                    "source": "tabel", "table": "catatan", "operation": "insert",
+                    "values": [
+                        {"column": "waktu", "value": "{{date}} {{time}}"},
+                        {"column": "isi", "value": "{{json.isi}}"},
+                        {"column": "label", "value": "{{json.label}}"},
+                    ],
+                }, "rapikan"),
+                node("oke", "Konfirmasi", "set", {"text": "Dicatat ({{date}} {{time}}), label **{{json.label}}**:\n{{json.isi}}"}, "simpan"),
+                {**node("lihat", "Catatan terakhir", "datatable", {
+                    "source": "tabel", "table": "catatan", "operation": "get",
+                    "sort": "waktu", "desc": True, "limit": 10, "include": ["info_label"],
+                }, "pilah"), "branch": "B"},
+                {**node("kurs", "Ambil kurs", "http", {"method": "GET", "url": "https://open.er-api.com/v6/latest/USD"}, "pilah"),
+                 "branch": "C"},
+                {
+                    **member("baca_kurs", "Pembaca kurs", "Menjawab soal kurs dari data API", lite, "kurs"),
+                    "instructions": (
+                        "Input adalah JSON kurs terhadap 1 USD dari open.er-api.com (rates, time_last_update_utc). "
+                        "Jawab kurs yang ditanya di pesan (bawaan: USD ke IDR), hitung dengan calc bila perlu, dan "
+                        f"sebut waktu pembaruannya. Jangan mengarang angka yang tidak ada di input. {direct_style}"
+                    ),
+                    "config": {"direct": True},
+                },
+                {**node("pilah2", "Fokus atau bukan", "switch", {"rules": [{"mode": "regex", "value": r"^/fokus\b"}]}, "pilah"),
+                 "branch": "D"},
+                {**node("mulai", "Mulai fokus", "set", {
+                    "text": "Fokus 25 menit dimulai jam {{time}}. Simpan HP-nya, nanti kukabari kalau waktunya habis.",
+                }, "pilah2"), "branch": "A"},
+                node("kirim_mulai", "Kabari mulai", "telegram", {"chat_id": ""}, "mulai"),
+                node("jeda", "Tunggu 25 menit", "delay", {"seconds": 1500}, "kirim_mulai"),
+                node("habis", "Waktu habis", "set", {
+                    "text": "Waktu fokus habis ({{time}}). Istirahat 5 menit, lalu kirim /fokus lagi untuk sesi berikutnya.",
+                }, "jeda"),
+                {**node("berat", "Perlu kerja berat?", "gate", {"combine": "or", "conditions": [
+                    {"mode": "regex", "value": r"^/(kerja|buat|riset)\b"},
+                    {"mode": "ai", "value": (
+                        "Apakah pesan ini meminta membuat atau mengubah file, menulis kode, menjalankan perintah, "
+                        "atau riset mendalam dengan banyak sumber, bukan sekadar pertanyaan atau obrolan?"
+                    )},
+                ]}, "pilah2", model=lite), "branch": "D"},
+                {
+                    **member("rencana", "Perencana", "Memecah permintaan jadi langkah dan memilih alat", mid, "berat"),
+                    "branch": "A",
+                    "instructions": (
+                        "Tulis rencana singkat: tujuan akhir, 3 sampai 7 langkah, dan alat atau skill yang dipakai tiap "
+                        "langkah (cari dengan find_tools dan skill yang relevan). Jangan mengerjakannya sendiri."
+                    ),
+                },
+                {
+                    **member("kerja", "Pelaksana", "Mengerjakan rencana dengan semua alat", mid, "rencana"),
+                    "instructions": (
+                        "Kerjakan rencana dari langkah sebelumnya sampai selesai: tulis file, jalankan perintah, cari di "
+                        f"web, pakai skill. Bagikan setiap file jadi dengan share_file. {evidence}"
+                    ),
+                },
+                {
+                    **member("periksa", "Pemeriksa", "Memeriksa hasil dan menjawab", top, "kerja"),
+                    "instructions": (
+                        "Periksa hasil Pelaksana terhadap permintaan: buka filenya, jalankan tesnya bila ada. Perbaiki "
+                        "sendiri yang salah, lalu jawab pemilik: apa yang jadi, di mana filenya, dan apa yang belum."
+                    ),
+                    "config": {"direct": True},
+                },
+                {
+                    **member("ngobrol", "Asisten", "Menjawab pertanyaan dan obrolan", mid, "berat"),
+                    "branch": "B", "instructions": real_answers, "config": {"direct": True},
+                },
+                node("gabung", "Gabung jawaban", "merge", {"mode": "any"}, "oke", "lihat", "baca_kurs", "habis", "periksa", "ngobrol"),
+                node("balas", "Balas di Telegram", "telegram", {"chat_id": "", "page_title": "Hasil SquidWings"}, "gabung"),
+                node("riwayat", "Catat riwayat", "database", {"database": "sqlite", "table": "riwayat_harness"}, "balas"),
+            ],
+            "lead_id": None,
+            "reviewer_id": None,
+            "schedule": {"mode": "telegram", "keyword": "", "task": "", "history": 8},
+        },
+        {
             "key": "telegram-chat",
             "name": "Ngobrol lewat Telegram",
             "description": (
@@ -1202,6 +1303,8 @@ class TeamOrchestrator:
         self._chat_locks: dict[str, asyncio.Lock] = {}
         self._chat_waiting: dict[str, int] = {}
         self._customer_tasks: set[asyncio.Task[None]] = set()
+        # Set when a chat's run reaches a delay, so the chat is free again while the run waits.
+        self._chat_released: dict[str, asyncio.Event] = {}
         self._alerted: dict[str, float] = {}
 
     @property
@@ -1936,6 +2039,9 @@ class TeamOrchestrator:
         if member.kind == "delay":
             seconds = int(member.config["seconds"])
             if wait:
+                if run.trigger.get("source") == "telegram":
+                    # A chat must not wait for a reminder: its next message is answered while this run sleeps.
+                    self._chat_released.setdefault(run.id, asyncio.Event()).set()
                 await asyncio.sleep(seconds)
                 run.waited_seconds += seconds
             else:
@@ -2203,11 +2309,22 @@ class TeamOrchestrator:
 
     @staticmethod
     def _flow_role(team: Team, member: TeamMember) -> str:
-        """The agent's place in a flow: final when nothing (or only sending nodes) follows it, else step."""
+        """The agent's place in a flow: final when nothing (or only sending nodes) follows it, else step. A merge
+        only passes its paths on, so what counts is what follows the merge."""
         if team.style != "flow":
             return ""
-        nexts = [m for m in team.members if member.id in m.depends_on]
-        return "final" if all(m.kind in OUTPUT_KINDS for m in nexts) else "step"
+        seen: set[str] = set()
+        todo = [member.id]
+        while todo:
+            current = todo.pop()
+            for after in (m for m in team.members if current in m.depends_on):
+                if after.kind == "merge":
+                    if after.id not in seen:
+                        seen.add(after.id)
+                        todo.append(after.id)
+                elif after.kind not in OUTPUT_KINDS:
+                    return "step"
+        return "final"
 
     @staticmethod
     def _report(state: dict[str, Any]) -> str:
@@ -2677,20 +2794,38 @@ class TeamOrchestrator:
             )
             runner = self._tasks.get(run.id)
             if runner is not None:
-                await asyncio.wait({runner})
+                released = asyncio.create_task(self._chat_released.setdefault(run.id, asyncio.Event()).wait())
+                await asyncio.wait({runner, released}, return_when=asyncio.FIRST_COMPLETED)
+                released.cancel()
+                if not runner.done():
+                    # The flow sleeps on a delay (a reminder): free the chat, and still see the run to its end.
+                    self._spawn(self._finish_later(team, run.id, chat_id, public, runner))
+                    return
         finally:
             typing.cancel()
             await asyncio.gather(typing, return_exceptions=True)
+        self._chat_released.pop(run.id, None)
         await self._finish_chat(team, self.store.get_run(run.id) or run, chat_id, public)
+
+    async def _finish_later(self, team: Team, run_id: str, chat_id: str, public: bool, runner: asyncio.Task[None]) -> None:
+        try:
+            await asyncio.wait({runner})
+        finally:
+            self._chat_released.pop(run_id, None)
+        run = self.store.get_run(run_id)
+        if run is not None:
+            await self._finish_chat(team, run, chat_id, public)
 
     async def _finish_chat(self, team: Team, run: TeamRun, chat_id: str, public: bool) -> None:
         """Make sure the chat got an answer, remember it, and keep a public bot's list of old chats short."""
         if run.status == "cancelled":
             return
         reply = ""
-        sent = next(
+        # The last message the flow sent is its answer; an earlier one ("Fokus dimulai") was only a notice.
+        sent = max(
             (run.agents[m.id] for m in team.members if m.kind == "telegram" and run.agents.get(m.id, {}).get("status") == "completed"),
-            None,
+            key=lambda state: float(state.get("completed_at") or 0),
+            default=None,
         )
         if sent is not None:
             reply = str(sent.get("content") or "")

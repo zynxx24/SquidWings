@@ -347,5 +347,34 @@ def ensure_shop_starter() -> list[Source]:
     return made
 
 
-__all__ = ["Registry", "Source", "backend_for", "create_local", "ensure_builtin", "get_relations", "open_backend", "ensure_shop_starter", "get_registry", "import_local",
+HARNESS_LABELS = [
+    {"nama": "kerja", "arti": "Pekerjaan, kuliah, tenggat"},
+    {"nama": "ide", "arti": "Ide yang mau dicoba nanti"},
+    {"nama": "belanja", "arti": "Barang yang perlu dibeli"},
+    {"nama": "pribadi", "arti": "Urusan pribadi dan keluarga"},
+]
+
+
+def ensure_harness_starter() -> list[str]:
+    """What the full harness template works on, in "Tabel data": ``catatan`` (notes), ``label`` (what a note's label
+    means) and the relation ``catatan.label -> label.nama``. Whatever already exists is kept. Returns what was made."""
+    backend = backend_for(ensure_builtin())
+    have = {t.name for t in backend.tables()}
+    made: list[str] = []
+    if "label" not in have:
+        backend.create_table("label", ["nama", "arti"])
+        for row in HARNESS_LABELS:
+            backend.insert("label", row)
+        made.append("label")
+    if "catatan" not in have:
+        backend.create_table("catatan", ["waktu", "isi", "label"])
+        made.append("catatan")
+    relations = get_relations()
+    if relations.find("info_label") is None:
+        relations.add(BUILTIN_NAME, "catatan", "label", BUILTIN_NAME, "label", "nama", name="info_label", reverse="catatan")
+        made.append("relasi catatan.label -> label.nama")
+    return made
+
+
+__all__ = ["Registry", "Source", "backend_for", "create_local", "ensure_builtin", "get_relations", "open_backend", "ensure_harness_starter", "ensure_shop_starter", "get_registry", "import_local",
            "open_source", "safe_filename", "files_dir", "LOCAL_SUFFIXES", "ONLINE_KINDS"]

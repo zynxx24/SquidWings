@@ -1,5 +1,12 @@
 # Catatan perubahan
 
+## 2026-11-26 (malam): template Harness lengkap
+
+- **Template "Harness lengkap lewat Telegram (semua node)"**: satu alur yang memakai kesepuluh jenis node. `/catat` dirapikan AI jadi catatan berlabel lalu disimpan ke Tabel data, `/lihat` menampilkan 10 catatan terakhir beserta arti labelnya lewat relasi, `/kurs` membaca kurs dari API publik (node HTTP), `/fokus` mulai sesi fokus 25 menit dan mengabari saat habis. Pesan lain dinilai AI: kerja berat direncanakan, dikerjakan dengan semua alat, lalu diperiksa; selain itu dijawab Asisten. Semua jawaban lewat satu Merge ke Telegram dan tercatat di database. Tabel `catatan`, `label`, dan relasinya dibuat otomatis saat template dipakai.
+- Jeda di alur Telegram tidak lagi mengunci chat: selama alur menunggu (misalnya 25 menit fokus), pesan berikutnya tetap dijawab.
+- Agent sebelum Merge yang menuju Telegram sekarang dianggap langkah terakhir, jadi ia menjawab seperti di chat.
+- Node Tabel data bisa memilih relasi lewat namanya, dan JSON di dalam blok ```json dari AI tetap terbaca oleh `{{json.kolom}}`.
+
 ## 2026-11-26 (malam): Telegram jadi chat biasa, bukan cuma bot toko
 
 - **Chatmu ke bot selalu dilayani sebagai pemilik.** Pesan dari chat di Kredensial tidak lagi diperlakukan sebagai pelanggan, juga saat menulis ke alur publik: agent memakai semua alat dan data, tanpa batas pesan per menit atau per hari, dan tanpa aturan untuk orang asing.

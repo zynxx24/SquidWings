@@ -58,7 +58,7 @@ def run(config: dict[str, Any], fill: Fill, open_backend: Callable[[str], Backen
         notes: list[str] = []
         include = config.get("include") or []
         if include and relations is not None:
-            chosen = [r for r in relations.for_table(config["source"], table) if r.id in include]
+            chosen = [r for r in relations.for_table(config["source"], table) if r.id in include or r.name in include]
             notes = attach(rows, config["source"], table, chosen, open_backend)
         found = [row["values"] for row in rows]
         note = f"{len(found)} baris dari {table}"

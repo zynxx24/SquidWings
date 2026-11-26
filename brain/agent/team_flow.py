@@ -501,8 +501,13 @@ def json_values(text: str) -> dict[str, str]:
     """
     import json
 
+    body = text.strip()
+    # A model often wraps its JSON in a ```json block.
+    fenced = re.fullmatch(r"```[a-zA-Z]*\s*(.*?)\s*```", body, re.DOTALL)
+    if fenced:
+        body = fenced.group(1)
     try:
-        data = json.loads(text) if text.strip()[:1] in ("{", "[") else None
+        data = json.loads(body) if body[:1] in ("{", "[") else None
     except ValueError:
         data = None
     if data is None:

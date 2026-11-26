@@ -1371,7 +1371,7 @@
         <label class="field"><span>Batas baris</span><input data-dt="limit" type="number" min="0" value="${esc(c.limit || '')}" placeholder="semua"></label>
       </div>
       <div class="field"><span>Ikut ambil baris yang berelasi</span>
-        ${relations.length ? relations.map(r => `<label class="check"><input type="checkbox" data-dt-include="${esc(r.id)}" ${(c.include || []).includes(r.id) ? 'checked' : ''}>${esc(relationLabel(r, c.source, c.table))}</label>`).join('')
+        ${relations.length ? relations.map(r => `<label class="check"><input type="checkbox" data-dt-include="${esc(r.id)}" ${(c.include || []).some(x => x === r.id || x === r.name) ? 'checked' : ''}>${esc(relationLabel(r, c.source, c.table))}</label>`).join('')
           : '<p class="hint">Tabel ini belum punya relasi.</p>'}
         <button class="link-btn" type="button" data-dt-relations>Atur relasi</button>
       </div>` : '';
@@ -1444,8 +1444,10 @@
     });
     box.querySelectorAll('[data-dt-include]').forEach(check => {
       check.onchange = () => {
+        const relation = (S.relations || []).find(r => r.id === check.dataset.dtInclude);
         const set = new Set(member.config.include || []);
-        if (check.checked) set.add(check.dataset.dtInclude); else set.delete(check.dataset.dtInclude);
+        if (check.checked) set.add(check.dataset.dtInclude);
+        else { set.delete(check.dataset.dtInclude); if (relation) set.delete(relation.name); }
         save({ include: [...set] });
       };
     });
@@ -2000,15 +2002,20 @@
     const template = S.templates.find(t => t.key === key);
     if (!template) return;
     loadInto({ ...template, style: 'flow' }, null, template.description);
-    if (template.starter === 'shop') makeShopStarter(template);
+    if (template.starter) makeStarter(template);
   }
 
-  /* A shop template needs a product list and an orders sheet. Make them if they are missing, and say so. */
-  async function makeShopStarter(template) {
+  /* Some templates need data to work on: the shop its product list and orders, the full harness flow its notes
+     and labels. Made when missing, and said so. */
+  const STARTER_NOTES = {
+    shop: 'Katalog dan Pesanan sudah dibuat di tab Tabel data: isi dengan produkmu.',
+    harness: 'Tabel catatan dan label (berelasi) sudah dibuat di Tabel data.',
+  };
+  async function makeStarter(template) {
     try {
-      const made = await credApi('/api/data/starter/shop', 'POST');
+      const made = await credApi(`/api/data/starter/${encodeURIComponent(template.starter)}`, 'POST');
       await refreshSources();
-      if (made.created.length) toast(`${template.description} Katalog dan Pesanan sudah dibuat di tab Tabel data: isi dengan produkmu.`);
+      if (made.created.length) toast(`${template.description} ${STARTER_NOTES[template.starter] || ''}`.trim());
     } catch (e) { toast(`Template terpasang, tetapi data contohnya gagal dibuat: ${e.message}`); }
   }
 

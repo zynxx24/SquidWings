@@ -21,6 +21,7 @@ from .registry import (
     Source,
     backend_for,
     create_local,
+    ensure_harness_starter,
     ensure_shop_starter,
     get_registry,
     import_local,
@@ -30,6 +31,6 @@ from .registry import (
 
 __all__ = [
     "Access", "Backend", "DataError", "LOCAL_SUFFIXES", "ONLINE_KINDS", "Page", "RIGHTS", "RIGHT_LABELS", "Source",
-    "TableInfo", "backend_for", "create_local", "current", "defuse", "ensure_shop_starter", "get_registry", "hidden_columns",
+    "TableInfo", "backend_for", "create_local", "current", "defuse", "ensure_harness_starter", "ensure_shop_starter", "get_registry", "hidden_columns",
     "import_local", "open_source", "require", "require_any", "restrict", "safe_filename", "allows",
 ]

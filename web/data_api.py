@@ -137,6 +137,13 @@ def shop_starter() -> dict[str, Any]:
     return {"created": [s.public() for s in made], "sources": [s.public() for s in registry.get_registry().list()]}
 
 
+@router.post("/starter/harness", status_code=201, dependencies=[Depends(admin)])
+def harness_starter() -> dict[str, Any]:
+    """The notes and labels the full harness template works on, with the relation between them."""
+    made = _guard(datastore.ensure_harness_starter)
+    return {"created": made, "sources": [s.public() for s in registry.get_registry().list()]}
+
+
 class Rename(BaseModel):
     name: str = Field(default="", max_length=60)
     label: str = Field(default="", max_length=80)
