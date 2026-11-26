@@ -106,3 +106,13 @@
 .ready-list li.no::before { content: "!"; background: color-mix(in srgb, var(--warn) 16%, transparent); color: var(--warn); }
 .cred-input textarea { width: 100%; min-height: 96px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: 12px/1.45 var(--mono); resize: vertical; }
 .cred-input textarea:focus { border-color: var(--accent); outline: none; }
+
+/* ── Relations strip (Tabel data) ───────────────── */
+.data-rel { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
+.data-rel[hidden] { display: none; }
+.rel-list { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.rel-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); font-size: 12.5px; }
+.rel-chip small { color: var(--muted); }
+.rel-chip .icon-btn { width: 22px; height: 22px; }
+.rel-mark { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--info-soft); color: var(--info); font: 600 10.5px var(--sans); }
+#data-rel-toggle.on { border-color: var(--accent); color: var(--accent); }

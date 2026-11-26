@@ -171,7 +171,7 @@ def test_conditions(condition: dict[str, Any], text: str, expected: bool | None)
     [
         ("gate", {"combine": "xor", "conditions": [{"mode": "empty"}]}),
         ("gate", {"conditions": []}),
-        ("gate", {"conditions": [{"mode": "empty"}] * 6}),
+        ("gate", {"conditions": [{"mode": "empty"}] * 21}),
         ("gate", {"conditions": [{"mode": "regex", "value": "("}]}),
         ("switch", {"rules": []}),
         ("switch", {"rules": [{"mode": "empty"}] * 4}),

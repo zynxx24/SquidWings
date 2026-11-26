@@ -25,6 +25,7 @@ from typing import Any
 from .base import Backend, DataError
 from .files import FILE_SUFFIXES, MAX_FILE_BYTES, create_file, open_file
 from .mongo import MongoBackend
+from .relations import Relations
 from .sheets import SheetsBackend, parse_service_account, parse_spreadsheet
 from .sql import mysql_backend, postgres_backend, sqlite_backend
 
@@ -40,7 +41,11 @@ ONLINE_KINDS = {
 }
 CREDENTIAL_FOR = {"postgres": "team_db_postgres_url", "mysql": "team_db_mysql_url", "mongodb": "team_db_mongodb_url"}
 _NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]{0,39}")
-MAX_SOURCES = 50
+MAX_SOURCES = 500
+# The SQLite file behind "Tabel data": tables made from the flow editor live here, like n8n's data tables.
+BUILTIN_NAME = "tabel"
+BUILTIN_FILE = "tabel_data.sqlite"
+BUILTIN_LABEL = "Tabel data"
 MAX_IMPORT_BYTES = 25 * 1024 * 1024
 
 
@@ -166,6 +171,7 @@ class Registry:
             if source is None:
                 raise DataError(f"Sumber '{ref}' tidak ada")
             self._save([s for s in items if s.id != source.id])
+            get_relations().forget_source(source.name)
             if delete_file and source.kind == "file":
                 (files_dir() / source.location).unlink(missing_ok=True)
             return source
@@ -173,6 +179,32 @@ class Registry:
 
 def get_registry() -> Registry:
     return Registry(DATA_DIR)
+
+
+def get_relations() -> Relations:
+    return Relations(DATA_DIR)
+
+
+def ensure_builtin() -> Source:
+    """The "Tabel data" source, made on first use: an empty SQLite file in the data folder."""
+    import sqlite3
+
+    registry = get_registry()
+    found = registry.find(BUILTIN_NAME)
+    if found is not None:
+        return found
+    path = files_dir() / BUILTIN_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sqlite3.connect(path).close()
+    return registry.add("file", BUILTIN_FILE, name=BUILTIN_NAME, label=BUILTIN_LABEL)
+
+
+def open_backend(ref: str) -> Backend:
+    """A registered source by name, with the error the user can act on when it is gone."""
+    source = get_registry().find(ref)
+    if source is None:
+        raise DataError(f"Sumber data '{ref}' tidak ada lagi. Pilih yang lain di node ini atau di tab Tabel data.")
+    return backend_for(source)
 
 
 def _google_account() -> dict[str, str]:
@@ -315,5 +347,5 @@ def ensure_shop_starter() -> list[Source]:
     return made
 
 
-__all__ = ["Registry", "Source", "backend_for", "create_local", "ensure_shop_starter", "get_registry", "import_local",
+__all__ = ["Registry", "Source", "backend_for", "create_local", "ensure_builtin", "get_relations", "open_backend", "ensure_shop_starter", "get_registry", "import_local",
            "open_source", "safe_filename", "files_dir", "LOCAL_SUFFIXES", "ONLINE_KINDS"]

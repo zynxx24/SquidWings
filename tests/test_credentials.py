@@ -135,7 +135,7 @@ def test_the_data_tab_and_the_right_click_menu_are_wired_without_double_clicks()
     scripts = re.findall(r'src="(/static/js/[\w.-]+)"', html)
     assert scripts.index("/static/js/ctxmenu.js") < scripts.index("/static/js/app.js"), "team.js and data.js use SQMenu while loading"
     assert scripts.index("/static/js/data.js") > scripts.index("/static/js/team.js"), "data.js hooks into window.SQTeam"
-    assert "/static/css/data.css" in html and 'data-tab="data"' in html
+    assert "/static/css/data.css" in html and 'data-home="data"' in html
     for name in ("team.js", "data.js", "ctxmenu.js"):
         source = (STATIC / "js" / name).read_text(encoding="utf-8")
         assert "dblclick" not in source and "ondblclick" not in source, f"{name} must not edit on a double click"

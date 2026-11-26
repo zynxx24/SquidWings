@@ -20,6 +20,7 @@ from brain.config import credentials
 from brain.utils import datastore
 from brain.utils.datastore import DataError, registry
 from brain.utils.datastore.base import MAX_PAGE, Backend
+from brain.utils.datastore.relations import attach as relations_attach
 from web.router_api import admin
 
 router = APIRouter(prefix="/api/data", tags=["Data"])
@@ -79,6 +80,8 @@ def list_sources() -> dict[str, Any]:
             "mongodb": bool(credentials.get("team_db_mongodb_url")),
         },
         "google_email": credentials.google_email(),
+        "builtin": registry.BUILTIN_NAME,
+        "relations": [r.public() for r in registry.get_relations().all()],
     }
 
 
@@ -269,6 +272,86 @@ class TableDrop(BaseModel):
 
 @router.post("/sources/{ref}/tables/drop", dependencies=[Depends(admin)])
 def drop_table(ref: str, payload: TableDrop) -> dict[str, Any]:
-    _, backend = _open(ref)
+    source, backend = _open(ref)
     _guard(lambda: backend.drop_table(payload.table))
+    relations = registry.get_relations()
+    for relation in relations.for_table(source.name, payload.table):
+        relations.remove(relation.id)
     return {"tables": [t.to_dict() for t in backend.tables()]}
+
+
+# ── Tabel data and relations ──────────────────────────────────────────────────
+
+
+class NewDataTable(BaseModel):
+    table: str = Field(min_length=1, max_length=64)
+    columns: list[str] = Field(default_factory=list, max_length=200)
+    source: str = Field(default="", max_length=60)
+
+
+@router.post("/tables", status_code=201, dependencies=[Depends(admin)])
+def new_data_table(payload: NewDataTable) -> dict[str, Any]:
+    """Make a table, like n8n's data tables: in "Tabel data" (a SQLite file made on first use) unless a source is named."""
+    def work() -> dict[str, Any]:
+        source = registry.get_registry().find(payload.source) if payload.source else registry.ensure_builtin()
+        if source is None:
+            raise DataError(f"Sumber data '{payload.source}' tidak ada.")
+        backend = registry.backend_for(source)
+        backend.create_table(payload.table, payload.columns)
+        return {"source": source.public(), "table": backend.table(payload.table).to_dict(),
+                "tables": [t.to_dict() for t in backend.tables()]}
+
+    return _guard(work)
+
+
+@router.get("/relations")
+def list_relations() -> dict[str, Any]:
+    return {"relations": [r.public() for r in registry.get_relations().all()]}
+
+
+class RelationInput(BaseModel):
+    source: str = Field(min_length=1, max_length=60)
+    table: str = Field(min_length=1, max_length=120)
+    column: str = Field(min_length=1, max_length=64)
+    target_source: str = Field(min_length=1, max_length=60)
+    target_table: str = Field(min_length=1, max_length=120)
+    target_column: str = Field(min_length=1, max_length=64)
+    name: str = Field(default="", max_length=63)
+    reverse: str = Field(default="", max_length=63)
+
+
+@router.post("/relations", status_code=201, dependencies=[Depends(admin)])
+def add_relation(payload: RelationInput) -> dict[str, Any]:
+    """Say that a column points at a column of another table. Both columns are checked against the real tables."""
+    def work() -> dict[str, Any]:
+        for ref, table, column in ((payload.source, payload.table, payload.column),
+                                   (payload.target_source, payload.target_table, payload.target_column)):
+            _, backend = _open(ref)
+            info = backend.table(table)
+            if column not in info.columns:
+                raise DataError(f"Kolom '{column}' tidak ada di {info.name}. Kolom yang ada: {', '.join(info.columns)}")
+        return registry.get_relations().add(
+            payload.source, payload.table, payload.column, payload.target_source, payload.target_table,
+            payload.target_column, payload.name, payload.reverse).public()
+
+    return _guard(work)
+
+
+@router.delete("/relations/{relation_id}", dependencies=[Depends(admin)])
+def remove_relation(relation_id: str) -> dict[str, Any]:
+    return _guard(lambda: registry.get_relations().remove(relation_id).public())
+
+
+@router.get("/sources/{ref}/related")
+def related_rows(ref: str, table: str = "", offset: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=MAX_PAGE)) -> dict[str, Any]:
+    """A page of rows with the rows each one points at, and the rows that point at it."""
+    source, backend = _open(ref)
+
+    def work() -> dict[str, Any]:
+        page = backend.read(table, offset, limit)
+        name = backend.table(table).name
+        relations = registry.get_relations().for_table(source.name, name)
+        notes = relations_attach(page.rows, source.name, name, relations, registry.open_backend)
+        return {**page.to_dict(), "table": name, "relations": [r.public() for r in relations], "notes": notes}
+
+    return _guard(work)

@@ -1,5 +1,18 @@
 # Catatan perubahan
 
+## 2026-11-26: Tim agent dirombak seperti n8n
+
+- **Yang tersambung itulah yang jalan.** Tidak ada lagi Lead dan Reviewer tersembunyi atau garis putus-putus otomatis. Pemicu menjalankan node yang ditarik garis darinya, tiap node menerima isi dari garis yang masuk, dan node yang tidak tersambung tidak dijalankan (tampil pudar di kanvas). Hasil akhir adalah output langkah terakhir.
+- **Alur lama tetap jalan.** Alur yang dibuat dengan model Lead/Reviewer berjalan seperti biasa sampai dibuka dan disimpan lagi. Saat dibuka, sambungannya ditampilkan sebagai garis biasa: Lead menerima hasil semua agent, Reviewer menjadi agent sesudahnya yang memperbaiki jawaban sendiri.
+- **Halaman depan alur kerja**: daftar alur dengan pencarian, saklar Aktif (jadwal dan pemicu Telegram bisa diistirahatkan tanpa kehilangan pengaturan), duplikat, ekspor dan impor JSON, hapus, plus kartu template. Tab Tabel data dan Kredensial pindah ke halaman ini.
+- **Node Tabel data** (pengganti "simpan ke database" yang hanya menulis log): pilih sumber dan tabel dari daftar, atau buat tabel baru langsung dari node. Operasi Ambil, Tambah, Ubah, Upsert, Hapus dengan syarat (AND/OR), urutan, batas baris, dan pemetaan kolom. Nilai bisa memakai `{{json.kolom}}` dari input. Hasilnya JSON, jadi node berikutnya bisa membaca kolomnya. Isian yang tidak ada di input ditolak dengan pesan jelas, tidak ditulis mentah ke tabel.
+- **Relasi antar tabel**: tandai kolom yang menunjuk ke tabel lain (misalnya `pesanan.kode_produk` ke `produk.kode`), juga lintas sumber. Node Tabel data bisa ikut mengambil baris yang berelasi (`{{json.produk.nama}}`), dan agent melihat relasinya lewat `db_schema`. Diatur dari tombol Relasi di tab Tabel data atau dari node.
+- **Tabel data bawaan**: tabel baru tanpa perlu membuat file atau mengisi URL database, disimpan di SQLite milik aplikasi.
+- **Tes langkah**: jalankan satu node saja dengan input yang terlihat di panel kiri, tanpa menjalankan seluruh alur. Panel input menampilkan kolom JSON yang bisa diklik untuk dimasukkan ke kotak yang sedang aktif. Output JSON tampil sebagai tabel atau JSON.
+- **Kanvas**: node berbentuk kotak dengan nama di bawahnya, garis bisa diklik untuk menyisipkan node atau memutusnya, menghapus node di tengah menyambung ulang garisnya, urungkan dan ulangi (Ctrl+Z, Ctrl+Shift+Z), salin, tempel, duplikat (Ctrl+C, Ctrl+V, Ctrl+D), klik sekali memilih dan klik lagi membuka node. Tanda merah menunjukkan node yang belum lengkap, dan daftar "perlu diisi" di atas membawa langsung ke node itu. Posisi node disimpan di server, jadi sama di HP dan laptop.
+- **Batas dihapus**: tidak ada lagi batas 12 node dan 6 agent per alur. Alur boleh tanpa agent, misalnya hanya Tabel data dan Telegram. Syarat IF sampai 20, jam harian sampai 48.
+- Garis di kanvas sebelumnya tidak bisa diklik karena tertutup lapisan node; sudah diperbaiki.
+
 ## 2026-11-26: video hasil ekspor bisa ditonton, unduh otomatis
 
 - **Perbaikan**: video, audio dan gambar yang dibagikan di chat (termasuk hasil ekspor Studio) gagal diputar saat dibuka di tab sendiri. Header `sandbox` membuat Chrome menolak pemutarnya memuat file itu sendiri. Media sekarang dikirim dengan kebijakan ketat tanpa `sandbox`; file lain (HTML dan sebagainya) tetap `sandbox` dan diunduh.

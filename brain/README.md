@@ -4,14 +4,14 @@ Otak dan harness SquidWings dalam satu folder: memahami permintaan, memilih mode
 
 | Folder | Isi |
 |---|---|
-| `agent/` | Menjalankan percakapan: `orchestrator.py` (satu giliran dari awal sampai akhir), `agent_loop.py` (model → tool → hasil), sesi per chat, tim agent |
+| `agent/` | Menjalankan percakapan: `orchestrator.py` (satu giliran dari awal sampai akhir), `agent_loop.py` (model → tool → hasil), sesi per chat, tim agent (`team_flow.py` aturan node dan alur, `team_orchestrator.py` menjalankan alur persis mengikuti sambungannya) |
 | `harness/` | Kecerdasan di sekitar model: autopilot Auto, pesan error model, pemilihan skill dan tool, ranking relevansi, tier, verifier, guard. Lihat [harness/README.md](harness/README.md) |
 | `classifier/` | Jenis tugas dan tingkat kesulitan. Hasil LLM classifier di-cache, jadi pesan yang sama tidak memanggil model dua kali |
 | `memory/` | Riwayat chat, memori proyek, ringkasan, recall antar chat (data di `memory/chat_store/`, `memory/store/`, tidak ikut Git) |
 | `model/` | Koneksi provider: API client, registry model, router (rotasi akun, harga, log token), streaming |
 | `system_prompt/` | Prompt sistem per jenis tugas dan per tier, cadangan Ponytail |
 | `config/` | `settings.py` (`.env`), `paths.py` (lokasi `data/`), `edition.py` (saklar add-on), kredensial, `models_config.yaml`, `providers.yaml` |
-| `utils/` | `cache.py` (semua cache), `platform_compat.py` (Windows/macOS/Linux), workspace per chat, logger, CLI, terminal web, OCR, suara |
+| `utils/` | `cache.py` (semua cache), `platform_compat.py` (Windows/macOS/Linux), workspace per chat, logger, CLI, terminal web, OCR, suara, `datastore/` (sumber data, Tabel data bawaan, relasi antar tabel, operasi node Tabel data) |
 | `security/` | Sandbox perintah, `policy.yaml`, path jail, audit chain, prompt shield, akses web |
 
 ## Dua mode model

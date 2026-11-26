@@ -14,7 +14,7 @@ import re
 from typing import Any
 
 from brain.utils import datastore
-from brain.utils.datastore import DataError, access
+from brain.utils.datastore import DataError, access, registry
 
 from .catalog import group, param, spec
 
@@ -103,6 +103,16 @@ def db_schema(source: str, table: str = "", workspace_path: str | None = None) -
     if table and not tables:
         raise DataError(f"Tabel '{table}' tidak ada. Tabel yang ada: {', '.join(t.name for t in backend.tables())}")
     out: dict[str, Any] = {"source": source, "kind": backend.kind, "tables": tables}
+    if name:
+        # How these tables point at others, so the agent can follow an order to its product with db_read.
+        shown = {t["table"] for t in tables}
+        links = [
+            f"{r.source}.{r.table}.{r.column} -> {r.target_source}.{r.target_table}.{r.target_column}"
+            for r in registry.get_relations().all()
+            if (r.source == name and r.table in shown) or (r.target_source == name and r.target_table in shown)
+        ]
+        if links:
+            out["relations"] = links
     if table and can_read:
         page = backend.read(table, 0, 3)
         out["sample"] = _shape(page.rows, _hidden(name, page.columns))

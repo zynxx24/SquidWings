@@ -110,85 +110,34 @@
     </section>
 
     <section id="view-team" class="view hidden">
-      <header class="wf-top">
-        <div class="wf-title">
-          <select id="team-select" class="wf-pick" aria-label="Pilih alur"></select>
-          <input id="team-name" class="wf-name" placeholder="Beri nama alur ini" aria-label="Nama alur" maxlength="100">
-          <span id="wf-dirty" class="wf-dirty hidden" title="Tekan Simpan atau Ctrl+S">Belum disimpan</span>
-        </div>
-        <nav id="wf-tabs" class="wf-tabs" role="tablist" aria-label="Bagian alur">
-          <button data-tab="editor" class="on" role="tab" aria-selected="true">Editor</button>
-          <button data-tab="data" role="tab" aria-selected="false">Data</button>
-          <button data-tab="runs" role="tab" aria-selected="false">Eksekusi</button>
-          <button data-tab="creds" role="tab" aria-selected="false">Kredensial</button>
-        </nav>
-        <div class="wf-actions">
-          <details id="wf-menu" class="wf-menu">
-            <summary class="icon-btn" aria-label="Menu alur" title="Menu alur">⋯</summary>
-            <div class="wf-menu-list" role="menu">
-              <button id="new-team" type="button" role="menuitem">Alur baru</button>
-              <select id="template-select" aria-label="Mulai dari template"><option value="">Mulai dari template…</option></select>
-              <button id="tidy-board" type="button" role="menuitem">Rapikan tata letak</button>
-              <label class="wf-mode" title="Video dan Studio memberi tiap agent waktu sampai 30 menit">Mode
-                <select id="team-mode" aria-label="Mode alur">
-                  <option value="standard">Standar</option>
-                  <option value="video">Video render (animate)</option>
-                  <option value="motion">Studio motion (bisa diedit)</option>
-                </select></label>
-              <button id="delete-team" type="button" role="menuitem" class="danger">Hapus alur</button>
-            </div>
-          </details>
-          <button id="save-team" class="btn btn-primary" title="Ctrl+S">Simpan</button>
-        </div>
-      </header>
-
-      <div class="wf-body">
-        <div id="wf-editor" class="wf-pane wf-editor">
-          <div id="board" class="board" tabindex="0" aria-label="Kanvas alur. Klik kanan untuk menu, seret latar untuk menggeser, Ctrl+scroll untuk zoom, Tab untuk menambah node.">
-            <div id="canvas" class="canvas">
-              <svg id="edges" class="edges" width="6000" height="4000" aria-hidden="true">
-                <defs>
-                  <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                    <path d="M0 0 10 5 0 10z" class="edge-head"></path>
-                  </marker>
-                </defs>
-                <g id="edge-lines"></g>
-                <path id="edge-draft" class="edge draft hidden"></path>
-              </svg>
-              <div id="nodes" class="nodes"></div>
-              <button id="edge-delete" class="edge-delete hidden" type="button" aria-label="Putus sambungan" title="Putus sambungan (Delete)">×</button>
-            </div>
-            <button id="open-creator" class="wf-plus" type="button" title="Tambah node (Tab)" aria-label="Tambah node"><span data-icon="plus"></span></button>
-            <div class="wf-zoom" role="group" aria-label="Zoom">
-              <button id="zoom-fit" type="button" title="Muat semua (1)" aria-label="Muat semua node">⤢</button>
-              <button id="zoom-out" type="button" title="Perkecil (-)" aria-label="Perkecil">−</button>
-              <span id="zoom-level" class="zoom-level">100%</span>
-              <button id="zoom-in" type="button" title="Perbesar (+)" aria-label="Perbesar">+</button>
-              <button id="zoom-tidy" type="button" title="Rapikan tata letak" aria-label="Rapikan tata letak">⇶</button>
-            </div>
-            <div class="wf-run">
-              <div id="run-info" class="run-info hidden" aria-live="polite"></div>
-              <div id="result" class="prose result hidden"></div>
-              <form id="run-form" class="run-form">
-                <input id="task" placeholder="Tugas atau input untuk alur ini" aria-label="Tugas untuk alur" maxlength="50000">
-                <button id="result-toggle" class="btn btn-ghost hidden" type="button">Hasil</button>
-                <button id="cancel" class="btn btn-ghost hidden" type="button">Batalkan</button>
-                <button id="run" class="btn btn-primary run-btn" type="submit">▶ Jalankan alur</button>
-              </form>
-            </div>
+      <!-- Overview, like n8n's: flows, data tables and keys. -->
+      <div id="wf-home" class="wf-home">
+        <header class="home-top">
+          <div class="home-title">
+            <h1>Alur kerja</h1>
+            <p class="hint">Sambungkan pemicu, agent AI, tabel data, dan pengiriman. Yang tersambung itulah yang jalan.</p>
           </div>
-          <aside id="creator" class="creator hidden" aria-label="Tambah node">
-            <div class="creator-head">
-              <h3>Tambah node</h3>
-              <button id="creator-close" class="icon-btn" type="button" aria-label="Tutup" data-icon="x"></button>
-            </div>
-            <input id="creator-search" class="creator-search" placeholder="Cari node… (Enter memilih yang pertama)" aria-label="Cari node">
-            <p id="creator-context" class="hint creator-context"></p>
-            <div id="creator-list" class="creator-list"></div>
-          </aside>
+          <div class="home-actions">
+            <button id="home-import" class="btn btn-ghost" type="button">Impor JSON</button>
+            <button id="home-new" class="btn btn-primary" type="button"><span data-icon="plus"></span>Alur baru</button>
+          </div>
+        </header>
+        <nav id="home-tabs" class="home-tabs" role="tablist" aria-label="Bagian">
+          <button data-home="flows" class="on" role="tab" aria-selected="true">Alur kerja</button>
+          <button data-home="data" role="tab" aria-selected="false">Tabel data</button>
+          <button data-home="creds" role="tab" aria-selected="false">Kredensial</button>
+        </nav>
+        <div id="home-flows" class="home-pane">
+          <div class="home-tools">
+            <input id="home-search" type="search" placeholder="Cari alur…" aria-label="Cari alur">
+            <span id="home-count" class="hint"></span>
+          </div>
+          <div id="flow-list" class="flow-list" aria-live="polite"></div>
+          <h2 class="home-sub">Mulai dari template</h2>
+          <div id="template-list" class="template-list"></div>
         </div>
 
-        <div id="wf-data" class="wf-pane wf-data hidden">
+        <div id="wf-data" class="home-pane wf-data hidden">
           <aside class="data-side" aria-label="Sumber data">
             <div class="data-side-head"><h3>Sumber data</h3><button id="data-add" class="btn btn-ghost btn-small" type="button">+ Sumber</button></div>
             <div id="data-sources" class="data-sources"></div>
@@ -196,6 +145,7 @@
           </aside>
           <section class="data-main" aria-label="Isi data">
             <div id="data-bar" class="data-bar"></div>
+            <div id="data-rel" class="data-rel" hidden></div>
             <p id="data-note" class="data-note" hidden></p>
             <div id="data-grid-wrap" class="data-grid-wrap" tabindex="0" aria-label="Tabel data. Panah untuk memilih sel, Enter untuk mengedit, Shift+F10 untuk menu.">
               <div id="data-grid"></div>
@@ -204,16 +154,91 @@
           </section>
         </div>
 
-        <div id="wf-runs" class="wf-pane wf-runs hidden">
-          <div id="runs-list" class="runs-list"></div>
-          <div id="run-detail" class="run-detail"></div>
-        </div>
-
-        <div id="wf-creds" class="wf-pane wf-creds hidden">
+        <div id="wf-creds" class="home-pane wf-creds hidden">
           <div class="creds-wrap">
-            <h2>Kredensial</h2>
             <p class="hint">Key dan ID untuk Telegram, web search, suara, Google Workspace, dan database. Semuanya diatur di sini, tidak perlu membuka .env di server.</p>
             <div id="creds-body" class="creds-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- One flow: the canvas and its executions. -->
+      <div id="wf-page" class="wf-page hidden">
+        <header class="wf-top">
+          <div class="wf-title">
+            <button id="wf-back" class="icon-btn" type="button" aria-label="Kembali ke semua alur" title="Semua alur">←</button>
+            <input id="team-name" class="wf-name" placeholder="Beri nama alur ini" aria-label="Nama alur" maxlength="100">
+            <span id="wf-dirty" class="wf-dirty hidden" title="Tekan Simpan atau Ctrl+S">Belum disimpan</span>
+            <button id="wf-issues" class="wf-issues hidden" type="button" aria-haspopup="true"></button>
+          </div>
+          <nav id="wf-tabs" class="wf-tabs" role="tablist" aria-label="Bagian alur">
+            <button data-tab="editor" class="on" role="tab" aria-selected="true">Editor</button>
+            <button data-tab="runs" role="tab" aria-selected="false">Eksekusi</button>
+          </nav>
+          <div class="wf-actions">
+            <label id="wf-active-wrap" class="wf-switch" title="Jadwal dan pemicu Telegram berjalan sendiri bila aktif">
+              <input id="wf-active" type="checkbox"><span class="switch-track" aria-hidden="true"></span><span class="switch-text">Aktif</span>
+            </label>
+            <button id="wf-undo" class="icon-btn" type="button" aria-label="Urungkan (Ctrl+Z)" title="Urungkan (Ctrl+Z)">↶</button>
+            <button id="wf-redo" class="icon-btn" type="button" aria-label="Ulangi (Ctrl+Shift+Z)" title="Ulangi (Ctrl+Shift+Z)">↷</button>
+            <button id="wf-more" class="icon-btn" type="button" aria-label="Menu alur" title="Menu alur">⋯</button>
+            <button id="save-team" class="btn btn-primary" title="Ctrl+S">Simpan</button>
+          </div>
+        </header>
+
+        <div class="wf-body">
+          <div id="wf-editor" class="wf-pane wf-editor">
+            <div id="board" class="board" tabindex="0" aria-label="Kanvas alur. Klik kanan untuk menu, seret latar untuk menggeser, Ctrl+scroll untuk zoom, Tab untuk menambah node.">
+              <div id="wf-note" class="wf-note hidden" role="status"></div>
+              <div id="canvas" class="canvas">
+                <svg id="edges" class="edges" width="8000" height="6000" aria-hidden="true">
+                  <defs>
+                    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                      <path d="M0 0 10 5 0 10z" class="edge-head"></path>
+                    </marker>
+                  </defs>
+                  <g id="edge-lines"></g>
+                  <path id="edge-draft" class="edge draft hidden"></path>
+                </svg>
+                <div id="nodes" class="nodes"></div>
+                <div id="edge-tools" class="edge-tools hidden">
+                  <button id="edge-insert" type="button" aria-label="Sisipkan node di sambungan ini" title="Sisipkan node">+</button>
+                  <button id="edge-delete" type="button" aria-label="Putus sambungan" title="Putus sambungan (Delete)">×</button>
+                </div>
+              </div>
+              <button id="open-creator" class="wf-plus" type="button" title="Tambah node (Tab)" aria-label="Tambah node"><span data-icon="plus"></span></button>
+              <div class="wf-zoom" role="group" aria-label="Zoom">
+                <button id="zoom-fit" type="button" title="Muat semua (1)" aria-label="Muat semua node">⤢</button>
+                <button id="zoom-out" type="button" title="Perkecil (-)" aria-label="Perkecil">−</button>
+                <span id="zoom-level" class="zoom-level">100%</span>
+                <button id="zoom-in" type="button" title="Perbesar (+)" aria-label="Perbesar">+</button>
+                <button id="zoom-tidy" type="button" title="Rapikan tata letak" aria-label="Rapikan tata letak">⇶</button>
+              </div>
+              <div class="wf-run">
+                <div id="run-info" class="run-info hidden" aria-live="polite"></div>
+                <div id="result" class="prose result hidden"></div>
+                <form id="run-form" class="run-form">
+                  <input id="task" placeholder="Input untuk Pemicu (boleh kosong)" aria-label="Input untuk alur" maxlength="50000">
+                  <button id="result-toggle" class="btn btn-ghost hidden" type="button">Hasil</button>
+                  <button id="cancel" class="btn btn-ghost hidden" type="button">Batalkan</button>
+                  <button id="run" class="btn btn-primary run-btn" type="submit">▶ Jalankan alur</button>
+                </form>
+              </div>
+            </div>
+            <aside id="creator" class="creator hidden" aria-label="Tambah node">
+              <div class="creator-head">
+                <h3>Tambah node</h3>
+                <button id="creator-close" class="icon-btn" type="button" aria-label="Tutup" data-icon="x"></button>
+              </div>
+              <input id="creator-search" class="creator-search" placeholder="Cari node… (Enter memilih yang pertama)" aria-label="Cari node">
+              <p id="creator-context" class="hint creator-context"></p>
+              <div id="creator-list" class="creator-list"></div>
+            </aside>
+          </div>
+
+          <div id="wf-runs" class="wf-pane wf-runs hidden">
+            <div id="runs-list" class="runs-list"></div>
+            <div id="run-detail" class="run-detail"></div>
           </div>
         </div>
       </div>
@@ -222,8 +247,10 @@
         <div class="ndv-box">
           <header class="ndv-head">
             <span id="ndv-icon" class="node-icon"></span>
-            <div class="ndv-heading"><span id="ndv-kind" class="node-kind"></span><h3 id="ndv-title"></h3></div>
-            <button id="ndv-remove" class="btn btn-ghost btn-danger btn-small" type="button">Hapus node</button>
+            <div class="ndv-heading"><span id="ndv-kind" class="node-kind"></span>
+              <input id="ndv-title" class="ndv-name" aria-label="Nama node" maxlength="60"></div>
+            <button id="ndv-test" class="btn btn-primary btn-small" type="button" title="Jalankan node ini saja dengan input di kiri">▶ Tes langkah</button>
+            <button id="ndv-remove" class="btn btn-ghost btn-danger btn-small" type="button">Hapus</button>
             <button id="ndv-close" class="icon-btn" type="button" aria-label="Tutup (Esc)" data-icon="x"></button>
           </header>
           <nav id="ndv-tabs" class="ndv-tabs" aria-label="Bagian node">

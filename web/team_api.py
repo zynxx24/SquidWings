@@ -13,7 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from brain.agent.team_orchestrator import team_templates
+from brain.agent.team_flow import to_flow
+from brain.agent.team_orchestrator import MAX_TEAM_MEMBERS, team_templates
 from brain.agent.team_outputs import OutputError, check_database, database_options, send_telegram
 from brain.config import credentials
 from web.router_api import admin
@@ -27,7 +28,7 @@ class MemberInput(BaseModel):
     role: str = Field(default="", max_length=120)
     model_id: str = Field(default="", max_length=160)
     instructions: str = Field(default="", max_length=4000)
-    depends_on: list[str] = Field(default_factory=list, max_length=12)
+    depends_on: list[str] = Field(default_factory=list, max_length=MAX_TEAM_MEMBERS)
     kind: str = Field(default="agent", max_length=20)
     branch: str = Field(default="", max_length=1)
     config: dict[str, Any] = Field(default_factory=dict)
@@ -36,15 +37,35 @@ class MemberInput(BaseModel):
 class TeamInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=1000)
-    members: list[MemberInput] = Field(min_length=2, max_length=12)
+    members: list[MemberInput] = Field(min_length=1, max_length=MAX_TEAM_MEMBERS)
     lead_id: str | None = None
     reviewer_id: str | None = None
     schedule: dict[str, Any] = Field(default_factory=dict)
     mode: str = Field(default="standard", max_length=20)
+    style: str = Field(default="team", max_length=10)
+    starts: list[str] = Field(default_factory=list, max_length=MAX_TEAM_MEMBERS)
+    layout: dict[str, list[float]] = Field(default_factory=dict)
+    active: bool = True
+
+
+def team_view(team: Any) -> dict[str, Any]:
+    """A saved team for the page. An older lead-and-reviewer team also carries how it looks as a plain flow,
+    so the editor can show every connection; it becomes a flow when saved."""
+    data = asdict(team)
+    if data.get("style") != "flow":
+        members, starts = to_flow(data["members"], data.get("lead_id"), data.get("reviewer_id"))
+        data["as_flow"] = {"members": members, "starts": starts}
+    return data
+
+
+def template_view(template: dict[str, Any]) -> dict[str, Any]:
+    members, starts = to_flow(template["members"], template.get("lead_id"), template.get("reviewer_id"))
+    return {**template, "members": members, "starts": starts, "lead_id": None, "reviewer_id": None, "style": "flow"}
 
 
 class RunInput(BaseModel):
-    task: str = Field(min_length=1, max_length=50_000)
+    # Empty is fine: a flow that starts with a table or a template needs no typed input.
+    task: str = Field(default="", max_length=50_000)
 
 
 def service(request: Request) -> Any:
@@ -61,14 +82,14 @@ def member_data(member: MemberInput) -> dict[str, Any]:
 @router.get("")
 async def list_teams(request: Request) -> dict[str, Any]:
     manager = service(request)
-    return {"teams": [asdict(team) for team in manager.store.list_teams()]}
+    return {"teams": [team_view(team) for team in manager.store.list_teams()]}
 
 
 @router.get("/templates")
 async def list_templates(request: Request) -> dict[str, Any]:
     manager = service(request)
     models = [m.id for m in manager.orchestrator.registry.get_all() if m.supports_tools]
-    return {"templates": team_templates(models)}
+    return {"templates": [template_view(t) for t in team_templates(models)]}
 
 
 @router.get("/integrations")
@@ -198,14 +219,33 @@ async def test_telegram(payload: TelegramTest, request: Request) -> dict[str, bo
     return {"sent": True}
 
 
+class NodeTest(BaseModel):
+    member: MemberInput
+    input: str = Field(default="", max_length=1_000_000)
+    task: str = Field(default="", max_length=50_000)
+    team_name: str = Field(default="", max_length=100)
+
+
+@router.post("/node-test")
+async def test_node(payload: NodeTest, request: Request) -> dict[str, Any]:
+    """Run one node on a sample input and show what it would send on, without running the flow."""
+    member = {**payload.member.model_dump(), "depends_on": [], "branch": ""}
+    try:
+        result: dict[str, Any] = await service(request).test_node(member, payload.input, payload.task, payload.team_name)
+        return result
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 @router.post("", status_code=201)
 async def create_team(payload: TeamInput, request: Request) -> dict[str, Any]:
     try:
         team = service(request).create_team(
             payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id,
-            payload.reviewer_id, payload.schedule, payload.mode,
+            payload.reviewer_id, payload.schedule, payload.mode, payload.style, payload.starts, payload.layout,
+            payload.active,
         )
-        return asdict(team)
+        return team_view(team)
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -215,13 +255,26 @@ async def update_team(team_id: str, payload: TeamInput, request: Request) -> dic
     try:
         team = await service(request).update_team(
             team_id, payload.name, payload.description, [member_data(m) for m in payload.members], payload.lead_id,
-            payload.reviewer_id, payload.schedule, payload.mode,
+            payload.reviewer_id, payload.schedule, payload.mode, payload.style, payload.starts, payload.layout,
+            payload.active,
         )
-        return asdict(team)
+        return team_view(team)
     except KeyError as exc:
         raise HTTPException(404, "Team not found") from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+class ActiveInput(BaseModel):
+    active: bool
+
+
+@router.put("/{team_id}/active")
+async def set_active(team_id: str, payload: ActiveInput, request: Request) -> dict[str, Any]:
+    try:
+        return team_view(service(request).set_active(team_id, payload.active))
+    except KeyError as exc:
+        raise HTTPException(404, "Team not found") from exc
 
 
 @router.delete("/{team_id}")
@@ -242,7 +295,10 @@ async def list_runs(team_id: str, request: Request) -> dict[str, Any]:
 @router.post("/{team_id}/runs", status_code=202)
 async def start_run(team_id: str, payload: RunInput, request: Request) -> dict[str, Any]:
     try:
-        run = await service(request).start_run(team_id, payload.task)
+        manager = service(request)
+        team = manager.store.get_team(team_id)
+        title = "" if payload.task.strip() or team is None else team.name[:28]
+        run = await manager.start_run(team_id, payload.task, title=title)
         return asdict(run)
     except KeyError as exc:
         raise HTTPException(404, "Team not found") from exc

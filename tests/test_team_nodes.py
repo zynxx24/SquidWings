@@ -313,12 +313,12 @@ async def test_outputs_never_send_the_task_when_every_agent_failed(tmp_path: Pat
     assert run.agents["kirim"]["status"] == "failed"
 
 
-def test_flow_needs_an_agent_and_at_most_six(tmp_path: Path, settings: Any) -> None:
+def test_team_needs_an_agent_but_has_no_agent_cap(tmp_path: Path, settings: Any) -> None:
     manager, _ = make(tmp_path)
     with pytest.raises(ValueError, match="minimal satu agent"):
         manager.create_team("t", "", [node("a", "delay", {"seconds": 1}), node("b", "delay", {"seconds": 1})], None)
-    with pytest.raises(ValueError, match="Maksimal 6"):
-        manager.create_team("t", "", [agent(str(i)) for i in range(7)], "0")
+    team = manager.create_team("t", "", [agent(str(i)) for i in range(20)], "0")
+    assert len(team.members) == 20
 
 
 def test_secrets_never_enter_saved_teams(tmp_path: Path, settings: Any) -> None:

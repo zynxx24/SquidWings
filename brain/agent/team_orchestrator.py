@@ -21,15 +21,19 @@ from brain.agent.team_chats import ChatLog, Limiter
 from brain.agent.team_flow import (
     BRANCHES,
     BRANCHING_KINDS,
+    FLOW_STYLES,
     NODE_KINDS,
+    TRIGGER_ID,
     check_condition,
     clock_values,
+    json_values,
     next_run_after,
     normalize_node_config,
     normalize_schedule,
     parse_decision,
     render_template,
     telegram_task,
+    unfilled,
     uses_ai,
 )
 from brain.agent.team_outputs import (
@@ -48,6 +52,7 @@ from brain.harness import RunLimits, Tier, tier_for
 from brain.utils import session_settings, shared_files, workspace_context
 from brain.utils.datastore import access as data_access
 from brain.utils.datastore.access import Access
+from brain.utils.datastore.base import DataError
 from brain.utils.logger import get_logger
 from brain.utils.markdown_compact import fit_markdown
 from brain.utils.session_names import quick_title
@@ -59,12 +64,12 @@ from brain.utils.workspace_context import (
 )
 
 logger = get_logger(__name__)
-MAX_TEAM_MEMBERS = 12
+# Not a design limit, only a guard against a broken page sending thousands of nodes.
+MAX_TEAM_MEMBERS = 500
 TEAM_MODES = ("standard", "video", "motion")
 # "motion": the team builds a Studio video (motion.json) the user can then edit and comment on.
 STUDIO_SKILL = "studio"
 VIDEO_SKILL = "animate"
-MAX_AGENTS = 6
 SCHEDULE_CHECK_SECONDS = 30
 TELEGRAM_IDLE_SECONDS = 30
 # A schedule this late was missed, say the server was off. Running it now would surprise.
@@ -235,6 +240,14 @@ class Team:
     # "video" gives every agent the time to build and render, and wakes the animate skill.
     # "motion" gives the same time and wakes the studio skill: the result opens in the video editor.
     mode: str = "standard"
+    # "flow" runs along the drawn connections only (n8n). "team" is the older lead-and-reviewer model.
+    style: str = "team"
+    # In a flow: the nodes the trigger is connected to. A node with no input that is not here does not run.
+    starts: list[str] = field(default_factory=list)
+    # Where each node sits on the canvas: {node id: [x, y]}, the trigger under "__trigger".
+    layout: dict[str, list[float]] = field(default_factory=dict)
+    # Off: the schedule and the Telegram trigger rest, without losing their settings. A manual run still works.
+    active: bool = True
 
 
 @dataclass
@@ -1178,17 +1191,28 @@ class TeamOrchestrator:
         reviewer_id: str | None = None,
         schedule: dict[str, Any] | None = None,
         mode: str = "standard",
+        style: str = "team",
+        starts: list[str] | None = None,
+        layout: dict[str, Any] | None = None,
+        active: bool = True,
     ) -> Team:
-        parsed = self._validate_members(members, lead_id, reviewer_id)
+        style = self._style(style)
+        if style == "flow":
+            lead_id, reviewer_id = None, None
+        parsed = self._validate_members(members, lead_id, reviewer_id, style)
         team = Team(
+            active=bool(active),
             id=f"team-{uuid.uuid4().hex[:12]}",
             name=name.strip(),
             description=description.strip(),
             members=parsed,
-            lead_id=self._lead_for(parsed, lead_id),
+            lead_id=self._lead_for(parsed, lead_id, style),
             reviewer_id=reviewer_id or None,
             schedule=normalize_schedule(schedule),
             mode=self._mode(mode),
+            style=style,
+            starts=self._starts(parsed, starts, style),
+            layout=self._layout(parsed, layout),
         )
         if not team.name:
             raise ValueError("Team name cannot be empty.")
@@ -1200,9 +1224,11 @@ class TeamOrchestrator:
         members: list[dict[str, Any]],
         lead_id: str | None,
         reviewer_id: str | None = None,
+        style: str = "team",
     ) -> list[TeamMember]:
-        if not 2 <= len(members) <= MAX_TEAM_MEMBERS:
-            raise ValueError(f"A team needs 2–{MAX_TEAM_MEMBERS} nodes.")
+        least = 1 if style == "flow" else 2
+        if not least <= len(members) <= MAX_TEAM_MEMBERS:
+            raise ValueError(f"Alur butuh {least} sampai {MAX_TEAM_MEMBERS} node.")
         seen: set[str] = set()
         parsed: list[TeamMember] = []
         for member in members:
@@ -1216,11 +1242,16 @@ class TeamOrchestrator:
             kind = str(member.get("kind") or "agent")
             if kind not in NODE_KINDS:
                 raise ValueError(f"Jenis node tidak dikenal: {kind}.")
-            config = normalize_node_config(kind, member.get("config"), DATABASE_IDS)
+            label = str(member.get("name") or kind).strip()
+            try:
+                config = normalize_node_config(kind, member.get("config"), DATABASE_IDS)
+            except ValueError as exc:
+                # Name the node, so the page can point at it.
+                raise ValueError(f"Node \"{label}\": {exc}") from None
             model_id = str(member.get("model_id") or "")
             needs_model = kind == "agent" or uses_ai(config)
             if needs_model and self.orchestrator.registry.get(model_id) is None:
-                raise ValueError(f"Unknown model: {model_id}")
+                raise ValueError(f"Node \"{label}\": model belum dipilih atau tidak dikenal ({model_id or 'kosong'}).")
             branch = str(member.get("branch") or "")
             if branch and branch not in BRANCHES:
                 raise ValueError("Jalur gate hanya A, B, C, atau D.")
@@ -1239,10 +1270,8 @@ class TeamOrchestrator:
         if any(not item.name or not item.role for item in parsed):
             raise ValueError("Every member needs a name and role.")
         agents = {item.id for item in parsed if item.kind == "agent"}
-        if not agents:
+        if not agents and style != "flow":
             raise ValueError("Alur butuh minimal satu agent.")
-        if len(agents) > MAX_AGENTS:
-            raise ValueError(f"Maksimal {MAX_AGENTS} agent dalam satu tim.")
         if lead_id and lead_id not in seen:
             raise ValueError("The lead must be a team member.")
         if lead_id and lead_id not in agents:
@@ -1263,6 +1292,34 @@ class TeamOrchestrator:
                 raise ValueError(f"{item.name} depends on an unknown member.")
         execution_layers(parsed)
         return parsed
+
+    @staticmethod
+    def _style(style: str | None) -> str:
+        style = style or "team"
+        if style not in FLOW_STYLES:
+            raise ValueError(f"Gaya alur tidak dikenal: {style}.")
+        return style
+
+    @staticmethod
+    def _starts(members: list[TeamMember], starts: list[str] | None, style: str) -> list[str]:
+        if style != "flow":
+            return []
+        ids = {m.id for m in members}
+        return [s for s in dict.fromkeys(starts or []) if s in ids]
+
+    @staticmethod
+    def _layout(members: list[TeamMember], layout: dict[str, Any] | None) -> dict[str, list[float]]:
+        """Positions on the canvas for the nodes that exist, as two rounded numbers each."""
+        ids = {m.id for m in members} | {TRIGGER_ID}
+        kept: dict[str, list[float]] = {}
+        for key, value in (layout or {}).items():
+            if key not in ids or not isinstance(value, list | tuple) or len(value) != 2:
+                continue
+            try:
+                kept[key] = [round(float(value[0]), 1), round(float(value[1]), 1)]
+            except (TypeError, ValueError):
+                continue
+        return kept
 
     @staticmethod
     def _mode(mode: str | None) -> str:
@@ -1292,8 +1349,10 @@ class TeamOrchestrator:
         }
 
     @staticmethod
-    def _lead_for(members: list[TeamMember], lead_id: str | None) -> str:
+    def _lead_for(members: list[TeamMember], lead_id: str | None, style: str = "team") -> str:
         """An all-agent team always has a lead. A flow can end without one."""
+        if style == "flow":
+            return ""
         if lead_id:
             return lead_id
         return members[0].id if all(m.kind == "agent" for m in members) else ""
@@ -1308,6 +1367,10 @@ class TeamOrchestrator:
         reviewer_id: str | None = None,
         schedule: dict[str, Any] | None = None,
         mode: str = "standard",
+        style: str = "team",
+        starts: list[str] | None = None,
+        layout: dict[str, Any] | None = None,
+        active: bool = True,
     ) -> Team:
         # A customer's chat is a run too, but it must not lock the owner out of changing the bot.
         if any(not run.finished and run.trigger.get("audience") != "public" for run in self.store.list_runs(team_id)):
@@ -1315,7 +1378,10 @@ class TeamOrchestrator:
         existing = self.store.get_team(team_id)
         if existing is None:
             raise KeyError(team_id)
-        parsed = self._validate_members(members, lead_id, reviewer_id)
+        style = self._style(style)
+        if style == "flow":
+            lead_id, reviewer_id = None, None
+        parsed = self._validate_members(members, lead_id, reviewer_id, style)
         if not name.strip():
             raise ValueError("Team name cannot be empty.")
         replacement = Team(
@@ -1323,7 +1389,11 @@ class TeamOrchestrator:
             name=name.strip(),
             description=description.strip(),
             members=parsed,
-            lead_id=self._lead_for(parsed, lead_id),
+            lead_id=self._lead_for(parsed, lead_id, style),
+            style=style,
+            starts=self._starts(parsed, starts, style),
+            layout=self._layout(parsed, layout),
+            active=bool(active),
             created_at=existing.created_at,
             updated_at=time.time(),
             reviewer_id=reviewer_id or None,
@@ -1333,6 +1403,18 @@ class TeamOrchestrator:
         )
         self.store.put_team(replacement)
         return replacement
+
+    def set_active(self, team_id: str, active: bool) -> Team:
+        """Switch a flow's schedule and Telegram trigger on or off, keeping every setting."""
+        team = self.store.get_team(team_id)
+        if team is None:
+            raise KeyError(team_id)
+        team.active = bool(active)
+        if active:
+            # Counting from now, so switching on does not fire a time that passed while it was off.
+            team.last_scheduled_at = time.time()
+        self.store.put_team(team)
+        return team
 
     async def delete_team(self, team_id: str) -> bool:
         if self.store.get_team(team_id) is None:
@@ -1392,6 +1474,8 @@ class TeamOrchestrator:
                 raise KeyError(team_id)
             if exclusive and any(not run.finished for run in self.store.list_runs(team_id)):
                 raise ValueError("This team already has an active run.")
+            if team.style == "flow" and not team.starts:
+                raise ValueError("Belum ada node yang tersambung ke Pemicu. Tarik garis dari Pemicu ke node pertama.")
             now = time.time()
             run = TeamRun(
                 id=f"run-{uuid.uuid4().hex[:12]}", team_id=team_id, task=task.strip(),
@@ -1402,7 +1486,7 @@ class TeamOrchestrator:
                     "started_at": None, "completed_at": None,
                 } for member in team.members},
                 trigger=dict(trigger or {}),
-                budget={**self._budget(team), **(budget or {})},
+                budget={**self._budget(team), **({"worker_share": 1.0} if team.style == "flow" else {}), **(budget or {})},
                 title=title,
             )
             run.created_at = now
@@ -1632,6 +1716,8 @@ class TeamOrchestrator:
         That is anything following the lead or reviewer, plus any output node left
         unconnected: with no input of its own, the final answer is what it delivers.
         """
+        if team.style == "flow":
+            return set()
         after = {m.id for m in team.members if m.kind in OUTPUT_KINDS and not m.depends_on}
         anchors = {team.lead_id, team.reviewer_id} - {None, ""}
         changed = True
@@ -1658,17 +1744,25 @@ class TeamOrchestrator:
 
     @classmethod
     def _is_active(cls, run: TeamRun, team: Team, member: TeamMember) -> bool:
-        """Whether a path reached this node. A merge set to "all" waits for every path."""
-        if not member.depends_on:
-            return True
+        """Whether a path reached this node. A merge set to "all" waits for every path.
+
+        In a flow, a node runs only when a line reaches it: from the trigger, or from a node that ran.
+        """
         kinds = {m.id: m.kind for m in team.members}
         reached = [cls._reached(run, kinds, member, d) for d in member.depends_on]
+        if team.style == "flow":
+            started = member.id in team.starts
+            if member.kind == "merge" and member.config.get("mode") == "all" and reached:
+                return all(reached)
+            return started or any(reached)
+        if not member.depends_on:
+            return True
         if member.kind == "merge" and member.config.get("mode") == "all":
             return all(reached)
         return any(reached)
 
     @staticmethod
-    def _node_input(run: TeamRun, member: TeamMember) -> str:
+    def _node_input(run: TeamRun, member: TeamMember, team: Team | None = None) -> str:
         """What arrives at a node: its dependencies' text, else the answer.
 
         A failed Telegram still hands on what it was given, so the database after it
@@ -1680,6 +1774,10 @@ class TeamOrchestrator:
             run.agents[d]["content"] for d in member.depends_on
             if run.agents[d]["status"] in REPORTABLE and run.agents[d]["content"]
         ]
+        if team is not None and team.style == "flow":
+            # Exactly what the lines bring. The trigger brings the task.
+            joined = "\n\n".join(dict.fromkeys(parts))
+            return joined or (TeamOrchestrator._message(run) if member.id in team.starts else "")
         text = "\n\n".join(dict.fromkeys(parts)) or run.result
         if member.kind in OUTPUT_KINDS or member.depends_on:
             return text
@@ -1692,9 +1790,24 @@ class TeamOrchestrator:
             return str(run.trigger.get("text") or run.task)
         return run.task
 
+    @staticmethod
+    def _flow_result(run: TeamRun, team: Team) -> str:
+        """A flow's result is what its last step made: an end node (nothing follows it) that finished, else
+        the latest node that finished. Sending nodes pass their input on, so the answer they sent counts."""
+        followed = {d for m in team.members for d in m.depends_on}
+        done = [m for m in team.members if run.agents[m.id]["status"] == "completed" and run.agents[m.id]["content"]]
+        made = [m for m in done if m.kind not in OUTPUT_KINDS] or done
+        ends = [m for m in made if m.id not in followed] or made
+        if not ends:
+            return ""
+        last = max(ends, key=lambda m: run.agents[m.id].get("completed_at") or 0)
+        return str(run.agents[last.id]["content"])
+
     def _final_answer(
         self, run: TeamRun, team: Team, workers: list[TeamMember], lead_error: Exception | None
     ) -> str:
+        if team.style == "flow":
+            return self._flow_result(run, team)
         lead_state = run.agents.get(team.lead_id)
         if lead_state and lead_state["status"] == "completed":
             return str(lead_state["content"])
@@ -1781,10 +1894,95 @@ class TeamOrchestrator:
 
     @staticmethod
     def _template_values(run: TeamRun, team: Team, text: str) -> dict[str, str]:
-        values = {"input": text, "task": TeamOrchestrator._message(run), "team": team.name, **clock_values(datetime.now())}
+        values = {**json_values(text), "input": text, "task": TeamOrchestrator._message(run), "team": team.name,
+                  **clock_values(datetime.now())}
         for member_id, state in run.agents.items():
             values[f"node.{member_id}"] = str(state.get("content") or "")
         return values
+
+    async def _node_effect(self, run: TeamRun, team: Team, member: TeamMember, text: str, state: dict[str, Any],
+                           wait: bool = True) -> None:
+        """What a node that is not an agent does with its input. Fills ``state`` (content, note, branch)."""
+        # Outputs need a real answer: they must never send the task back as if it were one.
+        if member.kind in OUTPUT_KINDS and not text.strip():
+            raise OutputError("Tidak ada hasil untuk dikirim, karena agent sebelumnya gagal")
+        if member.kind == "delay":
+            seconds = int(member.config["seconds"])
+            if wait:
+                await asyncio.sleep(seconds)
+                run.waited_seconds += seconds
+            else:
+                state["note"] = f"Tes: jeda {seconds} detik dilewati"
+        elif member.kind == "gate":
+            state["branch"], state["note"] = await self._decide_gate(run, member, text)
+        elif member.kind == "switch":
+            state["branch"], state["note"] = await self._decide_switch(run, member, text)
+        elif member.kind == "merge":
+            state["note"] = f"{sum(1 for d in member.depends_on if run.agents[d]['status'] in REPORTABLE)} jalur bergabung"
+        elif member.kind == "set":
+            state["content"] = render_template(member.config["text"], self._template_values(run, team, text))
+        elif member.kind == "http":
+            body = render_template(member.config.get("body", ""), self._template_values(run, team, text))
+            state["content"] = await http_request(member.config["method"], member.config["url"], body)
+            state["note"] = f"{member.config['method']} berhasil"
+        elif member.kind == "telegram":
+            # A run started from a Telegram message answers in that chat.
+            chat_id = str(member.config.get("chat_id") or run.trigger.get("chat_id") or "")
+            sent = await send_telegram(text, chat_id)
+            state["note"] = f"{sent} pesan terkirim"
+        elif member.kind == "datatable":
+            state["content"], state["note"] = await asyncio.to_thread(
+                self._datatable, member.config, self._template_values(run, team, text))
+        elif member.kind == "database":
+            await save_to_database(str(member.config["database"]), str(member.config["table"]), {
+                "run_id": run.id,
+                "team_id": team.id,
+                "team_name": team.name,
+                "node_id": member.id,
+                "task": run.task,
+                "content": text,
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+            })
+            state["note"] = f"Tersimpan di {member.config['database']}, tabel {member.config['table']}"
+
+    async def test_node(self, member: dict[str, Any], text: str, task: str = "", team_name: str = "") -> dict[str, Any]:
+        """Run one node by itself on a sample input, like n8n's "execute step". Agents are not tested here: they
+        need the whole run. A delay is not waited, and a sending node really sends."""
+        parsed = self._validate_members([member], None, None, "flow")[0]
+        if parsed.kind == "agent":
+            raise ValueError("Agent dites lewat Jalankan alur, karena ia butuh langkah sebelumnya.")
+        run = TeamRun(id=f"test-{uuid.uuid4().hex[:10]}", team_id="", task=task or text,
+                      agents={parsed.id: {"status": "running", "content": text, "name": parsed.name}})
+        team = Team(id="test", name=team_name or "Tes", description="", members=[parsed], lead_id="", style="flow",
+                    starts=[parsed.id])
+        state = run.agents[parsed.id]
+        if parsed.kind == "merge":
+            return {"content": text, "note": "Merge meneruskan isi semua jalur yang tiba", "branch": ""}
+        try:
+            await self._node_effect(run, team, parsed, text, state, wait=False)
+        except OutputError as exc:
+            raise ValueError(str(exc)) from None
+        return {"content": state.get("content", ""), "note": state.get("note", ""), "branch": state.get("branch", ""),
+                "tokens": run.total_tokens}
+
+    @staticmethod
+    def _datatable(config: dict[str, Any], values: dict[str, str]) -> tuple[str, str]:
+        from brain.utils.datastore import registry, table_ops
+
+        def fill(template: str) -> str:
+            text = render_template(template, values)
+            left = unfilled(text)
+            if left:
+                # Writing "{{json.kode}}" into a table would hide the mistake in the data. Say what is missing instead.
+                shape = "JSON dengan kolom: " + ", ".join(k[5:] for k in values if k.startswith("json.") and k.count(".") == 1) \
+                    if "json" in values else "teks biasa, bukan JSON"
+                raise OutputError(f"{', '.join(left)} tidak ada di input. Input node ini berupa {shape}.")
+            return text
+
+        try:
+            return table_ops.run(config, fill, registry.open_backend, registry.get_relations())
+        except DataError as exc:
+            raise OutputError(str(exc)) from None
 
     async def _run_node(self, run: TeamRun, team: Team, member: TeamMember, mode: str = "worker") -> None:
         """Run one node of any kind. A failed output must not cost the user the answer."""
@@ -1798,44 +1996,10 @@ class TeamOrchestrator:
             return
         state.update(status="running", error="", started_at=time.time())
         self._checkpoint(run, "agent_started", member.id)
-        text = self._node_input(run, member)
+        text = self._node_input(run, member, team)
         state["content"] = text
         try:
-            # Outputs need a real answer: they must never send the task back as if it were one.
-            if member.kind in OUTPUT_KINDS and not text.strip():
-                raise OutputError("Tidak ada hasil untuk dikirim, karena agent sebelumnya gagal")
-            if member.kind == "delay":
-                seconds = int(member.config["seconds"])
-                await asyncio.sleep(seconds)
-                run.waited_seconds += seconds
-            elif member.kind == "gate":
-                state["branch"], state["note"] = await self._decide_gate(run, member, text)
-            elif member.kind == "switch":
-                state["branch"], state["note"] = await self._decide_switch(run, member, text)
-            elif member.kind == "merge":
-                state["note"] = f"{sum(1 for d in member.depends_on if run.agents[d]['status'] in REPORTABLE)} jalur bergabung"
-            elif member.kind == "set":
-                state["content"] = render_template(member.config["text"], self._template_values(run, team, text))
-            elif member.kind == "http":
-                body = render_template(member.config.get("body", ""), self._template_values(run, team, text))
-                state["content"] = await http_request(member.config["method"], member.config["url"], body)
-                state["note"] = f"{member.config['method']} berhasil"
-            elif member.kind == "telegram":
-                # A run started from a Telegram message answers in that chat.
-                chat_id = str(member.config.get("chat_id") or run.trigger.get("chat_id") or "")
-                sent = await send_telegram(text, chat_id)
-                state["note"] = f"{sent} pesan terkirim"
-            elif member.kind == "database":
-                await save_to_database(str(member.config["database"]), str(member.config["table"]), {
-                    "run_id": run.id,
-                    "team_id": team.id,
-                    "team_name": team.name,
-                    "node_id": member.id,
-                    "task": run.task,
-                    "content": text,
-                    "created_at": datetime.now().isoformat(timespec="seconds"),
-                })
-                state["note"] = f"Tersimpan di {member.config['database']}, tabel {member.config['table']}"
+            await self._node_effect(run, team, member, text, state)
             state["status"] = "completed"
         except asyncio.CancelledError:
             state["status"] = "cancelled"
@@ -1876,7 +2040,8 @@ class TeamOrchestrator:
                 return
 
     @staticmethod
-    def _member_prompt(member: TeamMember, task: str, mode: str = "worker", public: bool = False) -> str:
+    def _member_prompt(member: TeamMember, task: str, mode: str = "worker", public: bool = False, flow: str = "") -> str:
+        """The agent's instructions. ``flow`` is "step" or "final" for an agent in a flow, else ""."""
         instruction = f"\nAdditional instructions: {member.instructions}" if member.instructions else ""
         if (member.config.get("direct") or public) and mode in {"worker", "lead", "after"}:
             # The agent talks to a person in a chat, so no report with sections: just the message to send. A customer
@@ -1904,6 +2069,23 @@ class TeamOrchestrator:
                         "call owner_notify with a short summary and tell them the owner will reply."
                     )
             return prompt
+        if flow and not member.config.get("report"):
+            prompt = (
+                f"You are {member.name}. Role: {member.role}.{instruction}\n"
+                "You are one step of an automated workflow. Work on the task and on the input the previous steps "
+                "send you (in the context). Do the work with tools instead of describing it: look things up, write "
+                "files, run commands. Check facts instead of guessing, and say so when you could not."
+            )
+            if flow == "final":
+                return prompt + (
+                    "\nYours is the last step: your reply is the result the user receives. Make it complete and in "
+                    "their language, give every finished file with share_file, and do not mention the workflow or "
+                    "other steps."
+                )
+            return prompt + (
+                "\nReturn only what this step produces, ready for the next step to use. When the next step needs "
+                "fields (for a table or a message), return them as one JSON object or a JSON list, with no text around it."
+            )
         if mode == "lead":
             return (
                 f"You are {member.name}, the lead of an AI team. Role: {member.role}.{instruction}\n"
@@ -1938,6 +2120,14 @@ class TeamOrchestrator:
             "Hasil (what you made or found), Bukti (files written, commands run and their output, sources), "
             "and Belum pasti (risks and what you could not check)."
         )
+
+    @staticmethod
+    def _flow_role(team: Team, member: TeamMember) -> str:
+        """The agent's place in a flow: final when nothing (or only sending nodes) follows it, else step."""
+        if team.style != "flow":
+            return ""
+        nexts = [m for m in team.members if member.id in m.depends_on]
+        return "final" if all(m.kind in OUTPUT_KINDS for m in nexts) else "step"
 
     @staticmethod
     def _report(state: dict[str, Any]) -> str:
@@ -1992,8 +2182,10 @@ class TeamOrchestrator:
 
     @classmethod
     def _workers_until(cls, run: TeamRun) -> float:
+        """Workers stop early to leave the lead time. A flow has no lead, so its nodes get the whole run."""
         start = run.started_at or time.time()
-        return start + float(cls._run_budget(run)["run_seconds"]) * WORKER_SHARE_OF_RUN + run.waited_seconds
+        share = float(run.budget.get("worker_share", WORKER_SHARE_OF_RUN))
+        return start + float(cls._run_budget(run)["run_seconds"]) * share + run.waited_seconds
 
     def _limits(self, run: TeamRun, mode: str) -> RunLimits:
         budget = self._run_budget(run)
@@ -2091,7 +2283,7 @@ class TeamOrchestrator:
             # The task made inside inherits this access, so every tool call of this agent sees only what its node was granted.
             with data_access.restrict(access):
                 call = self.orchestrator.process(
-                    user_input=self._member_prompt(member, run.task, mode, public),
+                    user_input=self._member_prompt(member, run.task, mode, public, self._flow_role(team, member)),
                     session_id=f"{run.id}-{member.id}-{suffix}",
                     override_model=member.model_id,
                     stream=False,
@@ -2190,6 +2382,8 @@ class TeamOrchestrator:
         now = time.time() if now is None else now
         started: list[str] = []
         for team in self.store.list_teams():
+            if not team.active:
+                continue
             due = next_run_after(team.schedule, team.last_scheduled_at or team.updated_at)
             if due is None or now < due:
                 continue
@@ -2206,7 +2400,7 @@ class TeamOrchestrator:
         return started
 
     def _telegram_teams(self) -> list[Team]:
-        return [team for team in self.store.list_teams() if team.schedule.get("mode") == "telegram"]
+        return [team for team in self.store.list_teams() if team.active and team.schedule.get("mode") == "telegram"]
 
     def _public_teams(self) -> list[Team]:
         return [team for team in self._telegram_teams() if team.schedule.get("audience") == "public"]

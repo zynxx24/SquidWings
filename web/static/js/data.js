@@ -120,6 +120,7 @@
   async function loadSources(keep = true) {
     const data = await api('/api/data/sources');
     D.sources = data.sources;
+    D.relations = data.relations || [];
     D.info = data;
     if (!D.sources.some(s => s.name === D.name)) D.name = '';
     if (!D.name && D.sources.length) {
@@ -138,7 +139,7 @@
       if (!list.length) return '';
       return `<div class="data-group">${title}</div>${list.map(s => `
         <div class="data-src ${s.name === D.name ? 'on' : ''}" role="button" tabindex="0" data-src="${esc(s.name)}" aria-current="${s.name === D.name ? 'true' : 'false'}">
-          <span class="data-src-icon" aria-hidden="true">${esc(s.kind === 'file' ? s.format : BADGE[s.kind] || s.kind)}</span>
+          <span class="data-src-icon" aria-hidden="true">${esc(s.kind === 'file' ? ({ sqlite: 'sql', sqlite3: 'sql', db: 'sql', xlsx: 'xls', jsonl: 'json', ndjson: 'json' }[s.format] || s.format) : BADGE[s.kind] || s.kind)}</span>
           <span class="data-src-text"><b>${esc(s.label || s.name)}</b><small>${esc(s.name)} · ${esc(KIND[s.kind] || s.kind)}</small></span>
           <button class="data-src-more" type="button" data-more="${esc(s.name)}" aria-label="Menu ${esc(s.label || s.name)}" title="Menu (atau klik kanan)">⋯</button>
         </div>`).join('')}`;
@@ -216,6 +217,8 @@
   /* The "+ Source" menu and its small forms. */
   function addMenu() {
     return [
+      { heading: 'Tabel data (bawaan)' },
+      { label: 'Tabel baru…', hint: 'tanpa file, langsung pakai', run: builtinTableDialog },
       { heading: 'Di komputer ini' },
       { label: 'File baru…', hint: 'xlsx, csv, json, sqlite', run: newFileDialog },
       { label: 'Impor file…', hint: 'dari komputer ini', run: importDialog },
@@ -232,6 +235,29 @@
     await loadSources(false);
     await pick(source.name);
     addedHook();
+  }
+
+  /* A table in the app's own "Tabel data", like n8n's data tables: no file to name, no URL to fill. */
+  function builtinTableDialog() {
+    dialogForm({
+      title: 'Tabel baru',
+      note: 'Disimpan di "Tabel data" milik aplikasi ini (SQLite). Kolom id dibuat otomatis, kolom lain bisa ditambah nanti.',
+      fields: [
+        { name: 'table', label: 'Nama tabel', placeholder: 'pelanggan', required: true, max: 64, hint: 'Huruf, angka, dan garis bawah.' },
+        { name: 'columns', label: 'Kolom', type: 'textarea', rows: 2, placeholder: 'nama, hp, alamat', hint: 'Pisahkan dengan koma.' },
+      ],
+      submit: 'Buat tabel',
+      onSubmit: async values => {
+        const made = await guarded('/api/data/tables', 'POST', { table: values.table, columns: values.columns.split(',').map(c => c.trim()).filter(Boolean) });
+        D.table = made.table.name;
+        await loadSources(false);
+        D.name = made.source.name;
+        remember(D.name);
+        renderSources();
+        await openCurrent();
+        addedHook();
+      },
+    });
   }
 
   function newFileDialog() {
@@ -375,12 +401,14 @@
 
   function renderBar() {
     const source = current();
-    if (!source) { $('data-bar').innerHTML = ''; $('data-note').hidden = true; return; }
+    if (!source) { $('data-bar').innerHTML = ''; $('data-note').hidden = true; $('data-rel').hidden = true; return; }
     const tables = D.tables.length > 1
       ? `<div class="data-tables" role="tablist" aria-label="Tabel">${D.tables.map(t => `<button class="data-tab ${t.name === D.table ? 'on' : ''}" type="button" role="tab" aria-selected="${t.name === D.table}" data-table="${esc(t.name)}">${esc(t.name)}</button>`).join('')}</div>` : '';
     $('data-bar').innerHTML = `<h3>${esc(source.label || source.name)}</h3>${tables}
       <input id="data-search" class="data-search" type="search" placeholder="Cari di tabel ini…" aria-label="Cari" value="${esc(D.search)}">
       <span class="data-spacer"></span>
+      <button id="data-rel-toggle" class="btn btn-ghost btn-small ${D.showRel ? 'on' : ''}" type="button" aria-expanded="${D.showRel ? 'true' : 'false'}" title="Kolom yang menunjuk ke tabel lain">Relasi${tableRelations().length ? ` (${tableRelations().length})` : ''}</button>
+      <button id="data-new-table" class="btn btn-ghost btn-small" type="button">+ Tabel</button>
       <button id="data-new-row" class="btn btn-ghost btn-small" type="button">+ Baris</button>
       <button id="data-reload" class="btn btn-ghost btn-small" type="button" title="Muat ulang">↻</button>`;
     $('data-bar').querySelectorAll('[data-table]').forEach(b => { b.onclick = () => { D.table = b.dataset.table; D.offset = 0; D.sort = ''; D.sel = null; renderBar(); loadRows(); }; });
@@ -393,8 +421,11 @@
     let timer = 0;
     $('data-search').oninput = e => { clearTimeout(timer); timer = setTimeout(() => { D.search = e.target.value.trim(); D.offset = 0; loadRows(); }, 260); };
     $('data-new-row').onclick = () => addRowDialog(null);
+    $('data-new-table').onclick = newTable;
+    $('data-rel-toggle').onclick = () => { D.showRel = !D.showRel; renderBar(); };
     $('data-reload').onclick = openCurrent;
     updateNote();
+    renderRelations();
   }
 
   function updateNote() {
@@ -415,7 +446,8 @@
       return;
     }
     if (!page) { box.innerHTML = '<div class="data-empty"><p>Memuat…</p></div>'; return; }
-    const head = page.columns.map((col, c) => `<th data-col="${esc(col)}" data-c="${c}" scope="col" title="Klik untuk mengurutkan. Klik kanan untuk menu kolom.">${esc(col)}${D.sort === col ? `<span class="sort-mark" aria-hidden="true">${D.desc ? '▼' : '▲'}</span>` : ''}</th>`).join('');
+    const links = Object.fromEntries(tableRelations().filter(r => r.source === D.name && r.table === D.table).map(r => [r.column, r]));
+    const head = page.columns.map((col, c) => `<th data-col="${esc(col)}" data-c="${c}" scope="col" title="${links[col] ? `Menunjuk ke ${esc(links[col].target_table)}.${esc(links[col].target_column)}. ` : ''}Klik untuk mengurutkan. Klik kanan untuk menu kolom.">${esc(col)}${links[col] ? `<span class="rel-mark" aria-label="berelasi ke ${esc(links[col].target_table)}">→ ${esc(links[col].target_table)}</span>` : ''}${D.sort === col ? `<span class="sort-mark" aria-hidden="true">${D.desc ? '▼' : '▲'}</span>` : ''}</th>`).join('');
     const body = page.rows.map((row, r) => `<tr data-r="${r}"><th class="rn" scope="row" data-r="${r}">${esc(page.key ? D.offset + r + 1 : row.key)}</th>${page.columns.map((col, c) => {
       const value = row.values[col];
       const kind = value === null || value === undefined || value === '' ? ' nul' : typeof value === 'number' ? ' num' : '';
@@ -584,18 +616,109 @@
         await guarded(`${base()}/tables`, 'POST', { table: values.table, columns: values.columns.split(',').map(c => c.trim()).filter(Boolean) });
         D.table = values.table;
         await openCurrent();
+        addedHook();
       },
     });
   }
 
   function dropTable(name) {
     if (!confirm(`Hapus tabel "${name}" beserta semua isinya? Ini tidak bisa dibatalkan.`)) return;
-    guarded(`${base()}/tables/drop`, 'POST', { table: name }).then(() => { D.table = ''; return openCurrent(); }).catch(e => toast(e.message));
+    guarded(`${base()}/tables/drop`, 'POST', { table: name }).then(async () => { D.table = ''; await loadSources(); await openCurrent(); addedHook(); }).catch(e => toast(e.message));
   }
 
   function sortBy(col, desc) { D.sort = col; D.desc = desc; D.offset = 0; D.sel = null; loadRows(); }
   function clearSort() { D.sort = ''; D.desc = false; loadRows(); }
   function cycleSort(col) { if (D.sort !== col) sortBy(col, false); else if (!D.desc) sortBy(col, true); else clearSort(); }
+
+  /* ── Relations ───────────────────────────────────── */
+  const tableRelations = () => (D.relations || []).filter(r => (r.source === D.name && r.table === D.table) || (r.target_source === D.name && r.target_table === D.table));
+
+  async function afterRelation() {
+    await loadSources();
+    renderBar();
+    renderGrid();
+    addedHook();
+  }
+
+  function renderRelations() {
+    const box = $('data-rel');
+    if (!D.showRel || !current() || !D.table) { box.hidden = true; return; }
+    const list = tableRelations();
+    box.hidden = false;
+    box.innerHTML = `<div class="rel-list">${list.map(r => {
+      const outgoing = r.source === D.name && r.table === D.table;
+      const text = outgoing
+        ? `<b>${esc(r.column)}</b> menunjuk ke <b>${esc(r.target_table)}.${esc(r.target_column)}</b> <small>(field "${esc(r.name)}", satu baris)</small>`
+        : `<b>${esc(r.table)}.${esc(r.column)}</b> menunjuk ke <b>${esc(r.target_column)}</b> di sini <small>(field "${esc(r.reverse)}", banyak baris)</small>`;
+      return `<span class="rel-chip">${text}<button class="icon-btn" type="button" data-rel-remove="${esc(r.id)}" aria-label="Hapus relasi">×</button></span>`;
+    }).join('') || '<span class="hint">Belum ada relasi. Relasi membuat node Tabel data dan agent bisa ikut membaca baris di tabel lain, misalnya pesanan beserta produknya.</span>'}</div>
+      <button class="btn btn-ghost btn-small" type="button" data-rel-add>+ Relasi</button>`;
+    box.querySelector('[data-rel-add]').onclick = () => relationDialog(D.name, D.table, afterRelation);
+    box.querySelectorAll('[data-rel-remove]').forEach(b => {
+      b.onclick = async () => {
+        if (!confirm('Hapus relasi ini? Datanya tidak berubah.')) return;
+        try { await guarded(`/api/data/relations/${enc(b.dataset.relRemove)}`, 'DELETE'); await afterRelation(); } catch (e) { toast(e.message); }
+      };
+    });
+  }
+
+  /* "This column points at that column": pick the column here, then the table and column it points at. */
+  async function relationDialog(source, table, after, column = '') {
+    if (!D.sources.length) await loadSources();
+    const tablesOf = async name => (await api(`/api/data/sources/${enc(name)}/tables`)).tables;
+    let here;
+    try { here = (await tablesOf(source)).find(t => t.name === table); } catch (e) { toast(e.message); return; }
+    if (!here) { toast('Tabelnya tidak ditemukan.'); return; }
+    const dlg = document.createElement('dialog');
+    dlg.className = 'data-dialog';
+    const sourceOptions = D.sources.map(s => `<option value="${esc(s.name)}" ${s.name === source ? 'selected' : ''}>${esc(s.label || s.name)}</option>`).join('');
+    dlg.innerHTML = `<form method="dialog">
+      <h3>Relasi baru dari ${esc(table)}</h3>
+      <p class="dlg-note">Pilih kolom di tabel ini yang berisi kunci dari tabel lain. Contoh: kolom kode_produk di pesanan menunjuk ke kolom kode di produk.</p>
+      <label class="field"><span>Kolom di ${esc(table)}</span><select name="column">${here.columns.map(c => `<option ${c === column ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+      <label class="field"><span>Menunjuk ke sumber</span><select name="target_source">${sourceOptions}</select></label>
+      <label class="field"><span>Tabel</span><select name="target_table"></select></label>
+      <label class="field"><span>Kolom</span><select name="target_column"></select></label>
+      <label class="field"><span>Nama field di ${esc(table)} (boleh kosong)</span><input name="name" maxlength="63" placeholder="nama tabel tujuan"></label>
+      <label class="field"><span>Nama field di tabel tujuan (boleh kosong)</span><input name="reverse" maxlength="63" placeholder="${esc(table)}"></label>
+      <p class="dlg-error" role="alert" hidden></p>
+      <div class="dlg-actions"><button type="button" class="btn btn-ghost" data-cancel>Batal</button><button type="submit" class="btn btn-primary">Simpan relasi</button></div></form>`;
+    document.body.appendChild(dlg);
+    const form = dlg.querySelector('form');
+    const error = dlg.querySelector('.dlg-error');
+    let targets = [];
+    const fillColumns = () => {
+      const info = targets.find(t => t.name === form.elements.target_table.value);
+      const cols = info ? info.columns : [];
+      const guess = cols.find(c => c === info?.key) || cols.find(c => form.elements.column.value.toLowerCase().includes(c.toLowerCase())) || cols[0];
+      form.elements.target_column.innerHTML = cols.map(c => `<option ${c === guess ? 'selected' : ''}>${esc(c)}</option>`).join('');
+    };
+    const fillTables = async () => {
+      form.elements.target_table.innerHTML = '<option>Memuat…</option>';
+      try { targets = await tablesOf(form.elements.target_source.value); } catch (e) { targets = []; error.textContent = e.message; error.hidden = false; }
+      const others = targets.filter(t => !(form.elements.target_source.value === source && t.name === table));
+      const list = others.length ? others : targets;
+      form.elements.target_table.innerHTML = list.map(t => `<option>${esc(t.name)}</option>`).join('');
+      fillColumns();
+    };
+    const finish = () => { try { dlg.close(); } catch { /* closed */ } dlg.remove(); };
+    form.elements.target_source.onchange = fillTables;
+    form.elements.target_table.onchange = fillColumns;
+    dlg.querySelector('[data-cancel]').onclick = finish;
+    dlg.addEventListener('cancel', e => { e.preventDefault(); finish(); });
+    form.onsubmit = async e => {
+      e.preventDefault();
+      const values = Object.fromEntries(['column', 'target_source', 'target_table', 'target_column', 'name', 'reverse'].map(k => [k, form.elements[k].value.trim()]));
+      try {
+        await guarded('/api/data/relations', 'POST', { source, table, ...values });
+        finish();
+        toast('Relasi disimpan.');
+        if (after) await after();
+      } catch (err) { error.textContent = err.message; error.hidden = false; }
+    };
+    dlg.showModal();
+    await fillTables();
+  }
 
   /* ── Right-click menus ───────────────────────────── */
   function cellMenu(r, c) {
@@ -638,6 +761,7 @@
       { label: 'Urutkan Z → A', run: () => sortBy(col, true) },
       { label: 'Hapus urutan', disabled: D.sort !== col, run: clearSort },
       { separator: true },
+      { label: 'Hubungkan ke tabel lain…', run: () => relationDialog(D.name, D.table, afterRelation, col) },
       { label: 'Ganti nama kolom…', disabled: no, run: () => renameColumn(col) },
       { label: 'Tambah kolom…', disabled: no, run: addColumn },
       { label: 'Hapus kolom', danger: true, disabled: no, run: () => dropColumn(col) },
@@ -729,5 +853,19 @@
     },
     /* Tell the editor which sources exist, for the "Data" part of an agent node. */
     sources: () => D.sources,
+    dialogForm,
+    relationDialog,
+    /* Open a source and table, from the Data table node's "Lihat isi tabel". */
+    async focus(source, table) {
+      await loadSources();
+      if (!D.sources.some(s => s.name === source)) return;
+      D.name = source;
+      D.table = table;
+      D.offset = 0;
+      remember(source);
+      renderSources();
+      await openCurrent();
+    },
+    changed() { loadSources().catch(() => { /* the tab reloads when opened */ }); },
   };
 })();

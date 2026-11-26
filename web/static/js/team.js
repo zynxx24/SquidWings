@@ -1,34 +1,32 @@
-/* Team flows, edited like a node-workflow editor.
+/* Tim agent, built like n8n.
 
-   The canvas reads left to right: a trigger node, then every node in the order it runs. Drag
-   from a node's output dot to another node to connect them, drop on empty space to add a node
-   there, click a line and press Delete (or ×) to cut it. Right-click a node (or press Enter, the Menu key, or
-   the ⋯ on the node) for its menu: Edit opens the detail view with what came in, its settings, and what it sent
-   out. Right-click a line, the trigger, a run, or empty canvas for theirs. Nothing needs a double click.
-   The + button opens the node list. Pan by dragging the background or scrolling, zoom with Ctrl+scroll or the buttons.
+   Overview: the list of flows (open, switch on or off, duplicate, export, delete), templates, the Tabel data tab
+   and the Kredensial tab. Editor: one flow on a canvas that reads left to right, and its executions.
 
-   Tabs: Editor (the canvas), Data (files and cloud tables the agents use), Eksekusi (past runs), Kredensial
-   (Telegram, web search, voice, Google and database keys, saved on the server instead of in .env).
+   A flow runs exactly along the lines drawn: the trigger starts the nodes it is connected to, each node gets what
+   its incoming lines bring, and a node no line reaches does not run. There is no hidden lead or reviewer. Drag from
+   an output dot to a node to connect, drop on empty canvas to add a node there, click a line to insert a node into
+   it or cut it. Click a node to select it; click it again (or press Enter) to open the detail view: what came in (with its fields, click one to put it in the focused
+   box), its settings, and what it sent out. Tes langkah runs that one node on the input shown.
 
-   The saved flow is the same as before: members with depends_on, branch, kind and config, a lead,
-   a reviewer, and a schedule. Positions live in this browser only. */
+   Saved per flow on the server: nodes, connections (depends_on and the trigger's starts), the trigger, and the
+   position of every node. */
 (() => {
   'use strict';
 
   const { $, esc, icon, api, post, toast, md, store, S, fillModelOptions, shortModel, formatTokens, formatSeconds, describeTool, enhanceCode } = window.SQ;
 
   /* ── Constants ───────────────────────────────────── */
-  const NODE_W = 232;
-  const BASE_H = 68;
-  const PORT_GAP = 24;
-  const COL = 300;
-  const ROW = 116;
-  const ORIGIN = { x: 330, y: 300 };
-  const CANVAS = { w: 6000, h: 4000 };
   const TRIGGER = '__trigger';
-  const MAX_NODES = 12;
-  const MAX_AGENTS = 6;
+  const CANVAS = { w: 8000, h: 6000 };
+  const COL = 250;
+  const ROW = 170;
+  const ORIGIN = { x: 420, y: 700 };
+  const BOX = 92;
+  const AGENT_W = 176;
+  const PORT_GAP = 30;
   const PIN_KEY = 'router-pin';
+  const HISTORY = 100;
   const V = { x: 0, y: 0, k: 1 };
 
   const NODE_ICONS = {
@@ -37,10 +35,11 @@
     switch: '<path d="M4 12h6M10 12l8-6M10 12h8M10 12l8 6"/><circle cx="19" cy="6" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="19" cy="18" r="1"/>',
     merge: '<path d="M5 5l7 7v7M19 5l-7 7"/>',
     delay: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 3h6"/>',
-    set: '<path d="M5 6V4h14v2M12 4v16M9 20h6"/>',
+    set: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/>',
     http: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
     telegram: '<path d="m21 4-18 7 6 2 2 6 3-4 5 4z"/><path d="m9 13 8-6"/>',
     database: '<ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v14c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
+    datatable: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M3 14.5h18M9 9v11M15 9v11"/>',
     trigger: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
   };
   const nodeIcon = (kind, size = 20) =>
@@ -48,21 +47,22 @@
 
   const CATALOG = [
     { key: 'ai', label: 'AI', items: [
-      { kind: 'agent', label: 'AI Agent', desc: 'Model AI dengan tool: riset web, menulis file, menjalankan kode. Bisa jadi Lead atau Reviewer.' },
+      { kind: 'agent', label: 'AI Agent', desc: 'Model AI dengan tool: riset web, menulis file, menjalankan kode, membaca tabel data.' },
     ] },
-    { key: 'logic', label: 'Alur & logika', items: [
+    { key: 'data', label: 'Data', items: [
+      { kind: 'datatable', label: 'Tabel data', desc: 'Ambil, tambah, ubah, upsert, atau hapus baris. Bisa ikut membawa baris yang berelasi.' },
+      { kind: 'set', label: 'Edit teks', desc: 'Susun teks dari {{input}}, {{json.kolom}}, {{date}}, dan hasil node lain.' },
+      { kind: 'http', label: 'HTTP Request', desc: 'GET atau POST ke alamat publik. Balasannya diteruskan.' },
+    ] },
+    { key: 'logic', label: 'Alur', items: [
       { kind: 'gate', label: 'IF', desc: 'Cek syarat (AND/OR). Benar lewat jalur atas, salah lewat jalur bawah.' },
       { kind: 'switch', label: 'Switch', desc: 'Aturan pertama yang cocok memilih jalur A, B atau C. Sisanya ke D.' },
       { kind: 'merge', label: 'Merge', desc: 'Gabungkan beberapa jalur: tunggu salah satu atau semua.' },
       { kind: 'delay', label: 'Wait', desc: 'Jeda beberapa detik sebelum lanjut.' },
     ] },
-    { key: 'data', label: 'Data', items: [
-      { kind: 'set', label: 'Teks / template', desc: 'Susun teks dengan {{input}}, {{date}}, {{node.ID}} dan lainnya.' },
-      { kind: 'http', label: 'HTTP Request', desc: 'GET atau POST ke alamat publik. Balasannya diteruskan.' },
-    ] },
-    { key: 'output', label: 'Kirim & simpan', items: [
-      { kind: 'telegram', label: 'Telegram', desc: 'Kirim hasil ke chat atau channel Telegram.' },
-      { kind: 'database', label: 'Database', desc: 'Simpan hasil ke SQLite, PostgreSQL, MySQL atau MongoDB.' },
+    { key: 'output', label: 'Kirim', items: [
+      { kind: 'telegram', label: 'Telegram', desc: 'Kirim input ke chat atau channel Telegram.' },
+      { kind: 'database', label: 'Log ke database', desc: 'Catat input ke tabel log di SQLite, PostgreSQL, MySQL atau MongoDB. Tabelnya dibuat otomatis.' },
     ] },
   ];
   const CATEGORY = Object.fromEntries(CATALOG.flatMap(group => group.items.map(item => [item.kind, group.key])));
@@ -76,127 +76,111 @@
     { mode: 'telegram', label: 'Pesan Telegram', desc: 'Saat ada pesan ke bot: dari kamu saja, atau dari pelanggan.' },
   ];
   const NODE_DEFAULTS = {
-    agent: { name: 'AI Agent', role: 'Spesialis', config: {} },
+    agent: { name: 'AI Agent', role: 'Asisten', config: {} },
     delay: { name: 'Wait', config: { seconds: 30 } },
     gate: { name: 'IF', config: { combine: 'and', conditions: [{ mode: 'contains', value: '' }] } },
     switch: { name: 'Switch', config: { rules: [{ mode: 'contains', value: '' }, { mode: 'contains', value: '' }] } },
     merge: { name: 'Merge', config: { mode: 'any' } },
-    set: { name: 'Teks', config: { text: 'Hari ini {{day}}, {{date}} jam {{time}}.\n\n{{input}}' } },
+    set: { name: 'Edit teks', config: { text: '{{input}}' } },
     http: { name: 'HTTP Request', config: { method: 'GET', url: '', body: '' } },
     telegram: { name: 'Kirim ke Telegram', config: { chat_id: '' } },
-    database: { name: 'Simpan ke database', config: { database: 'sqlite', table: 'hasil_tim' } },
+    database: { name: 'Log ke database', config: { database: 'sqlite', table: 'hasil_alur' } },
+    datatable: { name: 'Tabel data', config: { source: '', table: '', operation: 'get' } },
   };
+  const OPERATIONS = [
+    ['get', 'Ambil'], ['insert', 'Tambah'], ['update', 'Ubah'], ['upsert', 'Upsert'], ['delete', 'Hapus'],
+  ];
+  const OPERATION_HINT = {
+    get: 'Ambil baris yang cocok dengan syarat. Tanpa syarat, semua baris diambil.',
+    insert: 'Tambah satu baris baru dengan nilai di bawah.',
+    update: 'Ubah setiap baris yang cocok dengan syarat.',
+    upsert: 'Cari baris dengan kolom pencocok yang sama. Ada: diubah. Belum ada: ditambah.',
+    delete: 'Hapus setiap baris yang cocok dengan syarat.',
+  };
+  const DT_OPS = [['=', 'sama dengan'], ['!=', 'tidak sama'], ['>', 'lebih dari'], ['>=', 'minimal'], ['<', 'kurang dari'], ['<=', 'maksimal'], ['contains', 'berisi'], ['startswith', 'diawali']];
   const DAYS = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
   const CONDITION_LABEL = {
     contains: 'Berisi kata kunci', not_contains: 'Tidak berisi kata kunci', equals: 'Sama persis dengan',
     regex: 'Cocok dengan regex', empty: 'Kosong', time: 'Jam tertentu', ai: 'Ditanyakan ke AI',
   };
-  const STATUS = { queued: 'Menunggu', running: 'Berjalan', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan', skipped: 'Dilewati' };
+  const STATUS = { queued: 'Menunggu', running: 'Berjalan', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan', skipped: 'Tidak dijalankan' };
   const RUN_STATUS = { queued: 'Menunggu', running: 'Berjalan', synthesizing: 'Lead menyusun jawaban', reviewing: 'Reviewer memeriksa', revising: 'Lead merevisi', delivering: 'Mengirim hasil', rendering: 'Merender video', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan' };
+  const MODES = { standard: 'Standar', video: 'Video render (animate)', motion: 'Studio motion (bisa diedit)' };
+  const WRITES = { datatable: c => c.operation && c.operation !== 'get', telegram: () => true, http: c => c.method === 'POST' };
 
-  /* ── Flow helpers (mirror the server's rules) ──────── */
-  const newId = () => `a${Math.random().toString(36).slice(2, 9)}`;
-  const posKey = (team, id) => `wf:${team}:${id}`;
+  /* ── Flow helpers ────────────────────────────────── */
+  const newId = () => `n${Math.random().toString(36).slice(2, 9)}`;
+  const legacyPosKey = (team, id) => `wf:${team}:${id}`;
   const finished = status => ['completed', 'failed', 'cancelled'].includes(status);
   const kindOf = member => member.kind || 'agent';
-  const isOutput = member => ['telegram', 'database'].includes(kindOf(member));
   const memberById = id => S.members.find(m => m.id === id);
   const parentsOf = member => (member.depends_on || []).map(memberById).filter(Boolean);
+  const childrenOf = id => S.members.filter(m => (m.depends_on || []).includes(id));
   const isBranching = member => ['gate', 'switch'].includes(kindOf(member));
   const branchParent = member => parentsOf(member).find(isBranching);
   const conditionsOf = config => config.conditions || (config.mode ? [config] : []);
-  const defaultLead = () => (S.members.every(m => kindOf(m) === 'agent') && S.members[0] ? S.members[0].id : null);
+  const isStart = id => S.starts.includes(id);
   const typing = () => document.activeElement && document.activeElement.matches('input, textarea, select, [contenteditable]');
+  const enc = encodeURIComponent;
+  const clone = value => JSON.parse(JSON.stringify(value));
+  const modelKnown = id => Boolean(id) && (!S.models.length || Boolean(S.byId[id]));
 
-  /* Mirrors _after_answer on the server: nodes that run once the answer exists. */
-  function afterAnswer() {
-    const after = new Set(S.members.filter(m => isOutput(m) && !(m.depends_on || []).length).map(m => m.id));
-    const anchors = new Set([S.lead, S.reviewer].filter(Boolean));
-    let changed = true;
-    while (changed) {
-      changed = false;
-      S.members.forEach(member => {
-        if (after.has(member.id) || anchors.has(member.id)) return;
-        if ((member.depends_on || []).some(id => after.has(id) || anchors.has(id))) { after.add(member.id); changed = true; }
-      });
+  function reachable() {
+    const seen = new Set();
+    const queue = [...S.starts];
+    while (queue.length) {
+      const id = queue.shift();
+      if (seen.has(id) || !memberById(id)) continue;
+      seen.add(id);
+      childrenOf(id).forEach(child => queue.push(child.id));
     }
-    return after;
-  }
-
-  /* The column each node runs in: the order on screen is the order it runs in. */
-  function flowRows() {
-    const after = afterAnswer();
-    const rows = new Map();
-    let answerRow = -1;
-    const below = (member, seen) => {
-      const parents = parentsOf(member).filter(p => !seen.has(p.id));
-      return parents.length ? 1 + Math.max(...parents.map(p => rowOf(p, new Set([...seen, member.id])))) : 0;
-    };
-    function rowOf(member, seen = new Set()) {
-      if (rows.has(member.id)) return rows.get(member.id);
-      let row = below(member, seen);
-      if (member.id === S.lead) row = Math.max(row, answerRow + 1);
-      else if (member.id === S.reviewer) row = rowOf(memberById(S.lead) || member, seen) + 1;
-      else if (isOutput(member) && !(member.depends_on || []).length) row = answerRow + 1;
-      rows.set(member.id, row);
-      return row;
-    }
-    S.members.filter(m => m.id !== S.lead && m.id !== S.reviewer && !after.has(m.id)).forEach(m => { answerRow = Math.max(answerRow, rowOf(m)); });
-    [memberById(S.lead), memberById(S.reviewer)].filter(Boolean).forEach(m => { answerRow = Math.max(answerRow, rowOf(m)); });
-    S.members.forEach(m => rowOf(m));
-    return rows;
-  }
-
-  function startNodes() {
-    const rows = flowRows();
-    const first = Math.min(...rows.values());
-    return S.members.filter(m => rows.get(m.id) === first);
+    return seen;
   }
 
   function portsOf(member) {
+    if (member === TRIGGER) return [{ key: '', label: '' }];
     if (kindOf(member) === 'gate') return [{ key: 'A', label: 'benar' }, { key: 'B', label: 'salah' }];
     if (kindOf(member) === 'switch') return [{ key: 'A', label: 'A' }, { key: 'B', label: 'B' }, { key: 'C', label: 'C' }, { key: 'D', label: 'lainnya' }];
     return [{ key: '', label: '' }];
   }
-  const heightOf = member => (member === TRIGGER ? BASE_H : Math.max(BASE_H, portsOf(member).length * PORT_GAP + 16));
+  const widthOf = member => (member !== TRIGGER && kindOf(member) === 'agent' ? AGENT_W : BOX);
+  const heightOf = member => Math.max(BOX, portsOf(member).length * PORT_GAP + 12);
+  const posOf = member => (member === TRIGGER ? S.trigger : member);
   const inPoint = member => ({ x: member.x, y: member.y + heightOf(member) / 2 });
   function outPoint(member, key = '') {
-    if (member === TRIGGER) return { x: S.trigger.x + NODE_W, y: S.trigger.y + BASE_H / 2 };
+    const pos = posOf(member);
     const ports = portsOf(member);
     const index = Math.max(0, ports.findIndex(p => p.key === key));
     const h = heightOf(member);
-    return { x: member.x + NODE_W, y: member.y + ((index + 1) * h) / (ports.length + 1) };
-  }
-
-  function roleLabel(member) {
-    if (member.id === S.lead) return 'Lead · jawaban akhir';
-    if (member.id === S.reviewer) return 'Reviewer';
-    return LABEL[kindOf(member)] || 'Node';
+    return { x: pos.x + widthOf(member), y: pos.y + ((index + 1) * h) / (ports.length + 1) };
   }
 
   function nodeDetail(member) {
     const config = member.config || {};
     switch (kindOf(member)) {
-      case 'delay': return `Tunggu ${config.seconds || 0} detik`;
+      case 'delay': return `${config.seconds || 0} detik`;
       case 'gate': {
         const list = conditionsOf(config);
         if (list.length > 1) return `${list.length} syarat, ${(config.combine || 'and').toUpperCase()}`;
         const only = list[0] || {};
-        if (only.mode === 'time') return `Jam ${only.start || '--:--'}–${only.end || '--:--'}`;
+        if (only.mode === 'time') return `Jam ${only.start || '--:--'} sampai ${only.end || '--:--'}`;
         return `${CONDITION_LABEL[only.mode] || 'Syarat'}${only.value ? `: ${only.value}` : ''}`;
       }
       case 'switch': return `${(config.rules || []).length} aturan`;
       case 'merge': return config.mode === 'all' ? 'Tunggu semua jalur' : 'Salah satu jalur';
       case 'set': return (config.text || 'belum diisi').split('\n')[0].slice(0, 40);
-      case 'http': return `${config.method || 'GET'} ${(config.url || '').replace(/^https?:\/\//, '').slice(0, 30) || 'URL belum diisi'}`;
+      case 'http': return `${config.method || 'GET'} ${(config.url || '').replace(/^https?:\/\//, '').slice(0, 26) || 'URL belum diisi'}`;
       case 'telegram': return config.chat_id || 'Chat bawaan';
-      case 'database': return `${config.database || 'sqlite'} · ${config.table || 'hasil_tim'}`;
+      case 'database': return `${config.database || 'sqlite'} · ${config.table || 'hasil_alur'}`;
+      case 'datatable': {
+        const op = (OPERATIONS.find(o => o[0] === (config.operation || 'get')) || OPERATIONS[0])[1];
+        return config.table ? `${op} · ${config.table}` : 'Tabel belum dipilih';
+      }
       default: return shortModel(member.model_id) || 'model belum dipilih';
     }
   }
 
-  function triggerLabel() {
-    const schedule = S.schedule || { mode: 'off' };
+  function scheduleLabel(schedule = { mode: 'off' }) {
     switch (schedule.mode) {
       case 'interval': return `Tiap ${schedule.minutes || '?'} menit`;
       case 'daily': return `Jam ${(schedule.times || [schedule.time || '--:--']).join(', ')}`;
@@ -206,40 +190,140 @@
       default: return 'Saat Jalankan alur ditekan';
     }
   }
+  const triggerLabel = () => scheduleLabel(S.schedule || { mode: 'off' });
 
-  /* ── Dirty state ─────────────────────────────────── */
+  /* What is still missing on a node. Shown as a red mark on the canvas and in the list at the top. */
+  function issuesOf(member) {
+    const c = member.config || {};
+    const out = [];
+    switch (kindOf(member)) {
+      case 'agent':
+        if (!modelKnown(member.model_id)) out.push('Model belum dipilih');
+        break;
+      case 'datatable': {
+        if (!c.source) out.push('Tabel data belum dipilih');
+        else if (!(S.dataSources || []).some(s => s.name === c.source) && S.dataSources) out.push(`Sumber ${c.source} sudah tidak ada`);
+        else if (!c.table) out.push('Tabel belum dipilih');
+        const op = c.operation || 'get';
+        if (['update', 'delete'].includes(op) && !(c.where || []).some(w => w.column)) out.push('Butuh minimal satu syarat');
+        if (['insert', 'update', 'upsert'].includes(op) && !(c.values || []).some(v => v.column)) out.push('Isi minimal satu kolom');
+        if (op === 'upsert' && !(c.match || []).length) out.push('Pilih kolom pencocok');
+        break;
+      }
+      case 'http':
+        if (!/^https?:\/\/[^\s/]+/.test(c.url || '')) out.push('URL belum diisi');
+        break;
+      case 'set':
+        if (!(c.text || '').trim()) out.push('Isi teks masih kosong');
+        break;
+      case 'gate': case 'switch': {
+        const list = kindOf(member) === 'gate' ? conditionsOf(c) : (c.rules || []);
+        if (list.some(x => !['empty', 'time'].includes(x.mode || 'contains') && !String(x.value || '').trim())) out.push('Ada syarat yang belum diisi');
+        if (list.some(x => x.mode === 'ai') && !modelKnown(member.model_id)) out.push('Model untuk syarat AI belum dipilih');
+        break;
+      }
+      case 'telegram':
+        if (S.integrations && S.integrations.telegram && !S.integrations.telegram.ready) out.push('Bot Telegram belum diatur di Kredensial');
+        break;
+      default: break;
+    }
+    return out;
+  }
+
+  function flowIssues() {
+    const list = [];
+    if (S.members.length && !S.starts.length) list.push({ id: TRIGGER, name: 'Pemicu', text: 'Belum tersambung ke node mana pun' });
+    const mode = (S.schedule || {}).mode || 'off';
+    if (!['off', 'telegram'].includes(mode) && !String((S.schedule || {}).task || '').trim()) list.push({ id: TRIGGER, name: 'Pemicu', text: 'Jadwal butuh tugas yang dijalankan' });
+    S.members.forEach(m => issuesOf(m).forEach(text => list.push({ id: m.id, name: m.name, text })));
+    return list;
+  }
+
+  /* ── Dirty state and history ─────────────────────── */
   function markDirty(dirty = true) {
     S.dirty = dirty;
     $('wf-dirty').classList.toggle('hidden', !dirty);
+    renderIssues();
+  }
+
+  const snapshot = () => JSON.stringify({ members: S.members, starts: S.starts, schedule: S.schedule, trigger: S.trigger });
+  /* Called before every change. Typing in one box within a second counts as one step. */
+  function checkpoint(merge = '') {
+    const now = Date.now();
+    if (merge && S.lastStep && S.lastStep.key === merge && now - S.lastStep.at < 1200) { S.lastStep.at = now; return; }
+    S.lastStep = { key: merge, at: now };
+    S.past.push(snapshot());
+    if (S.past.length > HISTORY) S.past.shift();
+    S.future = [];
+    paintHistory();
+  }
+  function restore(state) {
+    const data = JSON.parse(state);
+    S.members = data.members;
+    S.starts = data.starts;
+    S.schedule = data.schedule;
+    S.trigger = data.trigger;
+    if (S.ndv && S.ndv !== TRIGGER && !memberById(S.ndv)) closeNdv();
+    markDirty();
+    render();
+    if (S.ndv) renderNdv();
+  }
+  function undo() {
+    if (!S.past.length) return;
+    S.future.push(snapshot());
+    restore(S.past.pop());
+    S.lastStep = null;
+    paintHistory();
+  }
+  function redo() {
+    if (!S.future.length) return;
+    S.past.push(snapshot());
+    restore(S.future.pop());
+    S.lastStep = null;
+    paintHistory();
+  }
+  function paintHistory() {
+    $('wf-undo').disabled = !S.past.length;
+    $('wf-redo').disabled = !S.future.length;
   }
 
   /* ── Layout and view ─────────────────────────────── */
-  function autoLayout(teamId, force = false) {
-    const rows = flowRows();
+  function depthMap() {
+    const depth = new Map();
+    const visit = (member, seen) => {
+      if (depth.has(member.id)) return depth.get(member.id);
+      if (seen.has(member.id)) return 0;
+      seen.add(member.id);
+      const parents = parentsOf(member);
+      const d = parents.length ? 1 + Math.max(...parents.map(p => visit(p, seen))) : 0;
+      depth.set(member.id, d);
+      return d;
+    };
+    S.members.forEach(m => visit(m, new Set()));
+    return depth;
+  }
+
+  function autoLayout(force = false) {
+    const depth = depthMap();
     const columns = {};
-    S.members.forEach(member => { (columns[rows.get(member.id)] ||= []).push(member); });
-    const order = Object.keys(columns).map(Number).sort((a, b) => a - b);
-    S.members.forEach(member => {
-      const saved = !force && teamId && store.get(posKey(teamId, member.id));
-      if (saved) { [member.x, member.y] = saved.split(',').map(Number); return; }
-      if (!force && member.x !== undefined) return;
-      const list = columns[rows.get(member.id)];
-      member.x = ORIGIN.x + order.indexOf(rows.get(member.id)) * COL;
-      member.y = ORIGIN.y + (list.indexOf(member) - (list.length - 1) / 2) * ROW;
+    S.members.forEach(m => { (columns[depth.get(m.id)] ||= []).push(m); });
+    S.members.forEach(m => {
+      if (!force && m.x !== undefined) return;
+      const list = columns[depth.get(m.id)];
+      m.x = ORIGIN.x + depth.get(m.id) * COL;
+      m.y = ORIGIN.y + (list.indexOf(m) - (list.length - 1) / 2) * ROW;
     });
-    const savedTrigger = !force && teamId && store.get(posKey(teamId, TRIGGER));
-    if (savedTrigger) { const [x, y] = savedTrigger.split(',').map(Number); S.trigger = { x, y }; }
-    else {
-      const starts = startNodes();
-      const y = starts.length ? starts.reduce((sum, m) => sum + m.y + heightOf(m) / 2, 0) / starts.length - BASE_H / 2 : ORIGIN.y;
+    if (force || !S.trigger) {
+      const starts = S.members.filter(m => isStart(m.id));
+      const y = starts.length ? starts.reduce((sum, m) => sum + m.y + heightOf(m) / 2, 0) / starts.length - BOX / 2 : ORIGIN.y;
       S.trigger = { x: ORIGIN.x - COL, y };
     }
   }
 
-  function savePositions() {
-    if (!S.team) return;
-    S.members.forEach(m => store.set(posKey(S.team, m.id), `${Math.round(m.x)},${Math.round(m.y)}`));
-    store.set(posKey(S.team, TRIGGER), `${Math.round(S.trigger.x)},${Math.round(S.trigger.y)}`);
+  function layoutOut() {
+    const out = { [TRIGGER]: [Math.round(S.trigger.x), Math.round(S.trigger.y)] };
+    S.members.forEach(m => { out[m.id] = [Math.round(m.x), Math.round(m.y)]; });
+    return out;
   }
 
   function applyView() {
@@ -252,21 +336,21 @@
 
   function fitView() {
     const board = $('board');
-    const items = [{ x: S.trigger.x, y: S.trigger.y, h: BASE_H }, ...S.members.map(m => ({ x: m.x, y: m.y, h: heightOf(m) }))];
-    const minX = Math.min(...items.map(i => i.x)) - 50;
-    const maxX = Math.max(...items.map(i => i.x + NODE_W)) + 110;   // room for the + after the last nodes
-    const minY = Math.min(...items.map(i => i.y)) - 70;
-    const maxY = Math.max(...items.map(i => i.y + i.h)) + 90;
+    const items = [{ x: S.trigger.x, y: S.trigger.y, w: BOX, h: BOX }, ...S.members.map(m => ({ x: m.x, y: m.y, w: widthOf(m), h: heightOf(m) }))];
+    const minX = Math.min(...items.map(i => i.x)) - 70;
+    const maxX = Math.max(...items.map(i => i.x + i.w)) + 120;
+    const minY = Math.min(...items.map(i => i.y)) - 60;
+    const maxY = Math.max(...items.map(i => i.y + i.h)) + 90;   // labels sit under the boxes
     const width = board.clientWidth || 900;
-    const height = (board.clientHeight || 600) - 70;   // the run bar sits at the bottom
-    V.k = Math.max(0.35, Math.min(1.15, Math.min(width / (maxX - minX), height / (maxY - minY))));
+    const height = (board.clientHeight || 600) - 80;            // the run bar sits at the bottom
+    V.k = Math.max(0.35, Math.min(1.2, Math.min(width / (maxX - minX), height / (maxY - minY))));
     V.x = (width - (maxX - minX) * V.k) / 2 - minX * V.k;
     V.y = (height - (maxY - minY) * V.k) / 2 - minY * V.k;
     applyView();
   }
 
   function zoomAt(factor, cx, cy) {
-    const k = Math.max(0.3, Math.min(1.8, V.k * factor));
+    const k = Math.max(0.3, Math.min(2, V.k * factor));
     const board = $('board').getBoundingClientRect();
     const px = cx ?? board.width / 2;
     const py = cy ?? board.height / 2;
@@ -286,40 +370,52 @@
     renderNodes();
     renderEdges();
     paintRun();
+    renderIssues();
+  }
+
+  function outPorts(member, id) {
+    const ports = portsOf(member);
+    const h = heightOf(member);
+    const children = id === TRIGGER ? S.starts : childrenOf(id).map(c => c.id);
+    return ports.map((port, i) => {
+      const top = ((i + 1) * h) / (ports.length + 1);
+      const used = id === TRIGGER ? children.length > 0
+        : childrenOf(id).some(c => !isBranching(member) || c.branch === port.key || !c.branch);
+      return `<span class="port out" data-port="${port.key}" data-from="${esc(id)}" style="top:${top}px" title="Seret ke node lain untuk menyambung${port.label ? ` (jalur ${esc(port.label)})` : ''}"></span>
+        ${port.label ? `<span class="port-label" style="top:${top}px">${esc(port.label)}</span>` : ''}
+        ${used ? '' : `<button class="port-add" data-add-from="${esc(id)}" data-port="${port.key}" style="top:${top}px" type="button" aria-label="Tambah node berikutnya">${icon('plus', 12)}</button>`}`;
+    }).join('');
   }
 
   function renderNodes() {
-    const childrenOf = id => S.members.filter(m => (m.depends_on || []).includes(id));
-    const flowsOn = new Set(edgeList().filter(e => e.auto).map(e => e.from));
+    const live = reachable();
     const triggerMode = (S.schedule || {}).mode || 'off';
+    const triggerIssues = flowIssues().filter(i => i.id === TRIGGER).map(i => i.text);
     const trigger = `
-      <div class="node trigger ${S.selected === TRIGGER ? 'selected' : ''}" data-id="${TRIGGER}" data-cat="trigger" style="left:${S.trigger.x}px;top:${S.trigger.y}px;height:${BASE_H}px" tabindex="0" role="button" aria-label="Pemicu: ${esc(triggerLabel())}">
-        <span class="node-icon">${nodeIcon('trigger')}</span>
-        <span class="node-text"><span class="node-kind">Pemicu${triggerMode !== 'off' ? ' · otomatis' : ''}</span><span class="node-name">${esc(TRIGGERS.find(t => t.mode === triggerMode)?.label || 'Manual')}</span><span class="node-sub">${esc(triggerLabel())}</span></span>
-        <span class="port out" data-port="" data-from="${TRIGGER}" title="Seret ke node untuk menjadikannya langkah pertama"></span>
+      <div class="node trigger ${S.selected === TRIGGER ? 'selected' : ''}" data-id="${TRIGGER}" data-cat="trigger" style="left:${S.trigger.x}px;top:${S.trigger.y}px;width:${BOX}px;height:${BOX}px" tabindex="0" role="button" aria-label="Pemicu: ${esc(triggerLabel())}">
+        <span class="node-icon">${nodeIcon('trigger', 30)}</span>
+        <span class="node-status" aria-hidden="true"></span>
+        ${triggerIssues.length ? `<span class="node-issue" title="${esc(triggerIssues.join('\n'))}">!</span>` : ''}
         <button class="node-more" type="button" tabindex="-1" aria-label="Menu pemicu" title="Menu (atau klik kanan)">⋯</button>
+        ${outPorts(TRIGGER, TRIGGER)}
+        <span class="node-label"><b>${esc(TRIGGERS.find(t => t.mode === triggerMode)?.label || 'Manual')}</b><small>${esc(triggerLabel())}</small><span class="node-state"></span></span>
       </div>`;
     const nodes = S.members.map(member => {
-      const ports = portsOf(member);
-      const h = heightOf(member);
       const kind = kindOf(member);
-      const outs = ports.map((port, i) => {
-        const top = ((i + 1) * h) / (ports.length + 1);
-        const used = childrenOf(member.id).some(c => !isBranching(member) || c.branch === port.key || !c.branch);
-        return `<span class="port out" data-port="${port.key}" data-from="${esc(member.id)}" style="top:${top}px" title="Seret ke node lain untuk menyambung${port.label ? ` (jalur ${esc(port.label)})` : ''}"></span>
-          ${port.label ? `<span class="port-label" style="top:${top}px">${esc(port.label)}</span>` : ''}
-          ${used ? '' : `<button class="port-add${flowsOn.has(member.id) ? ' soft' : ''}" data-add-from="${esc(member.id)}" data-port="${port.key}" style="top:${top}px" type="button" aria-label="Tambah node setelah ${esc(member.name)}">${icon('plus', 12)}</button>`}`;
-      }).join('');
-      const role = member.id === S.lead ? '<span class="node-badge">Lead</span>' : member.id === S.reviewer ? '<span class="node-badge">Reviewer</span>' : '';
+      const issues = issuesOf(member);
+      const off = !live.has(member.id);
       return `
-        <div class="node ${member.id === S.selected ? 'selected' : ''}" data-id="${esc(member.id)}" data-kind="${kind}" data-cat="${CATEGORY[kind] || 'ai'}" style="left:${member.x}px;top:${member.y}px;height:${h}px" tabindex="0" role="button" aria-label="${esc(member.name)}, ${esc(roleLabel(member))}">
+        <div class="node ${member.id === S.selected ? 'selected' : ''} ${off ? 'off' : ''}" data-id="${esc(member.id)}" data-kind="${kind}" data-cat="${CATEGORY[kind] || 'ai'}"
+          style="left:${member.x}px;top:${member.y}px;width:${widthOf(member)}px;height:${heightOf(member)}px" tabindex="0" role="button"
+          aria-label="${esc(member.name)}, ${esc(LABEL[kind] || 'Node')}${off ? ', tidak tersambung' : ''}" ${off ? 'title="Tidak tersambung ke Pemicu, jadi tidak dijalankan"' : ''}>
           <span class="port in" data-to="${esc(member.id)}"></span>
-          <span class="node-icon">${nodeIcon(kind)}</span>
-          <span class="node-text"><span class="node-kind">${esc(roleLabel(member))}</span><span class="node-name">${esc(member.name || 'Tanpa nama')}</span><span class="node-sub">${esc(nodeDetail(member))}</span></span>
-          ${role}<span class="node-status" aria-hidden="true"></span>
+          <span class="node-icon">${nodeIcon(kind, kind === 'agent' ? 26 : 30)}</span>
+          ${kind === 'agent' ? `<span class="node-inner"><b>AI Agent</b><small>${esc(shortModel(member.model_id) || 'pilih model')}</small></span>` : ''}
+          <span class="node-status" aria-hidden="true"></span>
+          ${issues.length ? `<span class="node-issue" title="${esc(issues.join('\n'))}">!</span>` : ''}
           <button class="node-more" type="button" tabindex="-1" aria-label="Menu ${esc(member.name)}" title="Menu (atau klik kanan)">⋯</button>
-          ${outs}
-          <span class="node-state"></span>
+          ${outPorts(member, member.id)}
+          <span class="node-label"><b>${esc(member.name || 'Tanpa nama')}</b>${kind === 'agent' ? '' : `<small>${esc(nodeDetail(member))}</small>`}<span class="node-state"></span></span>
         </div>`;
     }).join('');
     $('nodes').innerHTML = trigger + nodes;
@@ -343,30 +439,16 @@
   }
 
   function edgePath(a, b) {
-    const dx = Math.max(50, Math.abs(b.x - a.x) / 2);
+    const dx = Math.max(60, Math.abs(b.x - a.x) / 2);
     return `M${a.x} ${a.y}C${a.x + dx} ${a.y} ${b.x - dx} ${b.y} ${b.x} ${b.y}`;
   }
 
-  /* Every line on the board. Solid lines are connections you made and can cut; dashed ones the
-     flow adds by itself (agents feed the Lead, the Lead feeds the Reviewer and the outputs). */
+  /* Every line on the board is one you drew, and every one can be cut. */
   function edgeList() {
-    const list = [];
-    const lead = memberById(S.lead);
-    const reviewer = memberById(S.reviewer);
-    const after = afterAnswer();
-    const dependedOn = new Set(S.members.flatMap(m => m.depends_on || []));
-    startNodes().forEach(member => list.push({ from: TRIGGER, to: member.id, auto: true, title: 'Langkah pertama setelah pemicu' }));
+    const list = S.starts.filter(memberById).map(id => ({ from: TRIGGER, to: id, port: '' }));
     S.members.forEach(member => {
       parentsOf(member).forEach(parent => list.push({ from: parent.id, to: member.id, port: isBranching(parent) ? (member.branch || '') : '' }));
-      if (member === lead || member === reviewer || after.has(member.id) || dependedOn.has(member.id) || !lead) return;
-      list.push({ from: member.id, to: lead.id, auto: true, title: 'Otomatis: hasil agent ini dikirim ke Lead' });
     });
-    if (lead && reviewer) list.push({ from: lead.id, to: reviewer.id, auto: true, title: 'Otomatis: Reviewer memeriksa jawaban Lead' });
-    const writer = reviewer || lead;
-    const ends = writer ? [writer] : S.members.filter(m => !after.has(m.id) && !dependedOn.has(m.id));
-    S.members.filter(m => isOutput(m) && !(m.depends_on || []).length).forEach(output => ends.forEach(end => {
-      if (end !== output) list.push({ from: end.id, to: output.id, auto: true, title: 'Otomatis: jawaban akhir dikirim ke sini' });
-    }));
     return list;
   }
 
@@ -374,6 +456,7 @@
     const statusOf = id => (S.run && S.run.agents && S.run.agents[id] ? S.run.agents[id].status : '');
     const html = [];
     const selected = S.selectedEdge;
+    let mid = null;
     edgeList().forEach(edge => {
       const from = edge.from === TRIGGER ? TRIGGER : memberById(edge.from);
       const to = memberById(edge.to);
@@ -382,15 +465,14 @@
       const b = inPoint(to);
       const d = edgePath(a, b);
       const isSelected = selected && selected.from === edge.from && selected.to === edge.to;
-      const cls = ['edge', edge.auto ? 'auto' : '', isSelected ? 'selected' : '', statusOf(edge.to) === 'running' ? 'active' : '',
-        statusOf(edge.to) === 'skipped' ? 'skipped' : '', statusOf(edge.to) === 'completed' ? 'done' : ''].filter(Boolean).join(' ');
+      const status = statusOf(edge.to);
+      const cls = ['edge', isSelected ? 'selected' : '', status === 'running' ? 'active' : '', status === 'skipped' ? 'skipped' : '', status === 'completed' ? 'done' : ''].filter(Boolean).join(' ');
       html.push(`<path class="${cls}" d="${d}" marker-end="url(#arrow)"/>`);
-      if (edge.auto) html.push(`<path class="edge-hit auto" d="${d}"><title>${esc(edge.title || '')}</title></path>`);
-      else html.push(`<path class="edge-hit" d="${d}" data-from="${esc(edge.from)}" data-to="${esc(edge.to)}"><title>Klik untuk memilih, lalu Delete untuk memutus. Klik kanan untuk menu.</title></path>`);
-      if (isSelected) S.selectedEdgeMid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      html.push(`<path class="edge-hit" d="${d}" data-from="${esc(edge.from)}" data-to="${esc(edge.to)}"><title>Klik untuk menyisipkan node atau memutus sambungan</title></path>`);
+      if (isSelected) mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     });
     $('edge-lines').innerHTML = html.join('');
-    $('edge-lines').querySelectorAll('.edge-hit[data-from]').forEach(hit => {
+    $('edge-lines').querySelectorAll('.edge-hit').forEach(hit => {
       hit.onpointerdown = e => e.stopPropagation();
       hit.onclick = e => {
         e.stopPropagation();
@@ -399,13 +481,13 @@
         renderEdges();
       };
     });
-    const button = $('edge-delete');
-    if (selected && S.selectedEdgeMid && edgeList().some(e => !e.auto && e.from === selected.from && e.to === selected.to)) {
-      button.style.left = `${S.selectedEdgeMid.x}px`;
-      button.style.top = `${S.selectedEdgeMid.y}px`;
-      button.classList.remove('hidden');
+    const tools = $('edge-tools');
+    if (mid) {
+      tools.style.left = `${mid.x}px`;
+      tools.style.top = `${mid.y}px`;
+      tools.classList.remove('hidden');
     } else {
-      button.classList.add('hidden');
+      tools.classList.add('hidden');
       if (selected) S.selectedEdge = null;
     }
   }
@@ -416,9 +498,18 @@
     document.querySelectorAll('#nodes .node').forEach(n => n.classList.toggle('selected', n.dataset.id === id));
   }
 
+  function renderIssues() {
+    const button = $('wf-issues');
+    if (!S.members) return;
+    const list = flowIssues();
+    button.classList.toggle('hidden', !list.length);
+    button.textContent = `${list.length} perlu diisi`;
+    button.title = list.map(i => `${i.name}: ${i.text}`).join('\n');
+  }
+
   /* ── Pointer: pan, drag, connect ─────────────────── */
   function boardPointerDown(event) {
-    if (event.button !== 0 || event.target.closest('.node, .port-add, #edge-delete, .wf-zoom, .wf-run, .wf-plus, .wf-empty')) return;
+    if (event.button !== 0 || event.target.closest('.node, .port-add, #edge-tools, .wf-zoom, .wf-run, .wf-plus, .wf-note')) return;
     selectNode(null);
     if (S.selectedEdge) { S.selectedEdge = null; renderEdges(); }
     const start = { x: event.clientX, y: event.clientY, vx: V.x, vy: V.y };
@@ -435,18 +526,22 @@
     const id = el.dataset.id;
     const item = id === TRIGGER ? S.trigger : memberById(id);
     if (!item) return;
+    // Only a node the user clicked before opens on this click, not one selected for them (a new node is).
+    const wasSelected = S.selected === id && S.clickedId === id;
+    S.clickedId = id;
     selectNode(id);
     if (S.selectedEdge) { S.selectedEdge = null; renderEdges(); }
     const start = canvasPoint(event);
     const origin = { x: item.x, y: item.y };
+    const before = snapshot();
     let moved = false;
     el.setPointerCapture(event.pointerId);
     el.onpointermove = e => {
       const p = canvasPoint(e);
       if (!moved && Math.hypot(p.x - start.x, p.y - start.y) < 4 / V.k) return;
       moved = true;
-      item.x = Math.max(0, Math.min(CANVAS.w - NODE_W, origin.x + p.x - start.x));
-      item.y = Math.max(0, Math.min(CANVAS.h - BASE_H, origin.y + p.y - start.y));
+      item.x = Math.max(0, Math.min(CANVAS.w - BOX, origin.x + p.x - start.x));
+      item.y = Math.max(0, Math.min(CANVAS.h - BOX, origin.y + p.y - start.y));
       el.style.left = `${item.x}px`;
       el.style.top = `${item.y}px`;
       renderEdges();
@@ -454,7 +549,13 @@
     el.onpointerup = () => {
       el.onpointermove = null;
       el.onpointerup = null;
-      if (moved) savePositions();
+      // Click selects; a click on the node already selected opens it.
+      if (!moved) { if (wasSelected) openNdv(id); return; }
+      S.past.push(before);
+      S.future = [];
+      S.lastStep = null;
+      paintHistory();
+      markDirty();
     };
   }
 
@@ -485,10 +586,7 @@
       const over = document.elementFromPoint(e.clientX, e.clientY);
       const target = over && over.closest('#nodes .node');
       if (target && target.dataset.id !== fromId && target.dataset.id !== TRIGGER) { connect(fromId, target.dataset.id, branch); return; }
-      if (over && over.closest('#board') && !over.closest('.wf-run, .wf-zoom')) {
-        // Dropped on empty canvas: add the next node right there.
-        openCreator({ from: fromId, branch, at: canvasPoint(e) });
-      }
+      if (over && over.closest('#board') && !over.closest('.wf-run, .wf-zoom')) openCreator({ from: fromId, branch, at: canvasPoint(e) });
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
@@ -505,20 +603,18 @@
     const to = memberById(toId);
     if (!to) return;
     if (fromId === TRIGGER) {
-      // From the trigger means "run first": a start node waits for nobody.
-      if (to.id === S.reviewer) { toast('Reviewer selalu berjalan setelah Lead.'); return; }
-      to.depends_on = [];
-      to.branch = '';
+      if (isStart(toId)) { toast('Sudah tersambung ke Pemicu.'); return; }
+      checkpoint();
+      S.starts = [...S.starts, toId];
       afterChange();
-      toast(`${to.name} jadi langkah pertama.`);
       return;
     }
     const from = memberById(fromId);
     if (!from) return;
-    if (to.id === S.reviewer) { toast('Reviewer tidak bisa disambung: ia selalu memeriksa jawaban Lead.'); return; }
     if (from.id === to.id || isAncestor(to.id, from)) { toast('Sambungan ini membuat putaran. Alur harus berjalan maju.'); return; }
     const deps = new Set(to.depends_on || []);
     if (deps.has(from.id) && (!isBranching(from) || to.branch === branch)) { toast('Sudah tersambung.'); return; }
+    checkpoint();
     deps.add(from.id);
     to.depends_on = [...deps];
     to.branch = isBranching(from) ? branch : (branchParent(to) ? to.branch : '');
@@ -528,8 +624,12 @@
   function removeEdge(fromId, toId) {
     const to = memberById(toId);
     if (!to) return;
-    to.depends_on = (to.depends_on || []).filter(id => id !== fromId);
-    if (!branchParent(to)) to.branch = '';
+    checkpoint();
+    if (fromId === TRIGGER) S.starts = S.starts.filter(id => id !== toId);
+    else {
+      to.depends_on = (to.depends_on || []).filter(id => id !== fromId);
+      if (!branchParent(to)) to.branch = '';
+    }
     S.selectedEdge = null;
     afterChange();
   }
@@ -541,51 +641,103 @@
   }
 
   /* ── Adding and removing nodes ───────────────────── */
+  function defaultModel() {
+    const used = (S.members.find(m => kindOf(m) === 'agent' && modelKnown(m.model_id)) || {}).model_id;
+    if (used) return used;
+    if (S.model && S.model !== 'auto' && S.byId[S.model]) return S.model;
+    return (S.models[0] && S.models[0].id) || '';
+  }
+
+  /* pending: {from, branch, at, to}. "to" inserts the node into the line from → to. Without "from", the node
+     follows the selected node, or the trigger when the flow is still empty. */
   function addNode(kind, pending = {}) {
-    if (S.members.length >= MAX_NODES) { toast(`Maksimal ${MAX_NODES} node.`); return null; }
-    if (kind === 'agent' && S.members.filter(m => kindOf(m) === 'agent').length >= MAX_AGENTS) { toast(`Maksimal ${MAX_AGENTS} agent.`); return null; }
+    checkpoint();
     const preset = NODE_DEFAULTS[kind];
-    const model = (S.members.find(m => m.model_id) || {}).model_id || (S.models[0] && S.models[0].id) || '';
-    const parent = pending.from && pending.from !== TRIGGER ? memberById(pending.from) : (pending.from ? null : memberById(S.selected));
+    let fromId = 'from' in pending ? pending.from : (S.selected || (S.members.length ? null : TRIGGER));
+    if (fromId && fromId !== TRIGGER && !memberById(fromId)) fromId = null;
+    const parent = fromId && fromId !== TRIGGER ? memberById(fromId) : null;
+    const count = S.members.filter(m => kindOf(m) === kind).length;
     const member = {
-      id: newId(), kind, name: kind === 'agent' ? `AI Agent ${S.members.filter(m => kindOf(m) === 'agent').length + 1}` : preset.name,
-      role: preset.role || preset.name, model_id: model, instructions: '', config: JSON.parse(JSON.stringify(preset.config)),
-      depends_on: parent && parent.id !== S.reviewer ? [parent.id] : [],
+      id: newId(), kind, name: count ? `${preset.name} ${count + 1}` : preset.name,
+      role: preset.role || preset.name, model_id: kind === 'agent' ? defaultModel() : '', instructions: '',
+      config: clone(preset.config), depends_on: parent ? [parent.id] : [],
       branch: parent && isBranching(parent) ? (pending.branch || 'A') : '',
     };
-    const anchor = parent ? outPoint(parent, member.branch) : pending.from === TRIGGER ? outPoint(TRIGGER) : null;
-    if (pending.at) { member.x = pending.at.x; member.y = pending.at.y - BASE_H / 2; }
-    else if (anchor) { member.x = anchor.x + COL - NODE_W; member.y = anchor.y - BASE_H / 2; }
+    if (fromId === TRIGGER) S.starts = [...S.starts, member.id];
+    const target = pending.to ? memberById(pending.to) : null;
+    if (target) {
+      if (fromId === TRIGGER) S.starts = S.starts.filter(id => id !== target.id);
+      else target.depends_on = (target.depends_on || []).filter(id => id !== fromId);
+      target.depends_on = [...(target.depends_on || []), member.id];
+      if (parent && isBranching(parent)) { member.branch = target.branch || member.branch; target.branch = ''; }
+    }
+    const anchor = fromId ? outPoint(fromId === TRIGGER ? TRIGGER : parent, member.branch) : null;
+    if (pending.at) { member.x = pending.at.x; member.y = pending.at.y - BOX / 2; }
+    else if (target && anchor) { member.x = (anchor.x + target.x) / 2 - widthOf(member) / 2; member.y = anchor.y - heightOf(member) / 2 - ROW / 2; }
+    else if (anchor) { member.x = anchor.x + COL - BOX; member.y = anchor.y - heightOf(member) / 2; }
     else {
       const right = Math.max(S.trigger.x, ...S.members.map(m => m.x));
       member.x = right + COL;
-      member.y = ORIGIN.y;
+      member.y = S.trigger.y;
     }
-    // Keep clear of a node already sitting there.
-    while (S.members.some(m => Math.abs(m.x - member.x) < NODE_W - 20 && Math.abs(m.y - member.y) < BASE_H)) member.y += ROW;
+    while (S.members.some(m => Math.abs(m.x - member.x) < widthOf(m) && Math.abs(m.y - member.y) < BOX + 40)) member.y += ROW;
     S.members.push(member);
-    if (!S.lead && kind === 'agent') S.lead = defaultLead();
     selectNode(member.id);
     afterChange();
-    savePositions();
     return member;
   }
 
+  /* Like n8n: removing a node in the middle joins what came before it to what came after. */
   function removeNode(id) {
     if (id === TRIGGER) { toast('Pemicu tidak bisa dihapus. Ubah ke Manual bila tidak perlu jadwal.'); return; }
     const member = memberById(id);
     if (!member) return;
-    if (S.members.length <= 2) { toast('Alur butuh minimal 2 node.'); return; }
+    checkpoint();
+    const wasStart = isStart(id);
+    const parents = member.depends_on || [];
     S.members = S.members.filter(m => m.id !== id);
     S.members.forEach(m => {
-      m.depends_on = (m.depends_on || []).filter(dep => dep !== id);
-      if (!branchParent(m)) m.branch = '';
+      if (!(m.depends_on || []).includes(id)) return;
+      m.depends_on = [...new Set([...m.depends_on.filter(dep => dep !== id), ...parents])];
+      if (wasStart && !S.starts.includes(m.id)) S.starts = [...S.starts, m.id];
+      if (branchParent(m)) m.branch = m.branch || member.branch || 'A';
+      else m.branch = '';
     });
-    if (S.reviewer === id) S.reviewer = null;
-    if (S.lead === id) S.lead = defaultLead() || (S.members.find(m => kindOf(m) === 'agent') || {}).id || null;
+    S.starts = S.starts.filter(s => s !== id);
+    delete S.tests[id];
     if (S.ndv === id) closeNdv();
     selectNode(null);
     afterChange();
+  }
+
+  function copyNode(id) {
+    const member = memberById(id);
+    if (!member) return;
+    S.clipboard = clone(member);
+    try { navigator.clipboard.writeText(JSON.stringify({ squidwings_node: S.clipboard })); } catch { /* the in-page copy is enough */ }
+    toast('Node disalin. Tempel dengan Ctrl+V.');
+  }
+
+  function pasteNode(source = S.clipboard, at = null) {
+    if (!source) return;
+    checkpoint();
+    const copy = clone(source);
+    copy.id = newId();
+    copy.name = `${source.name || 'Node'} (salinan)`.slice(0, 60);
+    if (kindOf(copy) !== 'agent') copy.role = copy.name;
+    copy.depends_on = [];
+    copy.branch = '';
+    copy.x = at ? at.x : (source.x || S.trigger.x + COL) + 40;
+    copy.y = at ? at.y : (source.y || S.trigger.y) + ROW;
+    while (S.members.some(m => Math.abs(m.x - copy.x) < widthOf(m) && Math.abs(m.y - copy.y) < BOX + 40)) copy.y += ROW;
+    S.members.push(copy);
+    selectNode(copy.id);
+    afterChange();
+  }
+
+  function duplicateNode(id) {
+    const member = memberById(id);
+    if (member) pasteNode(member);
   }
 
   /* ── Right-click menus ───────────────────────────── */
@@ -598,41 +750,9 @@
     if (!member) return;
     const name = prompt('Nama node:', member.name || '');
     if (name === null || !name.trim()) return;
+    checkpoint();
     member.name = name.trim().slice(0, 60);
     if (kindOf(member) !== 'agent') member.role = member.name;
-    markDirty();
-    refreshNodeCard(member);
-    if (S.ndv === id) renderNdv();
-  }
-
-  function duplicateNode(id) {
-    const source = memberById(id);
-    if (!source) return;
-    if (S.members.length >= MAX_NODES) { toast(`Maksimal ${MAX_NODES} node.`); return; }
-    if (kindOf(source) === 'agent' && S.members.filter(m => kindOf(m) === 'agent').length >= MAX_AGENTS) { toast(`Maksimal ${MAX_AGENTS} agent.`); return; }
-    const copy = JSON.parse(JSON.stringify(source));
-    copy.id = newId();
-    copy.name = `${source.name || 'Node'} (salinan)`.slice(0, 60);
-    if (kindOf(copy) !== 'agent') copy.role = copy.name;
-    copy.x = source.x + 36;
-    copy.y = source.y + ROW;
-    while (S.members.some(m => Math.abs(m.x - copy.x) < NODE_W - 20 && Math.abs(m.y - copy.y) < BASE_H)) copy.y += ROW;
-    S.members.push(copy);
-    selectNode(copy.id);
-    afterChange();
-    savePositions();
-  }
-
-  /* Whether an agent is a plain worker, the lead (writes the final answer) or the reviewer. */
-  function setPosition(id, value) {
-    const member = memberById(id);
-    if (!member) return;
-    if (S.lead === id) S.lead = null;
-    if (S.reviewer === id) S.reviewer = null;
-    if (value === 'lead') S.lead = id;
-    if (value === 'reviewer') { S.reviewer = id; member.depends_on = []; }
-    if (!S.lead) S.lead = defaultLead();
-    if (S.lead === S.reviewer) S.lead = S.members.find(m => m.id !== S.reviewer && kindOf(m) === 'agent')?.id || null;
     afterChange();
   }
 
@@ -640,25 +760,21 @@
     const member = memberById(id);
     if (!member) return null;
     const items = [
-      { label: 'Edit node…', hint: 'Enter', run: () => openNdv(id) },
+      { label: 'Buka', hint: 'Enter', run: () => openNdv(id) },
+      ...(kindOf(member) === 'agent' ? [] : [{ label: 'Tes langkah ini', run: () => { openNdv(id); testNode(); } }]),
       { label: 'Ganti nama…', run: () => renameNode(id) },
-      { label: 'Duplikat', run: () => duplicateNode(id) },
+      { label: 'Duplikat', hint: 'Ctrl+D', run: () => duplicateNode(id) },
+      { label: 'Salin', hint: 'Ctrl+C', run: () => copyNode(id) },
       { separator: true },
       { label: 'Tambah node setelah ini…', run: () => openCreator({ from: id, branch: isBranching(member) ? 'A' : '' }) },
     ];
-    if (kindOf(member) === 'agent') {
-      items.push({ separator: true }, { heading: 'Posisi di alur' },
-        { label: 'Agent biasa', disabled: id !== S.lead && id !== S.reviewer ? 'Sudah agent biasa' : false, run: () => setPosition(id, 'worker') },
-        { label: 'Lead (menulis jawaban akhir)', disabled: id === S.lead ? 'Sudah Lead' : false, run: () => setPosition(id, 'lead') },
-        { label: 'Reviewer (memeriksa jawaban Lead)', disabled: id === S.reviewer ? 'Sudah Reviewer' : false, run: () => setPosition(id, 'reviewer') });
-    }
     const parents = parentsOf(member);
-    if (parents.length) {
+    if (parents.length || isStart(id)) {
       items.push({ separator: true }, { heading: 'Putus sambungan' });
+      if (isStart(id)) items.push({ label: 'dari Pemicu', run: () => removeEdge(TRIGGER, id) });
       parents.forEach(parent => items.push({ label: `dari ${parent.name || 'node'}`, run: () => removeEdge(parent.id, id) }));
     }
-    items.push({ separator: true },
-      { label: 'Hapus node', danger: true, hint: 'Del', run: () => { if (confirm(`Hapus node "${member.name}"?`)) removeNode(id); } });
+    items.push({ separator: true }, { label: 'Hapus node', danger: true, hint: 'Del', run: () => removeNode(id) });
     return items;
   }
 
@@ -672,21 +788,40 @@
     const to = memberById(toId);
     return [
       { heading: `${from ? from.name : '?'} → ${to ? to.name : '?'}` },
+      { label: 'Sisipkan node di sini…', run: () => insertOnEdge(fromId, toId) },
       { label: 'Putus sambungan', danger: true, hint: 'Del', run: () => removeEdge(fromId, toId) },
     ];
   }
 
+  function insertOnEdge(fromId, toId) {
+    const to = memberById(toId);
+    const from = fromId === TRIGGER ? null : memberById(fromId);
+    openCreator({ from: fromId, to: toId, branch: from && isBranching(from) ? (to.branch || 'A') : '' });
+  }
+
   function boardMenu(point) {
     return [
-      { label: 'Tambah node di sini…', hint: 'Tab', run: () => openCreator(point ? { at: point } : {}) },
+      { label: 'Tambah node di sini…', hint: 'Tab', run: () => openCreator(point ? { at: point, from: null } : {}) },
+      { label: 'Tempel node', hint: 'Ctrl+V', disabled: S.clipboard ? false : 'Belum ada node yang disalin', run: () => pasteNode(S.clipboard, point) },
+      { separator: true },
+      { label: 'Urungkan', hint: 'Ctrl+Z', disabled: S.past.length ? false : 'Tidak ada', run: undo },
+      { label: 'Ulangi', hint: 'Ctrl+Shift+Z', disabled: S.future.length ? false : 'Tidak ada', run: redo },
       { separator: true },
       { label: 'Muat semua node', hint: '1', run: fitView },
       { label: 'Zoom 100%', hint: '0', run: () => { V.k = 1; applyView(); } },
-      { label: 'Rapikan tata letak', run: () => $('tidy-board').click() },
+      { label: 'Rapikan tata letak', run: tidy },
       { separator: true },
-      { label: 'Simpan alur', hint: 'Ctrl+S', disabled: S.dirty ? false : 'Tidak ada perubahan', run: () => saveTeam().then(() => toast('Tersimpan.')).catch(e => toast(e.message)) },
-      { label: 'Jalankan alur', disabled: $('run').disabled ? 'Alur sedang berjalan' : false, run: () => $('run').click() },
+      { label: 'Simpan alur', hint: 'Ctrl+S', disabled: S.dirty ? false : 'Tidak ada perubahan', run: saveAndSay },
+      { label: 'Jalankan alur', disabled: $('run').disabled ? 'Alur sedang berjalan' : false, run: () => $('run-form').requestSubmit() },
     ];
+  }
+
+  function tidy() {
+    checkpoint();
+    autoLayout(true);
+    markDirty();
+    render();
+    fitView();
   }
 
   /* ── Node creator (the + panel) ──────────────────── */
@@ -704,16 +839,25 @@
   function renderCreator(query) {
     const q = query.trim().toLowerCase();
     const match = item => !q || `${item.label} ${item.desc} ${item.kind}`.toLowerCase().includes(q);
-    const from = S.pending && S.pending.from && S.pending.from !== TRIGGER ? memberById(S.pending.from) : null;
-    const groups = CATALOG.map(group => ({ ...group, items: group.items.filter(match) })).filter(g => g.items.length);
+    const pending = S.pending || {};
+    const fromId = 'from' in pending ? pending.from : (S.selected || (S.members.length ? null : TRIGGER));
+    const from = fromId === TRIGGER ? { name: 'Pemicu' } : fromId ? memberById(fromId) : null;
+    // While searching, one list with name matches first, so Enter picks what was typed.
+    const score = item => (item.label.toLowerCase().startsWith(q) ? 3 : item.label.toLowerCase().includes(q) ? 2 : 1);
+    const groups = q
+      ? [{ key: 'found', label: 'Hasil', items: CATALOG.flatMap(g => g.items.filter(match).map(item => ({ ...item, cat: g.key })))
+        .sort((a, b) => score(b) - score(a)) }].filter(g => g.items.length)
+      : CATALOG.map(group => ({ ...group, items: group.items.filter(match) })).filter(g => g.items.length);
     const triggers = TRIGGERS.filter(t => !q || `${t.label} ${t.desc} pemicu trigger jadwal`.toLowerCase().includes(q));
-    $('creator-context').textContent = from ? `Disambung setelah ${from.name}${S.pending.branch ? `, jalur ${S.pending.branch}` : ''}` : 'Pilih node untuk ditambahkan';
+    const into = pending.to ? memberById(pending.to) : null;
+    $('creator-context').textContent = into ? `Disisipkan antara ${from ? from.name : '?'} dan ${into.name}`
+      : from ? `Disambung setelah ${from.name}${pending.branch ? `, jalur ${pending.branch}` : ''}` : 'Ditaruh tanpa sambungan. Sambungkan sendiri nanti.';
     $('creator-list').innerHTML = groups.map(group => `
       <div class="creator-group"><h4>${esc(group.label)}</h4>
-        ${group.items.map(item => `<button class="creator-item" data-kind="${item.kind}" data-cat="${group.key}" type="button">
+        ${group.items.map(item => `<button class="creator-item" data-kind="${item.kind}" data-cat="${item.cat || group.key}" type="button">
           <span class="node-icon">${nodeIcon(item.kind, 18)}</span><span><b>${esc(item.label)}</b><small>${esc(item.desc)}</small></span></button>`).join('')}
-      </div>`).join('') + (triggers.length && !from ? `
-      <div class="creator-group"><h4>Pemicu</h4>
+      </div>`).join('') + (triggers.length && !pending.to ? `
+      <div class="creator-group"><h4>Ganti pemicu</h4>
         ${triggers.map(t => `<button class="creator-item" data-trigger="${t.mode}" data-cat="trigger" type="button">
           <span class="node-icon">${nodeIcon('trigger', 18)}</span><span><b>${esc(t.label)}</b><small>${esc(t.desc)}</small></span></button>`).join('')}
       </div>` : '') || '<p class="hint">Tidak ada node yang cocok.</p>';
@@ -726,10 +870,10 @@
     });
     $('creator-list').querySelectorAll('[data-trigger]').forEach(button => {
       button.onclick = () => {
+        checkpoint();
         S.schedule = { ...(S.schedule || {}), mode: button.dataset.trigger };
         closeCreator();
-        markDirty();
-        render();
+        afterChange();
         openNdv(TRIGGER);
       };
     });
@@ -746,11 +890,14 @@
   function openNdv(id) {
     if (id !== TRIGGER && !memberById(id)) return;
     S.ndv = id;
+    S.lastTpl = null;
     selectNode(id);
     $('ndv').classList.remove('hidden');
     S.ndvTab = 'params';
     renderNdv();
-    if (id !== TRIGGER && kindOf(memberById(id)) === 'agent') refreshSources();
+    const member = memberById(id);
+    if (member && ['agent', 'datatable'].includes(kindOf(member))) refreshSources();
+    if (member && kindOf(member) === 'datatable' && member.config.source) loadTables(member.config.source);
   }
   function closeNdv() {
     S.ndv = null;
@@ -767,13 +914,16 @@
     const kind = isTrigger ? 'trigger' : kindOf(member);
     $('ndv-icon').innerHTML = nodeIcon(kind, 22);
     $('ndv-icon').dataset.cat = isTrigger ? 'trigger' : CATEGORY[kind] || 'ai';
-    $('ndv-kind').textContent = isTrigger ? 'Pemicu' : roleLabel(member);
-    $('ndv-title').textContent = isTrigger ? 'Kapan alur ini berjalan' : member.name || 'Tanpa nama';
+    $('ndv-kind').textContent = isTrigger ? 'Pemicu' : LABEL[kind] || 'Node';
+    const title = $('ndv-title');
+    if (document.activeElement !== title) title.value = isTrigger ? 'Kapan alur ini berjalan' : member.name || '';
+    title.readOnly = isTrigger;
     $('ndv-remove').classList.toggle('hidden', isTrigger);
+    $('ndv-test').classList.toggle('hidden', isTrigger || kind === 'agent');
     $('ndv-input').innerHTML = isTrigger ? triggerInput() : inputHtml(member);
     $('ndv-output').innerHTML = isTrigger ? triggerOutput() : outputHtml(member);
-    enhanceCode($('ndv-output'));
-    enhanceCode($('ndv-input'));
+    bindIo($('ndv-input'));
+    bindIo($('ndv-output'));
     if (isTrigger) renderTrigger($('ndv-params'));
     else renderParams($('ndv-params'), member);
     document.querySelectorAll('#ndv-tabs button').forEach(b => b.classList.toggle('on', b.dataset.pane === S.ndvTab));
@@ -781,47 +931,160 @@
   }
 
   const runState = id => (S.run && S.run.agents ? S.run.agents[id] : null);
-  const preview = text => (text ? `<div class="io-text prose">${md(String(text).slice(0, 20000))}</div>` : '');
+  const testState = id => S.tests[id] || null;
+  /* What a node sent out most recently: its own test, else the last run. */
+  function lastOutput(id) {
+    const test = testState(id);
+    const run = runState(id);
+    const runAt = run && run.completed_at ? run.completed_at * 1000 : 0;
+    if (test && (!runAt || test.at > runAt)) return { content: test.content || '', note: test.note, error: test.error, branch: test.branch, from: 'test' };
+    if (run && ['completed', 'failed'].includes(run.status)) return { content: run.content || '', note: run.note, error: run.error, branch: run.branch, status: run.status, from: 'run' };
+    return null;
+  }
+
+  /* The text a node would receive now: what its incoming lines carry, else the trigger's input. */
+  /* Before the earlier nodes have run, a test uses the trigger's input, so one node can be tried on its own. */
+  function inputFor(member) {
+    const parts = parentsOf(member).map(p => lastOutput(p.id)).filter(o => o && o.content && !o.error).map(o => o.content);
+    if (parts.length) return [...new Set(parts)].join('\n\n');
+    return $('task').value.trim() || (S.run ? S.run.task : '');
+  }
+
+  function parseJson(text) {
+    const trimmed = String(text || '').trim();
+    if (!/^[[{]/.test(trimmed)) return undefined;
+    try { return JSON.parse(trimmed); } catch { return undefined; }
+  }
+
+  /* The fields of a JSON input, as {{json.x}} chips to click into a box. */
+  function fieldChips(text) {
+    const data = parseJson(text);
+    if (data === undefined) return '';
+    const first = Array.isArray(data) ? data.find(x => x && typeof x === 'object') : data;
+    if (!first || typeof first !== 'object') return '';
+    const keys = Object.keys(first).slice(0, 40);
+    return `<div class="io-fields"><span class="hint">Klik untuk memasukkan ke kotak yang aktif:</span>
+      ${keys.map(k => `<button class="chip-btn" type="button" data-field-chip="{{json.${esc(k)}}}" title="${esc(String(typeof first[k] === 'object' ? JSON.stringify(first[k]) : first[k]).slice(0, 200))}">${esc(k)}</button>`).join('')}
+      ${Array.isArray(data) ? `<button class="chip-btn" type="button" data-field-chip="{{json.count}}">jumlah baris</button>` : ''}
+      <button class="chip-btn" type="button" data-field-chip="{{input}}">seluruh input</button></div>`;
+  }
+
+  /* JSON as a table or as text; anything else as markdown. */
+  function ioView(text, key) {
+    if (!text) return '';
+    const data = parseJson(text);
+    if (data === undefined) return `<div class="io-text prose">${md(String(text).slice(0, 20000))}</div>`;
+    const rows = Array.isArray(data) ? data : [data];
+    const table = rows.length && rows.every(r => r && typeof r === 'object' && !Array.isArray(r));
+    const mode = S.ioMode[key] || (table ? 'table' : 'json');
+    const toggle = table ? `<div class="io-toggle" role="group" aria-label="Tampilan">
+        <button type="button" data-io-mode="table" data-io-key="${esc(key)}" class="${mode === 'table' ? 'on' : ''}">Tabel</button>
+        <button type="button" data-io-mode="json" data-io-key="${esc(key)}" class="${mode === 'json' ? 'on' : ''}">JSON</button></div>` : '';
+    if (mode === 'table' && table) {
+      const columns = [...new Set(rows.flatMap(r => Object.keys(r)))].slice(0, 40);
+      const cell = v => (v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+      return `${toggle}<div class="io-table-wrap"><table class="io-table"><thead><tr>${columns.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead>
+        <tbody>${rows.slice(0, 200).map(r => `<tr>${columns.map(c => `<td title="${esc(cell(r[c]).slice(0, 300))}">${esc(cell(r[c]).slice(0, 120))}</td>`).join('')}</tr>`).join('')}</tbody></table></div>
+        <p class="hint">${rows.length} baris${rows.length > 200 ? ', 200 pertama ditampilkan' : ''}</p>`;
+    }
+    return `${toggle}<pre class="io-json">${esc(JSON.stringify(data, null, 2).slice(0, 40000))}</pre>`;
+  }
+
+  function bindIo(box) {
+    enhanceCode(box);
+    box.querySelectorAll('[data-io-mode]').forEach(b => { b.onclick = () => { S.ioMode[b.dataset.ioKey] = b.dataset.ioMode; renderNdv(); }; });
+    box.querySelectorAll('[data-field-chip]').forEach(b => {
+      b.onmousedown = e => e.preventDefault();   // keep the focus in the box being filled
+      b.onclick = () => insertTemplate(b.dataset.fieldChip);
+    });
+  }
+
+  function insertTemplate(text) {
+    const target = S.lastTpl && document.body.contains(S.lastTpl) ? S.lastTpl : $('ndv-params').querySelector('[data-tpl]');
+    if (!target) { copyText(text); return; }
+    const at = target.selectionStart ?? target.value.length;
+    target.value = target.value.slice(0, at) + text + target.value.slice(target.selectionEnd ?? at);
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    target.focus();
+    const caret = at + text.length;
+    try { target.setSelectionRange(caret, caret); } catch { /* number inputs */ }
+  }
 
   function inputHtml(member) {
-    if (!S.run) return '<p class="io-empty">Jalankan alur untuk melihat data yang masuk ke node ini.</p>';
     const parents = parentsOf(member);
-    if (!parents.length) {
-      if (member.id === S.lead) {
-        const workers = S.members.filter(m => m.id !== member.id && runState(m.id) && runState(m.id).content);
-        if (workers.length) return workers.map(w => `<div class="io-block"><div class="io-head">dari ${esc(w.name)}</div>${preview(runState(w.id).content)}</div>`).join('');
-      }
-      return `<div class="io-block"><div class="io-head">Tugas</div>${preview(S.run.task)}</div>`;
+    const blocks = parents.map(p => {
+      const out = lastOutput(p.id);
+      const status = out ? (out.error ? 'failed' : 'completed') : '';
+      return `<div class="io-block"><div class="io-head">dari ${esc(p.name)} <span class="io-status" data-status="${status}">${out ? (out.from === 'test' ? 'hasil tes' : STATUS[out.status] || '') : 'belum ada'}</span></div>
+        ${out && out.content ? ioView(out.content, `in-${p.id}`) : '<p class="io-empty">Belum ada isi. Jalankan alur atau tes node itu.</p>'}</div>`;
+    });
+    if (isStart(member.id) || !parents.length) {
+      const task = $('task').value.trim() || (S.run ? S.run.task : '');
+      blocks.unshift(`<div class="io-block"><div class="io-head">dari Pemicu</div>${task ? ioView(task, 'in-trigger') : `<p class="io-empty">${isStart(member.id) ? 'Isi kotak input di bawah kanvas, atau jalankan alur.' : 'Node ini belum tersambung, jadi tidak dijalankan.'}</p>`}</div>`);
     }
-    return parents.map(p => {
-      const state = runState(p.id) || {};
-      return `<div class="io-block"><div class="io-head">dari ${esc(p.name)} <span class="io-status" data-status="${esc(state.status || '')}">${esc(STATUS[state.status] || '')}</span></div>
-        ${state.content ? preview(state.content) : '<p class="io-empty">Belum ada isi.</p>'}</div>`;
-    }).join('');
+    return fieldChips(inputFor(member)) + blocks.join('');
   }
 
   function outputHtml(member) {
-    const state = runState(member.id);
-    if (!state) return '<p class="io-empty">Belum dijalankan. Tekan Jalankan alur di bawah kanvas.</p>';
+    const out = lastOutput(member.id);
+    const run = runState(member.id);
+    if (!out) {
+      if (run && run.status === 'skipped') return '<p class="io-empty">Tidak dijalankan di eksekusi terakhir: tidak ada jalur yang sampai ke sini.</p>';
+      if (run && run.status === 'running') return '<p class="io-empty">Sedang berjalan…</p>';
+      return `<p class="io-empty">${kindOf(member) === 'agent' ? 'Belum dijalankan. Tekan Jalankan alur di bawah kanvas.' : 'Belum ada output. Tekan Tes langkah, atau Jalankan alur.'}</p>`;
+    }
     const facts = [
-      STATUS[state.status] || state.status,
-      state.branch ? `jalur ${state.branch}` : '',
-      state.completed_at && state.started_at ? formatSeconds((state.completed_at - state.started_at) * 1000) : '',
-      state.tokens ? `${formatTokens(state.tokens)} token` : '',
+      out.from === 'test' ? 'Hasil tes' : STATUS[out.status] || out.status,
+      out.branch ? `jalur ${out.branch}` : '',
+      out.from === 'run' && run && run.completed_at && run.started_at ? formatSeconds((run.completed_at - run.started_at) * 1000) : '',
+      out.from === 'run' && run && run.tokens ? `${formatTokens(run.tokens)} token` : '',
     ].filter(Boolean).join(' · ');
-    return `<div class="io-head"><span class="io-status" data-status="${esc(state.status)}">${esc(facts)}</span></div>
-      ${state.error ? `<div class="notice">${esc(state.error)}</div>` : ''}
-      ${state.note ? `<p class="hint">${esc(state.note)}</p>` : ''}
-      ${member.id === S.lead && S.run.result ? preview(S.run.result) : preview(state.content) || '<p class="io-empty">Tidak ada isi.</p>'}`;
+    return `<div class="io-head"><span class="io-status" data-status="${out.error ? 'failed' : 'completed'}">${esc(facts)}</span></div>
+      ${out.error ? `<div class="notice">${esc(out.error)}</div>` : ''}
+      ${out.note ? `<p class="hint">${esc(out.note)}</p>` : ''}
+      ${out.content ? ioView(out.content, `out-${member.id}`) : out.error ? '' : '<p class="io-empty">Tidak ada isi.</p>'}`;
   }
 
   function triggerInput() {
     return `<div class="io-block"><div class="io-head">Pemicu</div><p>${esc(triggerLabel())}</p></div>
-      <p class="hint">Saat dijalankan manual, isi kotak "Tugas" di bawah kanvas menjadi input pertama.</p>`;
+      <p class="hint">Saat dijalankan manual, isi kotak input di bawah kanvas menjadi input pertama.</p>`;
   }
   function triggerOutput() {
     if (!S.run) return '<p class="io-empty">Belum ada eksekusi.</p>';
-    return `<div class="io-block"><div class="io-head">Tugas yang dikirim ke langkah pertama</div>${preview(S.run.task)}</div>`;
+    return `<div class="io-block"><div class="io-head">Dikirim ke langkah pertama</div>${ioView(S.run.task, 'trigger-out') || '<p class="io-empty">Tanpa input.</p>'}</div>`;
+  }
+
+  /* ── Tes langkah ─────────────────────────────────── */
+  function serializeMember(m) {
+    return {
+      id: m.id, name: m.name || LABEL[kindOf(m)] || 'Node', role: m.role || m.name || 'Node', model_id: m.model_id || '',
+      instructions: m.instructions || '', depends_on: m.depends_on || [], kind: kindOf(m), branch: m.branch || '', config: m.config || {},
+    };
+  }
+
+  async function testNode() {
+    const member = memberById(S.ndv);
+    if (!member || kindOf(member) === 'agent') return;
+    const writes = WRITES[kindOf(member)];
+    if (writes && writes(member.config || {}) && !confirm('Tes ini benar-benar mengubah data atau mengirim pesan. Lanjutkan?')) return;
+    const button = $('ndv-test');
+    button.disabled = true;
+    button.textContent = 'Menjalankan…';
+    try {
+      const result = await post('/api/teams/node-test', {
+        member: serializeMember(member), input: inputFor(member), task: $('task').value.trim(), team_name: $('team-name').value.trim(),
+      });
+      const borrowed = parentsOf(member).length && !parentsOf(member).some(p => lastOutput(p.id) && lastOutput(p.id).content);
+      S.tests[member.id] = { ...result, note: [result.note, borrowed ? 'memakai input Pemicu, karena node sebelumnya belum punya output' : ''].filter(Boolean).join(' · '), at: Date.now() };
+      if (kindOf(member) === 'datatable' && (member.config || {}).operation !== 'get') loadTables(member.config.source, true);
+    } catch (e) {
+      S.tests[member.id] = { content: '', error: e.message, at: Date.now() };
+    }
+    button.disabled = false;
+    button.textContent = '▶ Tes langkah';
+    S.ndvTab = 'output';
+    renderNdv();
+    paintRun();
   }
 
   /* ── Parameters ──────────────────────────────────── */
@@ -847,7 +1110,7 @@
         <div class="field" data-cond-days="${listKey}:${index}"><span>Hari</span>${dayChecks(condition.days, 'data-cday')}</div>`;
     } else if (mode !== 'empty') {
       const hint = { ai: 'Pertanyaan ya atau tidak', regex: 'Pola, misalnya ^/jadwal\\b', equals: 'Teks' }[mode] || 'Kata kunci, pisahkan dengan koma';
-      body = `<label class="field"><span>${hint}</span><textarea ${attr} data-key="value" rows="2" maxlength="1000">${esc(condition.value || '')}</textarea></label>`;
+      body = `<label class="field"><span>${hint}</span><textarea ${attr} data-key="value" data-tpl rows="2" maxlength="1000">${esc(condition.value || '')}</textarea></label>`;
     }
     return `<div class="condition">
         <div class="condition-head"><span>${prefix}</span>
@@ -862,12 +1125,15 @@
       : `<p class="hint hint-warn">${what} belum diatur. <button class="link-btn" type="button" data-go-creds>Buka Kredensial</button></p>`;
   }
 
+  const TEMPLATE_CHIPS = ['input', 'json.kolom', 'task', 'date', 'time', 'day', 'team'];
+  const chipsRow = () => `<div class="chips-row">${TEMPLATE_CHIPS.map(v => `<button class="chip-btn" type="button" data-insert="{{${v}}}">{{${v}}}</button>`).join('')}</div>`;
+
   function kindFields(member) {
     const config = member.config || {};
     switch (kindOf(member)) {
       case 'delay':
         return `<label class="field"><span>Tunggu (detik, maksimal 3600)</span><input data-config="seconds" type="number" min="1" max="3600" value="${esc(config.seconds || 30)}"></label>
-          <p class="hint">Jeda ini tidak dihitung dalam batas waktu tim.</p>`;
+          <p class="hint">Jeda ini tidak dihitung dalam batas waktu alur.</p>`;
       case 'gate': {
         const list = conditionsOf(config);
         const combine = config.combine || 'and';
@@ -877,7 +1143,7 @@
             <option value="or" ${combine === 'or' ? 'selected' : ''}>OR, salah satu cukup</option>
           </select></label>
           ${list.map((c, i) => conditionFields(c, i, 'conditions')).join('')}
-          ${list.length < 5 ? '<button class="btn btn-ghost btn-small btn-block" type="button" data-cond-add="conditions">+ Syarat</button>' : ''}
+          <button class="btn btn-ghost btn-small btn-block" type="button" data-cond-add="conditions">+ Syarat</button>
           ${needsModel ? '<label class="field"><span>Model untuk syarat AI</span><select data-field="model_id"></select></label>' : ''}
           <p class="hint">Terpenuhi lewat jalur <b>benar</b>, tidak terpenuhi lewat jalur <b>salah</b>. Syarat tanpa AI dicek dulu, jadi AI sering tidak perlu ditanya.</p>`;
       }
@@ -898,22 +1164,23 @@
           <p class="hint">Isi dari semua jalur yang tiba digabung jadi satu.</p>`;
       }
       case 'set':
-        return `<label class="field"><span>Isi teks</span><textarea data-config="text" rows="8" maxlength="8000">${esc(config.text || '')}</textarea></label>
-          <div class="chips-row">${['input', 'task', 'date', 'time', 'day', 'team'].map(v => `<button class="chip-btn" type="button" data-insert="{{${v}}}">{{${v}}}</button>`).join('')}</div>
-          <p class="hint">Klik untuk menyisipkan. {{node.ID}} mengambil isi node lain.</p>`;
+        return `<label class="field"><span>Isi teks</span><textarea data-config="text" data-tpl rows="8" maxlength="8000">${esc(config.text || '')}</textarea></label>
+          ${chipsRow()}
+          <p class="hint">{{json.kolom}} mengambil satu kolom dari input JSON (misalnya hasil Tabel data). {{node.ID}} mengambil isi node lain.</p>`;
       case 'http': {
         const method = config.method || 'GET';
         return `<label class="field"><span>Metode</span><select data-config="method">
               <option ${method === 'GET' ? 'selected' : ''}>GET</option><option ${method === 'POST' ? 'selected' : ''}>POST</option>
             </select></label>
           <label class="field"><span>URL</span><input data-config="url" value="${esc(config.url || '')}" placeholder="https://..." maxlength="2000"></label>
-          ${method === 'POST' ? `<label class="field"><span>Isi (JSON atau teks)</span><textarea data-config="body" rows="4" maxlength="8000">${esc(config.body || '')}</textarea></label>` : ''}
-          <p class="hint">Hanya alamat publik. Balasannya diteruskan ke node berikutnya. Isi bisa memakai {{input}} dan {{task}}.</p>`;
+          ${method === 'POST' ? `<label class="field"><span>Isi (JSON atau teks)</span><textarea data-config="body" data-tpl rows="4" maxlength="8000">${esc(config.body || '')}</textarea></label>${chipsRow()}` : ''}
+          <p class="hint">Hanya alamat publik. Balasannya diteruskan ke node berikutnya.</p>`;
       }
       case 'telegram': {
         const telegram = (S.integrations || {}).telegram || {};
         return `${credentialNote(telegram.ready, 'Bot Telegram')}
           <label class="field"><span>Chat ID</span><input data-config="chat_id" value="${esc(config.chat_id || '')}" placeholder="${telegram.default_chat ? 'Kosong = chat dari Kredensial' : 'Angka atau @nama_channel'}" maxlength="70"></label>
+          <p class="hint">Yang dikirim adalah input node ini, yaitu hasil node sebelumnya.</p>
           <button id="test-telegram" class="btn btn-ghost btn-small btn-block" type="button" ${telegram.ready ? '' : 'disabled'}>Kirim pesan tes</button>`;
       }
       case 'database': {
@@ -922,10 +1189,224 @@
         return `<label class="field"><span>Database</span><select data-config="database">${options.map(o =>
             `<option value="${esc(o.id)}" ${o.id === chosen.id ? 'selected' : ''}>${esc(o.label)}${o.ready ? '' : ' (belum siap)'}</option>`).join('')}</select></label>
           ${chosen.reason ? `<p class="hint hint-warn">${esc(chosen.reason)} <button class="link-btn" type="button" data-go-creds>Buka Kredensial</button></p>` : ''}
-          <label class="field"><span>Nama tabel</span><input data-config="table" value="${esc(config.table || 'hasil_tim')}" maxlength="63"></label>`;
+          <label class="field"><span>Nama tabel log</span><input data-config="table" value="${esc(config.table || 'hasil_alur')}" maxlength="63"></label>
+          <p class="hint">Tiap eksekusi mencatat satu baris: tugas, isi, waktu. Untuk tabel dengan kolom sendiri, pakai node Tabel data.</p>`;
       }
       default: return '';
     }
+  }
+
+  /* ── Data table node ─────────────────────────────── */
+  async function loadTables(source, force = false) {
+    if (!source) return;
+    const cached = S.dtTables[source];
+    if (cached && !force && (cached.tables || cached.loading)) return;
+    S.dtTables[source] = { loading: true };
+    try {
+      const data = await api(`/api/data/sources/${enc(source)}/tables`);
+      S.dtTables[source] = { tables: data.tables };
+    } catch (e) {
+      S.dtTables[source] = { error: e.message };
+    }
+    const member = memberById(S.ndv);
+    if (member && kindOf(member) === 'datatable' && member.config.source === source && !document.activeElement?.closest('#ndv-params')) renderNdv();
+  }
+
+  function tableInfo(config) {
+    const entry = S.dtTables[config.source] || {};
+    return (entry.tables || []).find(t => t.name === config.table) || null;
+  }
+
+  function relationLabel(r, source, table) {
+    const outgoing = r.source === source && r.table === table;
+    return outgoing
+      ? `${r.name}: ${r.column} → ${r.target_table}.${r.target_column} (satu baris)`
+      : `${r.reverse}: ${r.table}.${r.column} → ${r.target_column} (banyak baris)`;
+  }
+
+  function datatableFields(member) {
+    const c = member.config || {};
+    const sources = S.dataSources || [];
+    const op = c.operation || 'get';
+    const entry = S.dtTables[c.source] || {};
+    const info = tableInfo(c);
+    const columns = info ? info.columns : [];
+    const colOptions = value => `<option value="">Pilih kolom</option>${columns.map(col => `<option ${col === value ? 'selected' : ''}>${esc(col)}</option>`).join('')}${value && !columns.includes(value) ? `<option selected>${esc(value)}</option>` : ''}`;
+    const sourcePick = `<label class="field"><span>Sumber</span><select data-dt="source">
+        <option value="">Pilih sumber data</option>
+        ${sources.map(s => `<option value="${esc(s.name)}" ${s.name === c.source ? 'selected' : ''}>${esc(s.label || s.name)}</option>`).join('')}
+        ${c.source && !sources.some(s => s.name === c.source) ? `<option value="${esc(c.source)}" selected>${esc(c.source)} (tidak ada lagi)</option>` : ''}
+      </select></label>`;
+    let tablePick = '';
+    if (c.source) {
+      if (entry.loading || (!entry.tables && !entry.error)) tablePick = '<p class="hint">Memuat tabel…</p>';
+      else if (entry.error) tablePick = `<p class="hint hint-warn">${esc(entry.error)} <button class="link-btn" type="button" data-dt-reload>Coba lagi</button></p>`;
+      else {
+        tablePick = `<label class="field"><span>Tabel</span><select data-dt="table">
+            <option value="">Pilih tabel</option>
+            ${entry.tables.map(t => `<option value="${esc(t.name)}" ${t.name === c.table ? 'selected' : ''}>${esc(t.name)}${t.rows !== null && t.rows !== undefined ? ` (${t.rows} baris)` : ''}</option>`).join('')}
+          </select></label>`;
+      }
+    }
+    const header = `<div class="dt-pick">${sourcePick}${tablePick}</div>
+      <div class="dt-links"><button class="link-btn" type="button" data-dt-new>+ Tabel baru</button>
+        ${c.table ? '<button class="link-btn" type="button" data-dt-open>Lihat isi tabel</button>' : ''}
+        <button class="link-btn" type="button" data-dt-reload>Muat ulang</button></div>`;
+    if (!c.source || !c.table) return `${header}<p class="hint">Pilih tabel yang mau dipakai, atau buat baru. Tabel baru disimpan di "Tabel data" milik aplikasi ini.</p>`;
+    const where = c.where || [];
+    const whereHtml = ['get', 'update', 'delete'].includes(op) ? `
+      <div class="field"><span>Syarat${where.length > 1 ? `, <select data-dt="combine" class="inline-select" aria-label="Gabungan syarat"><option value="and" ${c.combine !== 'or' ? 'selected' : ''}>semua cocok (AND)</option><option value="or" ${c.combine === 'or' ? 'selected' : ''}>salah satu cocok (OR)</option></select>` : ''}</span>
+        ${where.map((w, i) => `<div class="dt-row">
+            <select data-dt-where="${i}" data-key="column" aria-label="Kolom syarat ${i + 1}">${colOptions(w.column)}</select>
+            <select data-dt-where="${i}" data-key="op" aria-label="Operator syarat ${i + 1}">${DT_OPS.map(([v, l]) => `<option value="${esc(v)}" ${(w.op || '=') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+            <input data-dt-where="${i}" data-key="value" data-tpl value="${esc(w.value || '')}" placeholder="nilai atau {{json.kolom}}" aria-label="Nilai syarat ${i + 1}">
+            <button class="icon-btn" type="button" data-dt-where-remove="${i}" aria-label="Hapus syarat ${i + 1}">×</button></div>`).join('')}
+        <button class="btn btn-ghost btn-small" type="button" data-dt-where-add>+ Syarat</button>
+        ${op === 'get' && !where.length ? '<p class="hint">Tanpa syarat, semua baris diambil.</p>' : ''}
+      </div>` : '';
+    const values = c.values || [];
+    const match = c.match || [];
+    const valuesHtml = ['insert', 'update', 'upsert'].includes(op) ? `
+      <div class="field"><span>Nilai kolom${op === 'upsert' ? ' (centang kolom pencocok)' : ''}</span>
+        ${values.map((v, i) => `<div class="dt-row ${op === 'upsert' ? 'with-match' : ''}">
+            ${op === 'upsert' ? `<label class="check dt-match" title="Kolom pencocok"><input type="checkbox" data-dt-match="${esc(v.column)}" ${match.includes(v.column) ? 'checked' : ''} aria-label="Pencocok ${esc(v.column)}"></label>` : ''}
+            <select data-dt-value="${i}" data-key="column" aria-label="Kolom ${i + 1}">${colOptions(v.column)}</select>
+            <input data-dt-value="${i}" data-key="value" data-tpl value="${esc(v.value || '')}" placeholder="nilai atau {{json.kolom}}" aria-label="Nilai kolom ${i + 1}">
+            <button class="icon-btn" type="button" data-dt-value-remove="${i}" aria-label="Hapus kolom ${i + 1}">×</button></div>`).join('')}
+        <div class="row-actions"><button class="btn btn-ghost btn-small" type="button" data-dt-value-add>+ Kolom</button>
+          <button class="btn btn-ghost btn-small" type="button" data-dt-value-all>Isi semua kolom</button></div>
+      </div>${chipsRow()}` : '';
+    const relations = (S.relations || []).filter(r => (r.source === c.source && r.table === c.table) || (r.target_source === c.source && r.target_table === c.table));
+    const getHtml = op === 'get' ? `
+      <div class="field-row">
+        <label class="field"><span>Urutkan</span><select data-dt="sort"><option value="">Urutan asli</option>${columns.map(col => `<option ${col === c.sort ? 'selected' : ''}>${esc(col)}</option>`).join('')}</select></label>
+        <label class="field"><span>Arah</span><select data-dt="desc" ${c.sort ? '' : 'disabled'}><option value="">Naik</option><option value="1" ${c.desc ? 'selected' : ''}>Turun</option></select></label>
+        <label class="field"><span>Batas baris</span><input data-dt="limit" type="number" min="0" value="${esc(c.limit || '')}" placeholder="semua"></label>
+      </div>
+      <div class="field"><span>Ikut ambil baris yang berelasi</span>
+        ${relations.length ? relations.map(r => `<label class="check"><input type="checkbox" data-dt-include="${esc(r.id)}" ${(c.include || []).includes(r.id) ? 'checked' : ''}>${esc(relationLabel(r, c.source, c.table))}</label>`).join('')
+          : '<p class="hint">Tabel ini belum punya relasi.</p>'}
+        <button class="link-btn" type="button" data-dt-relations>Atur relasi</button>
+      </div>` : '';
+    return `${header}
+      <div class="field"><span>Operasi</span><div class="seg-choice dt-ops">${OPERATIONS.map(([v, l]) =>
+        `<label><input type="radio" name="dt-op" value="${v}" ${op === v ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div>
+        <p class="hint">${OPERATION_HINT[op]}</p></div>
+      ${whereHtml}${valuesHtml}${getHtml}
+      <p class="hint">Hasilnya JSON, jadi node berikutnya bisa memakai {{json.kolom}}.</p>`;
+  }
+
+  function bindDatatable(box, member) {
+    const save = (changes, rerender = true, merge = '') => {
+      checkpoint(merge);
+      member.config = { ...(member.config || {}), ...changes };
+      markDirty();
+      refreshNodeCard(member);
+      if (rerender) renderParams(box, member);
+    };
+    box.querySelectorAll('[data-dt]').forEach(el => {
+      const key = el.dataset.dt;
+      const live = el.tagName === 'INPUT';
+      el[live ? 'oninput' : 'onchange'] = () => {
+        if (key === 'source') { save({ source: el.value, table: '', where: [], values: [], match: [], include: [], sort: '' }); loadTables(el.value); return; }
+        if (key === 'table') { save({ table: el.value, where: [], values: [], match: [], include: [], sort: '' }); return; }
+        if (key === 'limit') { save({ limit: Number(el.value) || 0 }, false, `dt-limit-${member.id}`); return; }
+        if (key === 'desc') { save({ desc: Boolean(el.value) }); return; }
+        save({ [key]: el.value });
+      };
+    });
+    box.querySelectorAll('input[name="dt-op"]').forEach(radio => { radio.onchange = () => save({ operation: radio.value }); });
+    const listEdit = (attr, key) => {
+      box.querySelectorAll(`[data-${attr}]`).forEach(el => {
+        const live = el.tagName === 'INPUT';
+        el[live ? 'oninput' : 'onchange'] = () => {
+          const list = clone(member.config[key] || []);
+          const index = Number(el.getAttribute(`data-${attr}`));
+          list[index] = { ...list[index], [el.dataset.key]: el.value };
+          save({ [key]: list }, !live, live ? `${attr}-${member.id}-${index}` : '');
+        };
+      });
+    };
+    listEdit('dt-where', 'where');
+    listEdit('dt-value', 'values');
+    const add = (key, item) => save({ [key]: [...(member.config[key] || []), item] });
+    const removeAt = (key, index) => save({ [key]: (member.config[key] || []).filter((_, i) => i !== index) });
+    box.querySelector('[data-dt-where-add]')?.addEventListener('click', () => add('where', { column: '', op: '=', value: '' }));
+    box.querySelector('[data-dt-value-add]')?.addEventListener('click', () => add('values', { column: '', value: '' }));
+    box.querySelectorAll('[data-dt-where-remove]').forEach(b => { b.onclick = () => removeAt('where', Number(b.dataset.dtWhereRemove)); });
+    box.querySelectorAll('[data-dt-value-remove]').forEach(b => {
+      b.onclick = () => {
+        const gone = (member.config.values || [])[Number(b.dataset.dtValueRemove)];
+        save({ values: (member.config.values || []).filter((_, i) => i !== Number(b.dataset.dtValueRemove)), match: (member.config.match || []).filter(m => !gone || m !== gone.column) });
+      };
+    });
+    box.querySelector('[data-dt-value-all]')?.addEventListener('click', () => {
+      const info = tableInfo(member.config);
+      if (!info) return;
+      const have = new Set((member.config.values || []).map(v => v.column));
+      const skip = new Set([info.key, 'id'].filter(Boolean));
+      const extra = info.columns.filter(col => !have.has(col) && !skip.has(col)).map(col => ({ column: col, value: `{{json.${col}}}` }));
+      save({ values: [...(member.config.values || []).filter(v => v.column), ...extra] });
+    });
+    box.querySelectorAll('[data-dt-match]').forEach(check => {
+      check.onchange = () => {
+        const set = new Set(member.config.match || []);
+        if (check.checked) set.add(check.dataset.dtMatch); else set.delete(check.dataset.dtMatch);
+        save({ match: [...set] });
+      };
+    });
+    box.querySelectorAll('[data-dt-include]').forEach(check => {
+      check.onchange = () => {
+        const set = new Set(member.config.include || []);
+        if (check.checked) set.add(check.dataset.dtInclude); else set.delete(check.dataset.dtInclude);
+        save({ include: [...set] });
+      };
+    });
+    box.querySelectorAll('[data-dt-reload]').forEach(b => { b.onclick = () => { refreshSources(); loadTables(member.config.source, true); }; });
+    box.querySelector('[data-dt-new]')?.addEventListener('click', () => newDataTable(member));
+    box.querySelector('[data-dt-open]')?.addEventListener('click', () => {
+      if (!confirmLeave()) return;
+      closeNdv();
+      showHome('data');
+      if (window.SQData && window.SQData.focus) window.SQData.focus(member.config.source, member.config.table);
+    });
+    box.querySelector('[data-dt-relations]')?.addEventListener('click', () => {
+      if (window.SQData && window.SQData.relationDialog) {
+        window.SQData.relationDialog(member.config.source, member.config.table, async () => { await refreshSources(); renderNdv(); });
+      }
+    });
+  }
+
+  /* A new table, like n8n's data tables: in this app's own "Tabel data" unless another source is picked. */
+  function newDataTable(member) {
+    const dialog = window.SQData && window.SQData.dialogForm;
+    if (!dialog) return;
+    const sources = (S.dataSources || []).filter(s => s.kind === 'file' ? /sqlite|db/.test(s.format) : ['postgres', 'mysql', 'mongodb'].includes(s.kind));
+    dialog({
+      title: 'Tabel baru',
+      note: 'Kolom bisa ditambah atau diganti nama nanti di tab Tabel data. Kolom id dibuat otomatis.',
+      fields: [
+        { name: 'table', label: 'Nama tabel', placeholder: 'pelanggan', required: true, max: 64, hint: 'Huruf, angka, dan garis bawah.' },
+        { name: 'columns', label: 'Kolom', type: 'textarea', rows: 2, placeholder: 'nama, hp, alamat', hint: 'Pisahkan dengan koma.' },
+        { name: 'source', label: 'Simpan di', type: 'select', value: member.config.source && sources.some(s => s.name === member.config.source) ? member.config.source : '',
+          options: [{ value: '', label: 'Tabel data (bawaan aplikasi)' }, ...sources.filter(s => s.name !== (S.builtin || 'tabel')).map(s => ({ value: s.name, label: s.label || s.name }))] },
+      ],
+      submit: 'Buat tabel',
+      onSubmit: async values => {
+        const made = await credApi('/api/data/tables', 'POST', {
+          table: values.table, columns: values.columns.split(',').map(c => c.trim()).filter(Boolean), source: values.source,
+        });
+        await refreshSources(false);
+        S.dtTables[made.source.name] = { tables: made.tables };
+        checkpoint();
+        member.config = { ...member.config, source: made.source.name, table: made.table.name, where: [], values: [], match: [], include: [] };
+        markDirty();
+        refreshNodeCard(member);
+        renderNdv();
+        if (window.SQData && window.SQData.changed) window.SQData.changed();
+        toast(`Tabel ${made.table.name} dibuat.`);
+      },
+    });
   }
 
   const ACCESS = [
@@ -939,10 +1420,10 @@
     const sources = S.dataSources || [];
     const known = new Set(sources.map(x => x.name));
     const rows = [
-      ...sources.map(x => ({ name: x.name, label: x.label || x.name, online: x.online })),
+      ...sources.map(x => ({ name: x.name, label: x.label || x.name })),
       ...grants.filter(g => !known.has(g.source)).map(g => ({ name: g.source, label: g.source, missing: true })),
     ];
-    if (!rows.length) return '<p class="hint">Belum ada sumber data. <button class="link-btn" type="button" data-go-data>Tambah di tab Data</button></p>';
+    if (!rows.length) return '<p class="hint">Belum ada sumber data. <button class="link-btn" type="button" data-go-data>Buat di tab Tabel data</button></p>';
     return `<div class="grants">${rows.map(row => {
       const grant = grants.find(g => g.source === row.name) || {};
       return `<div class="grant" data-grant="${esc(row.name)}">
@@ -952,61 +1433,62 @@
         ${grant.access ? `<input data-grant-hide value="${esc((grant.hide || []).join(', '))}" placeholder="Kolom yang disembunyikan, pisahkan dengan koma" aria-label="Kolom yang disembunyikan dari ${esc(row.label)}" maxlength="400">` : ''}
       </div>`;
     }).join('')}</div>
-      <p class="hint">Agent hanya menyentuh sumber yang diizinkan di sini. Pada bot pelanggan, hak ubah dan hapus tidak pernah berlaku, dan kolom berawalan <code>_</code> selalu tersembunyi.</p>`;
+      <p class="hint">Agent hanya menyentuh sumber yang diizinkan di sini, dan bisa mengikuti relasi antar tabel. Pada bot pelanggan, hak ubah dan hapus tidak pernah berlaku, dan kolom berawalan <code>_</code> selalu tersembunyi.</p>`;
   }
 
   function renderParams(box, member) {
-    const isAgent = kindOf(member) === 'agent';
-    const isWorker = member.id !== S.lead && member.id !== S.reviewer;
-    const others = S.members.filter(m => m.id !== member.id && m.id !== S.reviewer);
+    const kind = kindOf(member);
+    const config = member.config || {};
     const fork = branchParent(member);
-    box.innerHTML = `
-      <label class="field"><span>Nama</span><input data-field="name" value="${esc(member.name)}" maxlength="60"></label>
-      ${isAgent ? `
-        <label class="field"><span>Peran</span><input data-field="role" value="${esc(member.role)}" maxlength="120" placeholder="Misalnya: peneliti, penulis, analis data"></label>
+    const publicBot = (S.schedule || {}).mode === 'telegram' && (S.schedule || {}).audience === 'public';
+    let body;
+    if (kind === 'agent') {
+      body = `
         <label class="field"><span>Model</span><select data-field="model_id"></select></label>
-        <label class="field"><span>Instruksi</span><textarea data-field="instructions" rows="5" maxlength="4000" placeholder="Apa yang harus dilakukan agent ini, dan bentuk hasilnya.">${esc(member.instructions)}</textarea></label>
-        <label class="check"><input type="checkbox" data-direct ${(member.config || {}).direct ? 'checked' : ''}>Jawab langsung seperti chat, tanpa laporan Hasil dan Bukti</label>
-        <label class="check"><input type="checkbox" data-notify ${(member.config || {}).notify_owner ? 'checked' : ''}>Boleh mengabari saya lewat Telegram bila pelanggan butuh keputusan pemilik</label>
-        <div class="field"><span>Data yang boleh dipakai</span>${grantsHtml(member)}</div>
-        <div class="field"><span>Posisi di alur</span>
-          <div class="seg-choice">
-            <label><input type="radio" name="position" value="worker" ${isWorker ? 'checked' : ''}><span>Agent</span></label>
-            <label><input type="radio" name="position" value="lead" ${member.id === S.lead ? 'checked' : ''}><span>Lead</span></label>
-            <label><input type="radio" name="position" value="reviewer" ${member.id === S.reviewer ? 'checked' : ''}><span>Reviewer</span></label>
-          </div>
-          <p class="hint">Lead menulis jawaban akhir dari hasil semua agent. Reviewer memeriksanya dan bisa meminta revisi.</p>
-        </div>` : kindFields(member)}
-      <details class="field more" ${member.id === S.reviewer ? '' : 'open'}>
-        <summary>Sambungan</summary>
-        ${member.id !== S.reviewer && others.length ? `<div class="field"><span>Masuk dari</span>
-          ${others.map(o => `<label class="check"><input type="checkbox" data-after="${esc(o.id)}" ${(member.depends_on || []).includes(o.id) ? 'checked' : ''}>${esc(o.name)}</label>`).join('')}
-          <p class="hint">Atau seret titik keluaran node lain ke node ini di kanvas.</p></div>` : '<p class="hint">Reviewer selalu memeriksa jawaban Lead.</p>'}
-        ${fork ? `<div class="field"><span>Jalur dari ${esc(fork.name)}</span>
-          ${(kindOf(fork) === 'switch'
-            ? [['A', 'aturan A cocok'], ['B', 'aturan B cocok'], ['C', 'aturan C cocok'], ['D', 'tidak ada yang cocok']]
-            : [['A', 'benar'], ['B', 'salah']]
-          ).map(([value, label]) => `<label class="check"><input type="radio" name="branch" value="${value}" ${member.branch === value ? 'checked' : ''}>${kindOf(fork) === 'switch' ? `Jalur ${value}, ` : 'Jalur '}${label}</label>`).join('')}
-          <label class="check"><input type="radio" name="branch" value="" ${!member.branch ? 'checked' : ''}>Semua jalur</label>
-        </div>` : ''}
-      </details>`;
+        <label class="field"><span>Instruksi</span><textarea data-field="instructions" data-tpl rows="8" maxlength="4000" placeholder="Apa yang dikerjakan agent ini dan bentuk hasilnya. Contoh: Ringkas berita dari input jadi 5 poin.">${esc(member.instructions)}</textarea></label>
+        <label class="field"><span>Peran (opsional)</span><input data-field="role" value="${esc(member.role)}" maxlength="120" placeholder="Misalnya: peneliti, penulis, analis data"></label>
+        <details class="field more"><summary>Akses tabel data${(config.data || []).length ? ` (${config.data.length})` : ''}</summary>${grantsHtml(member)}</details>
+        <details class="field more"><summary>Opsi lanjutan</summary>
+          <label class="check"><input type="checkbox" data-flag="report" ${config.report ? 'checked' : ''}>Tulis sebagai laporan dengan bagian Hasil, Bukti, dan Belum pasti</label>
+          <label class="check"><input type="checkbox" data-flag="direct" ${config.direct ? 'checked' : ''}>Jawab seperti chat singkat untuk orang (cocok untuk bot)</label>
+          ${publicBot ? `<label class="check"><input type="checkbox" data-flag="notify_owner" ${config.notify_owner ? 'checked' : ''}>Boleh mengabari saya lewat Telegram bila pelanggan butuh keputusan pemilik</label>` : ''}
+        </details>`;
+    } else if (kind === 'datatable') body = datatableFields(member);
+    else body = kindFields(member);
+    box.innerHTML = `${body}
+      ${fork ? `<div class="field"><span>Jalur dari ${esc(fork.name)}</span>
+        ${(kindOf(fork) === 'switch'
+          ? [['A', 'aturan A cocok'], ['B', 'aturan B cocok'], ['C', 'aturan C cocok'], ['D', 'tidak ada yang cocok']]
+          : [['A', 'benar'], ['B', 'salah']]
+        ).map(([value, label]) => `<label class="check"><input type="radio" name="branch" value="${value}" ${member.branch === value ? 'checked' : ''}>${kindOf(fork) === 'switch' ? `Jalur ${value}, ` : 'Jalur '}${label}</label>`).join('')}
+        <label class="check"><input type="radio" name="branch" value="" ${!member.branch ? 'checked' : ''}>Semua jalur</label>
+      </div>` : ''}`;
     bindParams(box, member);
+    if (kind === 'datatable') bindDatatable(box, member);
   }
 
   function refreshNodeCard(member) {
     const node = document.querySelector(`#nodes .node[data-id="${CSS.escape(member.id)}"]`);
     if (!node) return;
-    node.querySelector('.node-name').textContent = member.name || 'Tanpa nama';
-    node.querySelector('.node-sub').textContent = nodeDetail(member);
-    if (S.ndv === member.id) $('ndv-title').textContent = member.name || 'Tanpa nama';
+    node.querySelector('.node-label b').textContent = member.name || 'Tanpa nama';
+    const sub = node.querySelector('.node-label small');
+    if (sub) sub.textContent = nodeDetail(member);
+    const inner = node.querySelector('.node-inner small');
+    if (inner) inner.textContent = shortModel(member.model_id) || 'pilih model';
+    const issues = issuesOf(member);
+    let mark = node.querySelector('.node-issue');
+    if (issues.length && !mark) { mark = document.createElement('span'); mark.className = 'node-issue'; mark.textContent = '!'; node.appendChild(mark); }
+    if (mark) { if (issues.length) mark.title = issues.join('\n'); else mark.remove(); }
+    renderIssues();
   }
 
   function bindParams(box, member) {
+    box.querySelectorAll('[data-tpl]').forEach(el => { el.addEventListener('focus', () => { S.lastTpl = el; }); });
     box.querySelectorAll('[data-field="model_id"]').forEach(select => fillModelOptions(select, member.model_id, false));
     box.querySelectorAll('[data-field]').forEach(input => {
       input[input.tagName === 'SELECT' ? 'onchange' : 'oninput'] = () => {
+        checkpoint(`field-${member.id}-${input.dataset.field}`);
         member[input.dataset.field] = input.value;
-        if (input.dataset.field === 'name' && kindOf(member) !== 'agent') member.role = input.value;
         markDirty();
         refreshNodeCard(member);
       };
@@ -1014,6 +1496,7 @@
     box.querySelectorAll('[data-config]').forEach(input => {
       const rerenders = ['mode', 'database', 'combine', 'method'].includes(input.dataset.config);
       input[rerenders ? 'onchange' : 'oninput'] = () => {
+        checkpoint(rerenders ? '' : `config-${member.id}-${input.dataset.config}`);
         member.config = { ...(member.config || {}), [input.dataset.config]: input.type === 'number' ? Number(input.value) : input.value };
         markDirty();
         refreshNodeCard(member);
@@ -1021,13 +1504,8 @@
       };
     });
     box.querySelectorAll('[data-insert]').forEach(button => {
-      button.onclick = () => {
-        const area = box.querySelector('[data-config="text"]');
-        const at = area.selectionStart ?? area.value.length;
-        area.value = area.value.slice(0, at) + button.dataset.insert + area.value.slice(area.selectionEnd ?? at);
-        area.dispatchEvent(new Event('input'));
-        area.focus();
-      };
+      button.onmousedown = e => e.preventDefault();
+      button.onclick = () => insertTemplate(button.dataset.insert);
     });
     /* Conditions are edited in place; an old single-condition gate becomes a list on first edit. */
     const listOf = key => {
@@ -1040,6 +1518,7 @@
     box.querySelectorAll('[data-cond]').forEach(input => {
       const rerenders = input.dataset.key === 'mode';
       input[rerenders ? 'onchange' : 'oninput'] = () => {
+        checkpoint(rerenders ? '' : `cond-${member.id}-${input.dataset.cond}-${input.dataset.index}`);
         const key = input.dataset.cond;
         const list = listOf(key);
         const index = Number(input.dataset.index);
@@ -1052,17 +1531,18 @@
     box.querySelectorAll('[data-cond-days]').forEach(wrap => {
       const [key, index] = wrap.dataset.condDays.split(':');
       wrap.querySelectorAll('[data-cday]').forEach(check => {
-        check.onchange = () => { const list = listOf(key); list[Number(index)].days = readDays(wrap, 'data-cday'); saveList(key, list); };
+        check.onchange = () => { checkpoint(); const list = listOf(key); list[Number(index)].days = readDays(wrap, 'data-cday'); saveList(key, list); };
       });
     });
     box.querySelectorAll('[data-cond-add]').forEach(button => {
-      button.onclick = () => { const key = button.dataset.condAdd; saveList(key, [...listOf(key), { mode: 'contains', value: '' }]); renderParams(box, member); };
+      button.onclick = () => { checkpoint(); const key = button.dataset.condAdd; saveList(key, [...listOf(key), { mode: 'contains', value: '' }]); renderParams(box, member); };
     });
     box.querySelectorAll('[data-cond-remove]').forEach(button => {
       button.onclick = () => {
         const key = button.dataset.condRemove;
         const list = listOf(key);
         if (list.length <= 1) { toast('Minimal satu syarat.'); return; }
+        checkpoint();
         list.splice(Number(button.dataset.index), 1);
         saveList(key, list);
         renderParams(box, member);
@@ -1076,29 +1556,16 @@
         testButton.disabled = false;
       };
     }
-    box.querySelectorAll('input[name="position"]').forEach(radio => { radio.onchange = () => setPosition(member.id, radio.value); });
-    box.querySelectorAll('[data-after]').forEach(check => {
-      check.onchange = () => {
-        if (check.checked) { connect(check.dataset.after, member.id, isBranching(memberById(check.dataset.after)) ? 'A' : ''); return; }
-        removeEdge(check.dataset.after, member.id);
-      };
-    });
     box.querySelectorAll('input[name="branch"]').forEach(radio => {
-      radio.onchange = () => { member.branch = radio.value; afterChange(); };
+      radio.onchange = () => { checkpoint(); member.branch = radio.value; afterChange(); };
     });
-    box.querySelectorAll('[data-go-creds]').forEach(button => { button.onclick = () => { closeNdv(); showTab('creds'); }; });
-    box.querySelectorAll('[data-go-data]').forEach(button => { button.onclick = () => { closeNdv(); showTab('data'); }; });
-    box.querySelectorAll('[data-notify]').forEach(check => {
+    box.querySelectorAll('[data-go-creds]').forEach(button => { button.onclick = () => { if (confirmLeave()) { closeNdv(); showHome('creds'); } }; });
+    box.querySelectorAll('[data-go-data]').forEach(button => { button.onclick = () => { if (confirmLeave()) { closeNdv(); showHome('data'); } }; });
+    box.querySelectorAll('[data-flag]').forEach(check => {
       check.onchange = () => {
+        checkpoint();
         member.config = { ...(member.config || {}) };
-        if (check.checked) member.config.notify_owner = true; else delete member.config.notify_owner;
-        markDirty();
-      };
-    });
-    box.querySelectorAll('[data-direct]').forEach(check => {
-      check.onchange = () => {
-        member.config = { ...(member.config || {}) };
-        if (check.checked) member.config.direct = true; else delete member.config.direct;
+        if (check.checked) member.config[check.dataset.flag] = true; else delete member.config[check.dataset.flag];
         markDirty();
       };
     });
@@ -1112,8 +1579,16 @@
       if (data.length) member.config.data = data; else delete member.config.data;
       markDirty();
     };
-    box.querySelectorAll('[data-grant-access]').forEach(select => { select.onchange = () => { saveGrants(); renderParams(box, member); }; });
-    box.querySelectorAll('[data-grant-hide]').forEach(input => { input.oninput = saveGrants; });
+    box.querySelectorAll('[data-grant-access]').forEach(select => {
+      select.onchange = () => {
+        checkpoint();
+        saveGrants();
+        renderParams(box, member);
+        const details = box.querySelector('details.more');
+        if (details) details.open = true;
+      };
+    });
+    box.querySelectorAll('[data-grant-hide]').forEach(input => { input.oninput = () => { checkpoint(`hide-${member.id}`); saveGrants(); }; });
   }
 
   function renderTrigger(box) {
@@ -1129,7 +1604,7 @@
       ${mode === 'daily' ? `<label class="field"><span>Jam, pisahkan dengan koma</span><input id="schedule-time" value="${esc(times)}" placeholder="05:00, 12:00, 17:00"></label>
         <div class="field"><span>Hari</span>${dayChecks(schedule.days, 'data-schedule-day')}</div>` : ''}
       ${mode === 'cron' ? `<label class="field"><span>Ekspresi cron (menit jam tanggal bulan hari)</span><input id="schedule-cron" value="${esc(schedule.cron || '0 7 * * 1-5')}" maxlength="100"></label>
-        <p class="hint">Contoh: <code>0 7 * * 1-5</code> jam 07:00 Senin–Jumat, <code>*/30 8-17 * * *</code> tiap 30 menit di jam kerja.</p>` : ''}
+        <p class="hint">Contoh: <code>0 7 * * 1-5</code> jam 07:00 Senin sampai Jumat, <code>*/30 8-17 * * *</code> tiap 30 menit di jam kerja.</p>` : ''}
       ${mode === 'once' ? `<label class="field"><span>Tanggal dan jam</span><input id="schedule-at" type="datetime-local" value="${esc((schedule.at || '').slice(0, 16))}"></label>` : ''}
       ${mode === 'telegram' ? `${credentialNote(telegram.ready && telegram.default_chat, 'Bot dan chat Telegram')}
         <div class="field"><span>Siapa yang boleh menulis ke bot</span>
@@ -1148,24 +1623,26 @@
             <li class="${telegram.default_chat ? 'ok' : 'no'}">Chat ID kamu ${telegram.default_chat ? 'terisi, untuk kabar dan peringatan dari bot' : 'belum diisi, bot tidak bisa memberi kabar ke kamu'}</li>
             <li class="${(S.dataSources || []).length ? 'ok' : 'no'}">${(S.dataSources || []).length ? `${S.dataSources.length} sumber data siap dipakai agent` : 'Belum ada sumber data (katalog, pesanan)'}</li>
           </ul>
-          <p class="hint">Hanya chat pribadi yang dilayani, dan tiap pelanggan dibatasi 6 pesan per menit. Agent yang menjawab hanya boleh membaca dan menambah baris pada data yang kamu izinkan di node-nya, tidak mengubah atau menghapus, dan hanya memakai alat yang aman. Gangguan dan permintaan yang butuh keputusanmu dikabarkan ke chat Telegram milikmu. Pesan yang menumpuk saat server mati lebih dari 15 menit diabaikan.</p>` : `
-          <p class="hint">Hanya pesan dari chat di Kredensial yang menjalankan alur. Isi pesan menjadi tugasnya, dan node Telegram tanpa Chat ID membalas ke chat itu.</p>`}` : ''}
-      ${mode !== 'off' ? `<label class="field"><span>${mode === 'telegram' ? 'Konteks tambahan (boleh kosong)' : 'Tugas yang dijalankan'}</span><textarea id="schedule-task" rows="4" maxlength="4000" placeholder="Misalnya: apa yang penting hari ini di Jakarta?">${esc(schedule.task || '')}</textarea></label>
-        <p class="hint">Hanya berjalan selama server menyala, dengan jam mesin ini. Tekan Simpan agar berlaku.</p>` : '<p class="hint">Isi tugas di kotak bawah kanvas, lalu tekan Jalankan alur.</p>'}`;
+          <p class="hint">Hanya chat pribadi yang dilayani, dan tiap pelanggan dibatasi 6 pesan per menit. Agent yang menjawab hanya boleh membaca dan menambah baris pada data yang kamu izinkan di node-nya, tidak mengubah atau menghapus, dan hanya memakai alat yang aman. Gangguan dan permintaan yang butuh keputusanmu dikabarkan ke chat Telegram milikmu.</p>` : `
+          <p class="hint">Hanya pesan dari chat di Kredensial yang menjalankan alur. Isi pesan menjadi input, dan node Telegram tanpa Chat ID membalas ke chat itu.</p>`}` : ''}
+      ${mode !== 'off' ? `<label class="field"><span>${mode === 'telegram' ? 'Konteks tambahan (boleh kosong)' : 'Input yang dikirim tiap kali berjalan'}</span><textarea id="schedule-task" rows="4" maxlength="4000" placeholder="Misalnya: apa yang penting hari ini di Jakarta?">${esc(schedule.task || '')}</textarea></label>
+        <p class="hint">Berjalan sendiri selama server menyala dan alur <b>Aktif</b> (saklar di kanan atas). Tekan Simpan agar berlaku.</p>` : '<p class="hint">Isi kotak input di bawah kanvas, lalu tekan Jalankan alur.</p>'}
+      <p class="hint">Node yang ditarik garis dari Pemicu adalah langkah pertama. Yang tidak tersambung tidak dijalankan.</p>`;
     const value = id => (box.querySelector(`#${id}`) ? box.querySelector(`#${id}`).value : undefined);
     const update = () => {
+      checkpoint('trigger');
       const timeText = value('schedule-time');
       const checked = box.querySelector('input[name="trigger-mode"]:checked');
       const before = S.schedule || {};
       S.schedule = {
         mode: checked ? checked.value : 'off',
-        minutes: value('schedule-minutes') !== undefined ? Number(value('schedule-minutes')) : S.schedule.minutes,
-        times: timeText !== undefined ? timeText.split(',').map(t => t.trim()).filter(Boolean) : S.schedule.times,
-        days: box.querySelector('[data-schedule-day]') ? readDays(box, 'data-schedule-day') : S.schedule.days,
-        cron: value('schedule-cron') ?? S.schedule.cron,
-        at: value('schedule-at') ?? S.schedule.at,
-        keyword: value('schedule-keyword') ?? S.schedule.keyword,
-        task: value('schedule-task') ?? S.schedule.task,
+        minutes: value('schedule-minutes') !== undefined ? Number(value('schedule-minutes')) : before.minutes,
+        times: timeText !== undefined ? timeText.split(',').map(t => t.trim()).filter(Boolean) : before.times,
+        days: box.querySelector('[data-schedule-day]') ? readDays(box, 'data-schedule-day') : before.days,
+        cron: value('schedule-cron') ?? before.cron,
+        at: value('schedule-at') ?? before.at,
+        keyword: value('schedule-keyword') ?? before.keyword,
+        task: value('schedule-task') ?? before.task,
       };
       if (S.schedule.times) S.schedule.time = S.schedule.times[0];
       if (S.schedule.mode === 'telegram') {
@@ -1177,21 +1654,32 @@
         }
       }
       markDirty();
+      paintActive();
       const card = document.querySelector(`#nodes .node[data-id="${TRIGGER}"]`);
       if (card) {
-        card.querySelector('.node-name').textContent = TRIGGERS.find(t => t.mode === S.schedule.mode)?.label || 'Manual';
-        card.querySelector('.node-sub').textContent = triggerLabel();
+        card.querySelector('.node-label b').textContent = TRIGGERS.find(t => t.mode === S.schedule.mode)?.label || 'Manual';
+        card.querySelector('.node-label small').textContent = triggerLabel();
       }
     };
-    box.querySelectorAll('input[name="trigger-mode"]').forEach(radio => { radio.onchange = () => { update(); renderTrigger(box); render(); }; });
+    box.querySelectorAll('input[name="trigger-mode"]').forEach(radio => { radio.onchange = () => { S.lastStep = null; update(); renderTrigger(box); render(); }; });
     box.querySelectorAll('input:not([name="trigger-mode"]), textarea').forEach(input => { input.oninput = update; input.onchange = update; });
-    box.querySelectorAll('input[name="tg-audience"]').forEach(radio => { radio.onchange = () => { update(); renderTrigger(box); render(); }; });
-    box.querySelectorAll('[data-go-creds]').forEach(button => { button.onclick = () => { closeNdv(); showTab('creds'); }; });
+    box.querySelectorAll('input[name="tg-audience"]').forEach(radio => { radio.onchange = () => { S.lastStep = null; update(); renderTrigger(box); render(); }; });
+    box.querySelectorAll('[data-go-creds]').forEach(button => { button.onclick = () => { if (confirmLeave()) { closeNdv(); showHome('creds'); } }; });
   }
 
   $('ndv-close').onclick = closeNdv;
-  $('ndv-remove').onclick = () => { if (S.ndv && confirm('Hapus node ini?')) removeNode(S.ndv); };
+  $('ndv-remove').onclick = () => { if (S.ndv) removeNode(S.ndv); };
+  $('ndv-test').onclick = testNode;
   $('ndv').onclick = e => { if (e.target === $('ndv')) closeNdv(); };
+  $('ndv-title').oninput = () => {
+    const member = memberById(S.ndv);
+    if (!member) return;
+    checkpoint(`name-${member.id}`);
+    member.name = $('ndv-title').value.slice(0, 60);
+    if (kindOf(member) !== 'agent') member.role = member.name || member.role;
+    markDirty();
+    refreshNodeCard(member);
+  };
   document.querySelectorAll('#ndv-tabs button').forEach(button => {
     button.onclick = () => { S.ndvTab = button.dataset.pane; renderNdv(); };
   });
@@ -1208,10 +1696,18 @@
 
   function paintRun() {
     document.querySelectorAll('#nodes .node').forEach(node => {
-      if (node.dataset.id === TRIGGER) { node.dataset.status = S.run ? 'completed' : ''; return; }
-      const agent = runState(node.dataset.id);
-      node.dataset.status = agent ? agent.status : '';
+      const id = node.dataset.id;
+      if (id === TRIGGER) { node.dataset.status = S.run ? 'completed' : ''; return; }
+      const agent = runState(id);
+      const test = testState(id);
       const state = node.querySelector('.node-state');
+      const fresh = test && (!agent || !agent.completed_at || test.at > agent.completed_at * 1000);
+      if (fresh) {
+        node.dataset.status = test.error ? 'failed' : 'completed';
+        if (state) state.textContent = test.error ? `Tes gagal: ${test.error}` : `Tes: ${test.note || 'berhasil'}`;
+        return;
+      }
+      node.dataset.status = agent ? agent.status : '';
       if (!state) return;
       if (!agent) { state.textContent = ''; return; }
       const bits = [STATUS[agent.status] || agent.status];
@@ -1224,7 +1720,7 @@
       if (agent.completed_at && agent.started_at && agent.status !== 'running') bits.push(formatSeconds((agent.completed_at - agent.started_at) * 1000));
       if (agent.tokens) bits.push(`${formatTokens(agent.tokens)} token`);
       state.textContent = bits.join(' · ') + (agent.error ? `: ${agent.error}` : '');
-      node.title = agent.error || agent.note || '';
+      node.title = agent.error || agent.note || node.title;
     });
     renderEdges();
   }
@@ -1233,10 +1729,9 @@
     S.run = run;
     paintRun();
     const active = !finished(run.status);
-    const reviews = (run.reviews || []).map(r => r.verdict).join(', ');
     const elapsed = run.started_at ? ` · ${formatSeconds(((run.completed_at || Date.now() / 1000) - run.started_at) * 1000)}` : '';
     const info = $('run-info');
-    info.textContent = `${RUN_STATUS[run.status] || run.status}${elapsed} · ${formatTokens(run.total_tokens || 0)} token${reviews ? ` · review: ${reviews}` : ''}`;
+    info.textContent = `${RUN_STATUS[run.status] || run.status}${elapsed} · ${formatTokens(run.total_tokens || 0)} token`;
     info.dataset.status = run.status;
     info.classList.remove('hidden');
     $('cancel').classList.toggle('hidden', !active);
@@ -1272,17 +1767,21 @@
 
   $('run-form').onsubmit = async e => {
     e.preventDefault();
-    const task = $('task').value.trim();
-    if (!task) { $('task').focus(); toast('Tulis tugas atau input untuk alur ini dulu.'); return; }
+    if (!S.starts.length) {
+      toast('Tarik garis dari Pemicu ke node pertama dulu. Node yang tidak tersambung tidak dijalankan.');
+      selectNode(TRIGGER);
+      return;
+    }
     $('run').disabled = true;
     try {
       await saveTeam();
       S.openResult = true;
-      const run = await post(`/api/teams/${S.team}/runs`, { task });
+      S.tests = {};
+      const run = await post(`/api/teams/${S.team}/runs`, { task: $('task').value.trim() });
       showRun(run);
       watchRun(run);
     } catch (err) {
-      toast(err.message);
+      showSaveError(err);
       $('run').disabled = false;
     }
   };
@@ -1295,48 +1794,67 @@
     S.openResult = !hidden;
   };
 
-  /* ── Teams: open, new, template, save, delete ────── */
-  function renderTeamOptions() {
-    $('team-select').innerHTML = `<option value="">+ Alur baru</option>${S.teams.map(t =>
-      `<option value="${esc(t.id)}" ${t.id === S.team ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}`;
-    $('team-select').value = S.team || '';
-  }
-
-  function loadInto(source, teamId) {
+  /* ── Opening, saving, deleting ───────────────────── */
+  function loadInto(source, teamId, note = '') {
     stopEvents();
     S.run = null;
+    S.tests = {};
+    S.past = [];
+    S.future = [];
+    S.lastStep = null;
     S.team = teamId;
-    S.lead = source.lead_id || null;
-    S.reviewer = source.reviewer_id || null;
     S.selected = null;
     S.selectedEdge = null;
-    S.schedule = source.schedule || { mode: 'off' };
-    S.members = source.members.map(m => ({ ...m, depends_on: m.depends_on || [], config: m.config || {} }));
-    $('team-mode').value = ['video', 'motion'].includes(source.mode) ? source.mode : 'standard';
+    S.schedule = clone(source.schedule || { mode: 'off' });
+    S.mode = ['video', 'motion'].includes(source.mode) ? source.mode : 'standard';
+    S.active = source.active !== false;
+    const flow = source.style === 'flow' ? source : (source.as_flow || source);
+    S.members = clone(flow.members || []).map(m => ({ ...m, depends_on: m.depends_on || [], config: m.config || {} }));
+    S.starts = [...(flow.starts || [])];
+    const layout = source.layout || {};
+    S.trigger = null;
+    S.members.forEach(m => {
+      const saved = layout[m.id] || (teamId && store.get(legacyPosKey(teamId, m.id)) ? store.get(legacyPosKey(teamId, m.id)).split(',').map(Number) : null);
+      if (saved && saved.length === 2 && saved.every(Number.isFinite)) [m.x, m.y] = saved; else { delete m.x; delete m.y; }
+    });
+    const savedTrigger = layout[TRIGGER] || (teamId && store.get(legacyPosKey(teamId, TRIGGER)) ? store.get(legacyPosKey(teamId, TRIGGER)).split(',').map(Number) : null);
+    if (savedTrigger && savedTrigger.every(Number.isFinite)) S.trigger = { x: savedTrigger[0], y: savedTrigger[1] };
     $('team-name').value = source.name || '';
     if (S.ndv) closeNdv();
     resetRunView();
-    autoLayout(teamId);
-    renderTeamOptions();
+    autoLayout();
+    showNote(note);
+    showPage('editor');
     render();
     requestAnimationFrame(fitView);
-    markDirty(false);
+    markDirty(Boolean(note) || !teamId);
+    paintHistory();
+    paintActive();
     if (S.tab === 'runs') loadRuns();
   }
 
-  function blankTeam() {
-    const model = S.model !== 'auto' && S.byId[S.model] ? S.model : (S.models[0] && S.models[0].id) || '';
-    const lead = { id: newId(), name: 'Lead', role: 'Menyusun jawaban akhir', model_id: model, instructions: '', depends_on: [], kind: 'agent', config: {} };
-    const researcher = { id: newId(), name: 'Peneliti', role: 'Mencari fakta dan sumber', model_id: model, instructions: '', depends_on: [], kind: 'agent', config: {} };
-    loadInto({ name: '', members: [lead, researcher], lead_id: lead.id, schedule: { mode: 'off' } }, null);
+  function showNote(text) {
+    const box = $('wf-note');
+    box.classList.toggle('hidden', !text);
+    box.innerHTML = text ? `<span>${esc(text)}</span><button class="icon-btn" type="button" aria-label="Tutup catatan">×</button>` : '';
+    const close = box.querySelector('button');
+    if (close) close.onclick = () => box.classList.add('hidden');
+  }
+
+  function blankFlow() {
+    const agent = { id: newId(), kind: 'agent', name: 'AI Agent', role: 'Asisten', model_id: defaultModel(), instructions: '', depends_on: [], config: {} };
+    loadInto({ name: '', members: [agent], starts: [agent.id], style: 'flow', schedule: { mode: 'off' } }, null);
+    setTimeout(() => $('team-name').focus(), 60);
   }
 
   const confirmLeave = () => !S.dirty || confirm('Perubahan alur ini belum disimpan. Tinggalkan?');
 
   function openTeam(id) {
     const team = S.teams.find(t => t.id === id);
-    if (!team) { blankTeam(); return; }
-    loadInto(team, team.id);
+    if (!team) { blankFlow(); return; }
+    const legacy = team.style !== 'flow';
+    loadInto(team, team.id, legacy ? 'Alur ini dibuat dengan model lama (Lead dan Reviewer). Sekarang setiap sambungan terlihat di kanvas dan alur berjalan persis mengikuti garis. Periksa, lalu Simpan untuk memakai format baru.' : '');
+    store.set('wf:last', team.id);
     showLatestRun(team.id);
   }
 
@@ -1354,9 +1872,7 @@
   function useTemplate(key) {
     const template = S.templates.find(t => t.key === key);
     if (!template) return;
-    loadInto(template, null);
-    markDirty();
-    toast(template.description);
+    loadInto({ ...template, style: 'flow' }, null, template.description);
     if (template.starter === 'shop') makeShopStarter(template);
   }
 
@@ -1365,7 +1881,7 @@
     try {
       const made = await credApi('/api/data/starter/shop', 'POST');
       await refreshSources();
-      if (made.created.length) toast(`${template.description} Katalog dan Pesanan sudah dibuat di tab Data: isi dengan produkmu.`);
+      if (made.created.length) toast(`${template.description} Katalog dan Pesanan sudah dibuat di tab Tabel data: isi dengan produkmu.`);
     } catch (e) { toast(`Template terpasang, tetapi data contohnya gagal dibuat: ${e.message}`); }
   }
 
@@ -1374,15 +1890,18 @@
     await refreshSources(false);
   }
 
-  /* The data sources an agent can be given. Reloaded when the Data tab changes them. */
+  /* The data sources and relations nodes can use. Reloaded when the Tabel data tab changes them. */
   async function refreshSources(rerender = true) {
     try {
       const data = await api('/api/data/sources');
-      const before = JSON.stringify((S.dataSources || []).map(x => [x.name, x.label]));
+      const before = JSON.stringify([(S.dataSources || []).map(x => [x.name, x.label]), (S.relations || []).map(r => r.id)]);
       S.dataSources = data.sources;
+      S.relations = data.relations || [];
+      S.builtin = data.builtin || 'tabel';
       S.googleEmail = data.google_email || '';
       S.dataReady = data.ready || {};
-      if (rerender && before !== JSON.stringify(S.dataSources.map(x => [x.name, x.label])) && S.ndv && S.ndv !== TRIGGER && !document.activeElement?.closest('#ndv-params')) renderNdv();
+      const after = JSON.stringify([S.dataSources.map(x => [x.name, x.label]), S.relations.map(r => r.id)]);
+      if (rerender && before !== after && S.ndv && S.ndv !== TRIGGER && !document.activeElement?.closest('#ndv-params')) renderNdv();
     } catch { /* the editor works without data sources */ }
   }
 
@@ -1392,89 +1911,266 @@
       const [teams, templates] = await Promise.all([api('/api/teams'), api('/api/teams/templates'), loadIntegrations()]);
       S.teams = teams.teams;
       S.templates = templates.templates;
-      $('template-select').innerHTML = `<option value="">Mulai dari template…</option>${S.templates.map(t =>
-        `<option value="${esc(t.key)}">${esc(t.name)}</option>`).join('')}`;
-      renderTeamOptions();
-      if (S.team === null && !S.members.length) blankTeam();
-      else requestAnimationFrame(() => { if (S.trigger) { render(); fitView(); } });
+      renderHome();
+      if (S.page === 'editor' && S.trigger) requestAnimationFrame(() => { render(); applyView(); });
     } catch (e) { toast(e.message); }
   }
 
-  async function saveTeam() {
-    const name = $('team-name').value.trim();
-    if (!name) { $('team-name').focus(); throw new Error('Beri nama alur dulu.'); }
-    const body = {
-      name,
+  function saveBody() {
+    return {
+      name: $('team-name').value.trim(),
       description: '',
-      members: S.members.map(({ id, name: memberName, role, model_id, instructions, depends_on, kind, branch, config }) =>
-        ({ id, name: memberName, role: role || memberName, model_id: model_id || '', instructions: instructions || '', depends_on: depends_on || [], kind: kind || 'agent', branch: branch || '', config: config || {} })),
-      lead_id: S.lead,
-      reviewer_id: S.reviewer || null,
+      members: S.members.map(serializeMember),
+      lead_id: null,
+      reviewer_id: null,
       schedule: S.schedule || { mode: 'off' },
-      mode: $('team-mode').value || 'standard',
+      mode: S.mode || 'standard',
+      style: 'flow',
+      starts: S.starts,
+      layout: layoutOut(),
+      active: S.active !== false,
     };
+  }
+
+  async function saveTeam() {
+    const body = saveBody();
+    if (!body.name) { $('team-name').focus(); throw new Error('Beri nama alur dulu.'); }
+    if (!body.members.length) throw new Error('Tambahkan minimal satu node.');
     const saved = S.team
       ? await api(`/api/teams/${S.team}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       : await post('/api/teams', body);
     S.team = saved.id;
-    savePositions();
+    store.set('wf:last', saved.id);
     S.teams = (await api('/api/teams')).teams;
-    renderTeamOptions();
+    showNote('');
     markDirty(false);
     return saved;
   }
 
-  $('team-select').onchange = e => {
-    if (!confirmLeave()) { renderTeamOptions(); return; }
-    openTeam(e.target.value);
-  };
-  $('template-select').onchange = e => {
-    const key = e.target.value;
-    e.target.value = '';
-    $('wf-menu').open = false;
-    if (key && confirmLeave()) useTemplate(key);
-  };
-  $('team-name').oninput = () => markDirty();
-  $('team-mode').onchange = () => markDirty();
-  $('save-team').onclick = () => saveTeam().then(() => toast('Tersimpan.')).catch(e => toast(e.message));
-  $('new-team').onclick = () => { $('wf-menu').open = false; if (confirmLeave()) blankTeam(); };
-  $('tidy-board').onclick = () => {
-    $('wf-menu').open = false;
-    autoLayout(S.team, true);
-    savePositions();
-    render();
-    fitView();
-  };
-  $('delete-team').onclick = async () => {
-    $('wf-menu').open = false;
-    if (!S.team) { blankTeam(); return; }
-    if (!confirm('Hapus alur ini beserta riwayatnya?')) return;
+  /* The server names the node that is wrong: open it so the fix is one click away. */
+  function showSaveError(err) {
+    toast(err.message);
+    const match = /^Node "(.+?)"/.exec(err.message || '');
+    const member = match && S.members.find(m => m.name === match[1]);
+    if (member) openNdv(member.id);
+  }
+
+  const saveAndSay = () => saveTeam().then(() => toast('Tersimpan.')).catch(showSaveError);
+
+  async function deleteFlow(id) {
+    const team = S.teams.find(t => t.id === id);
+    if (!confirm(`Hapus alur "${team ? team.name : 'ini'}" beserta riwayatnya?`)) return false;
     try {
-      await api(`/api/teams/${S.team}`, { method: 'DELETE' });
-      S.teams = S.teams.filter(t => t.id !== S.team);
-      blankTeam();
+      await api(`/api/teams/${id}`, { method: 'DELETE' });
+      S.teams = S.teams.filter(t => t.id !== id);
+      renderHome();
+      return true;
+    } catch (e) { toast(e.message); return false; }
+  }
+
+  function exportFlow(source) {
+    const data = source || { ...saveBody(), members: S.members.map(serializeMember) };
+    const body = { squidwings_flow: 1, name: data.name, mode: data.mode, schedule: data.schedule, members: (data.style === 'flow' || !data.as_flow ? data : data.as_flow).members,
+      starts: (data.style === 'flow' || !data.as_flow ? data : data.as_flow).starts || [], layout: data.layout || {} };
+    const blob = new Blob([JSON.stringify(body, null, 2)], { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${(data.name || 'alur').replace(/[^\w-]+/g, '_')}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 2000);
+  }
+
+  function importFlow() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = async () => {
+      const file = input.files[0];
+      if (!file) return;
+      try {
+        const data = JSON.parse(await file.text());
+        if (!Array.isArray(data.members) || !data.members.length) throw new Error('File ini bukan alur SquidWings.');
+        loadInto({ ...data, name: `${data.name || 'Alur'} (impor)`.slice(0, 100), style: 'flow' }, null);
+        toast('Alur diimpor. Periksa model tiap agent, lalu Simpan.');
+      } catch (e) { toast(e.message || 'File tidak bisa dibaca.'); }
+    };
+    input.click();
+  }
+
+  function duplicateFlow(source) {
+    const data = source || { ...saveBody(), as_flow: null };
+    loadInto({ ...data, name: `${data.name || 'Alur'} (salinan)`.slice(0, 100) }, null);
+  }
+
+  async function setActive(id, active) {
+    try {
+      const team = await api(`/api/teams/${id}/active`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active }) });
+      S.teams = S.teams.map(t => (t.id === id ? team : t));
+      if (S.team === id) { S.active = team.active; paintActive(); }
+      toast(active ? 'Alur aktif: jadwal dan pemicunya berjalan.' : 'Alur dinonaktifkan. Pengaturannya tetap tersimpan.');
     } catch (e) { toast(e.message); }
+    renderHome();
+  }
+
+  function paintActive() {
+    const manual = ((S.schedule || {}).mode || 'off') === 'off';
+    $('wf-active').checked = S.active !== false && !manual;
+    $('wf-active').disabled = manual;
+    $('wf-active-wrap').title = manual ? 'Pemicu Manual tidak perlu diaktifkan. Ganti pemicunya ke jadwal atau Telegram.' : 'Jadwal dan pemicu Telegram berjalan sendiri bila aktif';
+    $('wf-active-wrap').classList.toggle('disabled', manual);
+  }
+
+  function flowMenu() {
+    return [
+      { heading: 'Pengaturan' },
+      ...Object.entries(MODES).map(([value, label]) => ({
+        label: `Mode: ${label}`, disabled: S.mode === value ? 'Sedang dipakai' : false,
+        run: () => { checkpoint(); S.mode = value; markDirty(); toast(value === 'standard' ? 'Mode standar.' : 'Tiap agent mendapat waktu sampai 30 menit untuk membuat video.'); },
+      })),
+      { separator: true },
+      { label: 'Rapikan tata letak', run: tidy },
+      { label: 'Duplikat alur', run: () => { if (confirmLeave()) duplicateFlow(); } },
+      { label: 'Ekspor JSON', run: () => exportFlow() },
+      { label: 'Impor JSON…', run: () => { if (confirmLeave()) importFlow(); } },
+      { separator: true },
+      { label: 'Hapus alur', danger: true, disabled: S.team ? false : 'Belum disimpan', run: async () => { if (await deleteFlow(S.team)) { S.dirty = false; showHome(); } } },
+    ];
+  }
+
+  $('team-name').oninput = () => markDirty();
+  $('save-team').onclick = saveAndSay;
+  $('wf-back').onclick = () => { if (confirmLeave()) { markDirty(false); showHome(); } };
+  $('wf-undo').onclick = undo;
+  $('wf-redo').onclick = redo;
+  $('wf-more').onclick = e => { const r = e.currentTarget.getBoundingClientRect(); window.SQMenu.show(flowMenu(), r.left - 180, r.bottom + 4, e.currentTarget); };
+  $('wf-active').onchange = () => {
+    S.active = $('wf-active').checked;
+    if (S.team && !S.dirty) setActive(S.team, S.active);
+    else markDirty();
   };
+  $('wf-issues').onclick = e => {
+    const list = flowIssues();
+    const r = e.currentTarget.getBoundingClientRect();
+    window.SQMenu.show([{ heading: 'Perlu diisi' }, ...list.map(item => ({ label: `${item.name}: ${item.text}`, run: () => openNdv(item.id) }))], r.left, r.bottom + 4, e.currentTarget);
+  };
+
+  /* ── Pages: overview and editor ──────────────────── */
+  function showPage(page) {
+    S.page = page;
+    $('wf-home').classList.toggle('hidden', page !== 'home');
+    $('wf-page').classList.toggle('hidden', page !== 'editor');
+    if (page === 'editor') showTab(S.tab === 'runs' ? 'runs' : 'editor');
+  }
+
+  function showHome(tab = S.homeTab || 'flows') {
+    stopEvents();
+    if (S.ndv) closeNdv();
+    showPage('home');
+    S.homeTab = tab;
+    document.querySelectorAll('#home-tabs button').forEach(b => {
+      const on = b.dataset.home === tab;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    $('home-flows').classList.toggle('hidden', tab !== 'flows');
+    $('wf-data').classList.toggle('hidden', tab !== 'data');
+    $('wf-creds').classList.toggle('hidden', tab !== 'creds');
+    if (tab === 'data' && window.SQData) window.SQData.open();
+    if (tab === 'creds') loadCreds();
+    if (tab === 'flows') renderHome();
+  }
+  document.querySelectorAll('#home-tabs button').forEach(b => { b.onclick = () => showHome(b.dataset.home); });
+
+  function ago(seconds) {
+    const diff = Date.now() / 1000 - seconds;
+    if (diff < 60) return 'baru saja';
+    if (diff < 3600) return `${Math.floor(diff / 60)} menit lalu`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)} jam lalu`;
+    if (diff < 86400 * 30) return `${Math.floor(diff / 86400)} hari lalu`;
+    return new Date(seconds * 1000).toLocaleDateString('id-ID', { dateStyle: 'medium' });
+  }
+
+  function renderHome() {
+    const query = ($('home-search').value || '').trim().toLowerCase();
+    const teams = [...(S.teams || [])].sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))
+      .filter(t => !query || t.name.toLowerCase().includes(query));
+    $('home-count').textContent = S.teams && S.teams.length ? `${S.teams.length} alur` : '';
+    $('flow-list').innerHTML = teams.length ? teams.map(t => {
+      const manual = ((t.schedule || {}).mode || 'off') === 'off';
+      const nodes = (t.style === 'flow' ? t.members : (t.as_flow || t).members).length;
+      const kinds = [...new Set((t.members || []).map(kindOf))].slice(0, 5);
+      return `<article class="flow-row" data-team="${esc(t.id)}" tabindex="0" role="button" aria-label="Buka ${esc(t.name)}">
+        <span class="flow-kinds" aria-hidden="true">${kinds.map(k => `<span class="node-icon" data-cat="${CATEGORY[k] || 'ai'}">${nodeIcon(k, 15)}</span>`).join('')}</span>
+        <span class="flow-main"><b>${esc(t.name)}</b><small>${esc(scheduleLabel(t.schedule))} · ${nodes} node · diperbarui ${esc(ago(t.updated_at || t.created_at))}${t.style === 'flow' ? '' : ' · format lama'}</small></span>
+        <label class="wf-switch ${manual ? 'disabled' : ''}" title="${manual ? 'Pemicu Manual, tidak perlu diaktifkan' : 'Aktif: jadwal dan pemicu berjalan sendiri'}">
+          <input type="checkbox" data-active="${esc(t.id)}" ${t.active !== false && !manual ? 'checked' : ''} ${manual ? 'disabled' : ''} aria-label="Aktifkan ${esc(t.name)}"><span class="switch-track" aria-hidden="true"></span></label>
+        <button class="icon-btn" type="button" data-flow-more="${esc(t.id)}" aria-label="Menu ${esc(t.name)}">⋯</button>
+      </article>`;
+    }).join('') : `<div class="flow-empty">${query ? '<p>Tidak ada alur dengan nama itu.</p>'
+      : '<h3>Belum ada alur</h3><p>Buat alur kosong, atau mulai dari salah satu template di bawah.</p><button class="btn btn-primary" type="button" data-empty-new>Alur baru</button>'}</div>`;
+    $('flow-list').querySelectorAll('.flow-row').forEach(row => {
+      row.onclick = e => { if (!e.target.closest('.wf-switch, [data-flow-more]')) openTeam(row.dataset.team); };
+      row.onkeydown = e => { if (e.key === 'Enter' && e.target === row) openTeam(row.dataset.team); };
+    });
+    $('flow-list').querySelectorAll('[data-active]').forEach(check => { check.onchange = () => setActive(check.dataset.active, check.checked); });
+    $('flow-list').querySelectorAll('[data-flow-more]').forEach(button => {
+      button.onclick = e => {
+        e.stopPropagation();
+        const r = button.getBoundingClientRect();
+        window.SQMenu.show(homeMenu(button.dataset.flowMore), r.left - 160, r.bottom + 4, button);
+      };
+    });
+    const empty = $('flow-list').querySelector('[data-empty-new]');
+    if (empty) empty.onclick = blankFlow;
+    $('template-list').innerHTML = (S.templates || []).map(t => {
+      const kinds = [...new Set((t.members || []).map(kindOf))].slice(0, 4);
+      return `<button class="template-card" type="button" data-template="${esc(t.key)}">
+        <span class="flow-kinds" aria-hidden="true">${kinds.map(k => `<span class="node-icon" data-cat="${CATEGORY[k] || 'ai'}">${nodeIcon(k, 14)}</span>`).join('')}</span>
+        <b>${esc(t.name)}</b><small>${esc(t.description || '')}</small></button>`;
+    }).join('') || '<p class="hint">Template muncul setelah ada model dengan dukungan tool.</p>';
+    $('template-list').querySelectorAll('[data-template]').forEach(b => { b.onclick = () => useTemplate(b.dataset.template); });
+  }
+
+  function homeMenu(id) {
+    const team = S.teams.find(t => t.id === id);
+    if (!team) return [];
+    return [
+      { label: 'Buka', run: () => openTeam(id) },
+      { label: 'Duplikat', run: () => duplicateFlow(team) },
+      { label: 'Ekspor JSON', run: () => exportFlow(team) },
+      { separator: true },
+      { label: 'Hapus', danger: true, run: () => deleteFlow(id) },
+    ];
+  }
+  window.SQMenu.on($('flow-list'), ({ target }) => {
+    const row = target.closest && target.closest('[data-team]');
+    return row ? homeMenu(row.dataset.team) : null;
+  });
+  $('home-search').oninput = renderHome;
+  $('home-new').onclick = blankFlow;
+  $('home-import').onclick = importFlow;
 
   /* ── Zoom controls and keys ──────────────────────── */
   $('zoom-in').onclick = () => zoomAt(1.2);
   $('zoom-out').onclick = () => zoomAt(1 / 1.2);
   $('zoom-fit').onclick = fitView;
-  $('zoom-tidy').onclick = () => $('tidy-board').click();
+  $('zoom-tidy').onclick = tidy;
   $('board').addEventListener('pointerdown', boardPointerDown);
   $('board').addEventListener('wheel', e => {
+    if (e.target.closest('.wf-run, .wf-note')) return;
     e.preventDefault();
     const r = $('board').getBoundingClientRect();
     if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(-e.deltaY * 0.0022), e.clientX - r.left, e.clientY - r.top);
     else { V.x -= e.deltaX; V.y -= e.deltaY; applyView(); }
   }, { passive: false });
-  $('edge-delete').onpointerdown = e => e.stopPropagation();
+  $('edge-tools').onpointerdown = e => e.stopPropagation();
   $('edge-delete').onclick = () => { if (S.selectedEdge) removeEdge(S.selectedEdge.from, S.selectedEdge.to); };
+  $('edge-insert').onclick = () => { if (S.selectedEdge) insertOnEdge(S.selectedEdge.from, S.selectedEdge.to); };
   // One menu handler for the whole canvas: it looks at what was clicked. The run bar and zoom buttons keep the
-  // browser's own menu, so the task box can still paste.
+  // browser's own menu, so the input box can still paste.
   window.SQMenu.on($('board'), ({ target, event, keyboard }) => {
-    if (S.tab !== 'editor' || !S.trigger) return null;
-    if (target.closest && target.closest('.wf-run, .wf-zoom, .wf-plus, #edge-delete, .port-add')) return null;
+    if (S.page !== 'editor' || S.tab !== 'editor' || !S.trigger) return null;
+    if (target.closest && target.closest('.wf-run, .wf-zoom, .wf-plus, #edge-tools, .port-add, .wf-note')) return null;
     const node = target.closest && target.closest('.node');
     if (node) { selectNode(node.dataset.id); return node.dataset.id === TRIGGER ? triggerMenu() : nodeMenu(node.dataset.id); }
     const edge = target.closest && target.closest('.edge-hit[data-from]');
@@ -1490,7 +2186,7 @@
   // A big change in size (a phone turned, a window snapped) fits the flow again; a small one keeps the view.
   let boardWidth = 0;
   window.addEventListener('resize', () => {
-    if (S.view !== 'team' || S.tab !== 'editor' || !S.trigger) return;
+    if (S.view !== 'team' || S.page !== 'editor' || S.tab !== 'editor' || !S.trigger) return;
     const width = $('board').clientWidth;
     if (boardWidth && Math.abs(width - boardWidth) / boardWidth > 0.25) fitView(); else applyView();
     boardWidth = width;
@@ -1498,18 +2194,22 @@
   new ResizeObserver(() => { if (!boardWidth && $('board').clientWidth) boardWidth = $('board').clientWidth; }).observe($('board'));
 
   window.addEventListener('keydown', e => {
-    if (S.view !== 'team') return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      saveTeam().then(() => toast('Tersimpan.')).catch(err => toast(err.message));
-      return;
-    }
+    if (S.view !== 'team' || S.page !== 'editor') return;
+    const key = e.key.toLowerCase();
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && key === 's') { e.preventDefault(); saveAndSay(); return; }
     if (e.key === 'Escape') {
       if (!$('creator').classList.contains('hidden')) closeCreator();
       else if (S.ndv) closeNdv();
       return;
     }
-    if (S.tab !== 'editor' || typing() || S.ndv) return;
+    if (S.tab !== 'editor' || typing()) return;
+    if (mod && key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (mod && (key === 'y' || (key === 'z' && e.shiftKey))) { e.preventDefault(); redo(); return; }
+    if (S.ndv) return;
+    if (mod && key === 'c' && S.selected && S.selected !== TRIGGER) { e.preventDefault(); copyNode(S.selected); return; }
+    if (mod && key === 'v' && S.clipboard) { e.preventDefault(); pasteNode(); return; }
+    if (mod && key === 'd' && S.selected && S.selected !== TRIGGER) { e.preventDefault(); duplicateNode(S.selected); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && (S.selectedEdge || S.selected)) {
       e.preventDefault();
       if (S.selectedEdge) removeEdge(S.selectedEdge.from, S.selectedEdge.to);
@@ -1524,7 +2224,7 @@
     else if (e.key === '-') zoomAt(1 / 1.2);
   });
 
-  /* ── Tabs ────────────────────────────────────────── */
+  /* ── Editor tabs ─────────────────────────────────── */
   function showTab(name) {
     S.tab = name;
     document.querySelectorAll('#wf-tabs button').forEach(b => {
@@ -1532,10 +2232,8 @@
       b.classList.toggle('on', on);
       b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    ['editor', 'data', 'runs', 'creds'].forEach(tab => $(`wf-${tab}`).classList.toggle('hidden', tab !== name));
-    if (name === 'data' && window.SQData) window.SQData.open();
+    ['editor', 'runs'].forEach(tab => $(`wf-${tab}`).classList.toggle('hidden', tab !== name));
     if (name === 'runs') loadRuns();
-    if (name === 'creds') loadCreds();
     if (name === 'editor' && S.trigger) requestAnimationFrame(applyView);
   }
   document.querySelectorAll('#wf-tabs button').forEach(b => { b.onclick = () => showTab(b.dataset.tab); });
@@ -1548,7 +2246,7 @@
       const { runs } = await api(`/api/teams/${S.team}/runs`);
       S.runs = runs.sort((a, b) => b.created_at - a.created_at);
       box.innerHTML = S.runs.length ? S.runs.map(run => {
-        const took = run.started_at ? formatSeconds(((run.completed_at || Date.now() / 1000) - run.started_at) * 1000) : '–';
+        const took = run.started_at ? formatSeconds(((run.completed_at || Date.now() / 1000) - run.started_at) * 1000) : '-';
         const when = new Date(run.created_at * 1000).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' });
         const source = (run.trigger && run.trigger.source) || 'manual';
         return `<button class="run-row ${S.runDetail === run.id ? 'on' : ''}" data-run="${esc(run.id)}" type="button">
@@ -1557,7 +2255,7 @@
           <span class="run-meta">${esc(took)}<small>${formatTokens(run.total_tokens || 0)} token</small></span></button>`;
       }).join('') : '<p class="io-empty">Belum ada eksekusi. Jalankan alur dari tab Editor.</p>';
       box.querySelectorAll('[data-run]').forEach(row => { row.onclick = () => showRunDetail(row.dataset.run); });
-      if (!S.runDetail && S.runs[0]) showRunDetail(S.runs[0].id);
+      if ((!S.runDetail || !S.runs.some(r => r.id === S.runDetail)) && S.runs[0]) showRunDetail(S.runs[0].id);
     } catch (e) { box.innerHTML = `<p class="hint hint-warn">${esc(e.message)}</p>`; }
   }
 
@@ -1566,26 +2264,27 @@
     if (!run) return;
     S.runDetail = id;
     document.querySelectorAll('#runs-list .run-row').forEach(r => r.classList.toggle('on', r.dataset.run === id));
-    const nodes = S.members.map(m => {
-      const state = (run.agents || {})[m.id];
-      if (!state) return '';
-      return `<tr><td>${esc(m.name)}</td><td><span class="io-status" data-status="${esc(state.status)}">${esc(STATUS[state.status] || state.status)}</span></td>
-        <td>${state.completed_at && state.started_at ? formatSeconds((state.completed_at - state.started_at) * 1000) : '–'}</td>
-        <td>${state.tokens ? formatTokens(state.tokens) : '–'}</td><td class="muted">${esc(state.error || state.note || '')}</td></tr>`;
+    const nodes = Object.entries(run.agents || {}).map(([nodeId, state]) => {
+      const member = memberById(nodeId);
+      return `<tr><td>${esc(member ? member.name : state.name || nodeId)}</td><td><span class="io-status" data-status="${esc(state.status)}">${esc(STATUS[state.status] || state.status)}</span></td>
+        <td>${state.completed_at && state.started_at ? formatSeconds((state.completed_at - state.started_at) * 1000) : '-'}</td>
+        <td>${state.tokens ? formatTokens(state.tokens) : '-'}</td><td class="muted">${esc(state.error || state.note || '')}</td></tr>`;
     }).join('');
     $('run-detail').innerHTML = `
       <div class="run-detail-head"><div><h3>${esc(RUN_STATUS[run.status] || run.status)}</h3><p class="hint">${esc(new Date(run.created_at * 1000).toLocaleString('id-ID'))}</p></div>
         <button id="run-open" class="btn btn-ghost" type="button">Lihat di kanvas</button></div>
-      <div class="io-block"><div class="io-head">Tugas</div>${preview(run.task)}</div>
+      <div class="io-block"><div class="io-head">Input</div>${ioView(run.task, `run-task-${run.id}`) || '<p class="io-empty">Tanpa input.</p>'}</div>
       ${nodes ? `<table class="run-table"><thead><tr><th>Node</th><th>Status</th><th>Waktu</th><th>Token</th><th>Catatan</th></tr></thead><tbody>${nodes}</tbody></table>` : ''}
       ${run.error ? `<div class="notice" style="white-space: pre-line">${esc(run.error)}</div>` : ''}
-      ${run.result ? `<div class="io-block"><div class="io-head">Hasil</div>${preview(run.result)}</div>` : ''}`;
-    enhanceCode($('run-detail'));
+      ${run.result ? `<div class="io-block"><div class="io-head">Hasil</div>${ioView(run.result, `run-result-${run.id}`)}</div>` : ''}`;
+    bindIo($('run-detail'));
+    $('run-detail').querySelectorAll('[data-io-mode]').forEach(b => { b.onclick = () => { S.ioMode[b.dataset.ioKey] = b.dataset.ioMode; showRunDetail(id); }; });
     $('run-open').onclick = () => openRunOnCanvas(run);
   }
 
   function openRunOnCanvas(run) {
     S.openResult = false;
+    S.tests = {};
     showRun(run);
     showTab('editor');
     if (!finished(run.status)) watchRun(run);
@@ -1599,7 +2298,7 @@
       { label: 'Lihat rincian', run: () => showRunDetail(run.id) },
       { label: 'Lihat di kanvas', run: () => openRunOnCanvas(run) },
       { separator: true },
-      { label: 'Salin tugas', run: () => copyText(run.task || '') },
+      { label: 'Salin input', run: () => copyText(run.task || '') },
       { label: 'Salin hasil', disabled: run.result ? false : 'Eksekusi ini belum punya hasil', run: () => copyText(run.result || '') },
     ];
   });
@@ -1628,11 +2327,11 @@
       // Telegram needs its bot token; search and databases need any one of their fields.
       const ready = group.key === 'limits' ? false : group.key === 'telegram' ? fields.some(f => f.key === 'telegram_bot_token' && f.set) : fields.some(f => f.set && f.source !== 'default');
       const testable = group.key !== 'limits';
-      const icon = group.key === 'telegram' ? 'telegram' : group.key === 'search' ? 'http' : group.key === 'limits' ? 'delay' : 'database';
+      const kind = group.key === 'telegram' ? 'telegram' : group.key === 'search' ? 'http' : group.key === 'limits' ? 'delay' : 'database';
       const dbSelect = group.key === 'database' ? `<select class="cred-db" aria-label="Database yang dites">
           <option value="sqlite">SQLite</option><option value="postgres">PostgreSQL</option><option value="mysql">MySQL</option><option value="mongodb">MongoDB</option></select>` : '';
       return `<section class="cred-card" data-group="${group.key}">
-        <header><span class="node-icon" data-cat="${group.key === 'telegram' ? 'output' : group.key === 'search' ? 'ai' : group.key === 'limits' ? 'logic' : 'data'}">${nodeIcon(icon, 18)}</span>
+        <header><span class="node-icon" data-cat="${group.key === 'telegram' ? 'output' : group.key === 'search' ? 'ai' : group.key === 'limits' ? 'logic' : 'data'}">${nodeIcon(kind, 18)}</span>
           <div><h3>${esc(group.label)} ${ready ? '<span class="cred-ok">tersambung</span>' : ''}</h3><p class="hint">${esc(group.description)}</p></div></header>
         ${fields.map(f => `<label class="field cred-field"><span>${esc(f.label)} ${sourceBadge(f)}</span>
             <span class="cred-input">${f.multiline
@@ -1641,7 +2340,7 @@
               placeholder="${esc(f.set ? `${f.masked}  ·  ketik untuk mengganti` : f.example)}">`}
             ${f.source === 'web' ? `<button class="btn btn-ghost btn-small" type="button" data-cred-clear="${f.key}" title="Hapus dari web, pakai .env atau nilai bawaan lagi">Hapus</button>` : ''}</span>
             ${f.hint ? `<small class="hint">${esc(f.hint)}</small>` : ''}</label>`).join('')}
-        ${group.key === 'google' && fields.some(f => f.set && f.masked) ? `<p class="hint">Bagikan tiap spreadsheet ke <b>${esc(fields.find(f => f.set).masked)}</b> sebagai Editor, lalu tambahkan di tab Data.</p>` : ''}
+        ${group.key === 'google' && fields.some(f => f.set && f.masked) ? `<p class="hint">Bagikan tiap spreadsheet ke <b>${esc(fields.find(f => f.set).masked)}</b> sebagai Editor, lalu tambahkan di tab Tabel data.</p>` : ''}
         <div class="cred-actions">${dbSelect}${testable ? `<button class="btn btn-ghost" type="button" data-cred-test="${group.key}">Tes</button>` : ''}
           <button class="btn btn-primary" type="button" data-cred-save="${group.key}">Simpan</button></div>
         <p class="cred-msg hint" aria-live="polite"></p>
@@ -1685,19 +2384,21 @@
     });
   }
 
-  /* ── Export to app.js ────────────────────────────── */
+  /* ── Export to app.js and data.js ────────────────── */
+  Object.assign(S, { starts: [], past: [], future: [], tests: {}, ioMode: {}, dtTables: {}, page: 'home', homeTab: 'flows', tab: 'editor' });
   window.SQTeam = {
     open() {
-      if (!S.tab) showTab('editor');
+      if (S.page !== 'editor') showHome(S.homeTab || 'flows');
       loadTeams();
     },
     modelsChanged() {
       if (S.ndv && S.ndv !== TRIGGER && !document.activeElement?.closest('#ndv')) renderNdv();
+      if (S.page === 'editor' && S.trigger) render();
     },
-    /* For the Data tab: saving needs the router PIN from outside this computer, same as credentials. */
+    /* For the Tabel data tab: saving needs the router PIN from outside this computer, same as credentials. */
     pinApi: credApi,
-    showCreds() { if (S.ndv) closeNdv(); showTab('creds'); },
-    sourcesChanged() { refreshSources(); },
+    showCreds() { if (S.page === 'editor' && !confirmLeave()) return; markDirty(false); showHome('creds'); },
+    sourcesChanged() { S.dtTables = {}; refreshSources(); },
   };
   window.addEventListener('beforeunload', e => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
 })();

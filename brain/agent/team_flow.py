@@ -15,7 +15,12 @@ import re
 from datetime import datetime, timedelta
 from typing import Any
 
-NODE_KINDS = ("agent", "delay", "gate", "switch", "merge", "set", "http", "telegram", "database")
+NODE_KINDS = ("agent", "delay", "gate", "switch", "merge", "set", "http", "telegram", "database", "datatable")
+# "flow": runs exactly along the connections drawn, like n8n. "team": the older lead and reviewer model.
+FLOW_STYLES = ("flow", "team")
+TRIGGER_ID = "__trigger"
+DATATABLE_OPERATIONS = ("get", "insert", "update", "upsert", "delete")
+DATATABLE_OPS = ("=", "!=", ">", ">=", "<", "<=", "contains", "startswith")
 BRANCHING_KINDS = ("gate", "switch")
 GATE_MODES = ("contains", "not_contains", "equals", "regex", "empty", "time", "ai")
 GATE_COMBINES = ("and", "or")
@@ -23,16 +28,16 @@ MERGE_MODES = ("any", "all")
 HTTP_METHODS = ("GET", "POST")
 SCHEDULE_MODES = ("off", "interval", "daily", "cron", "once", "telegram")
 AUDIENCES = ("owner", "public")
-MAX_DATA_GRANTS = 8
-MAX_HIDDEN_COLUMNS = 12
+MAX_DATA_GRANTS = 50
+MAX_HIDDEN_COLUMNS = 60
 DEFAULT_HISTORY_TURNS = 6
 MAX_HISTORY_TURNS = 20
 DEFAULT_DAILY_CAP = 300
 MAX_DAILY_CAP = 5000
 BRANCHES = ("A", "B", "C", "D")
-MAX_CONDITIONS = 5
+MAX_CONDITIONS = 20
 MAX_SWITCH_RULES = 3
-MAX_DAILY_TIMES = 12
+MAX_DAILY_TIMES = 48
 MAX_TEMPLATE_CHARS = 8000
 MAX_DELAY_SECONDS = 3600
 MIN_INTERVAL_MINUTES = 5
@@ -313,6 +318,8 @@ def normalize_node_config(kind: str, config: dict[str, Any] | None, database_ids
             kept["direct"] = True
         if config.get("notify_owner"):
             kept["notify_owner"] = True
+        if config.get("report"):
+            kept["report"] = True
         grants = _data_grants(config.get("data"))
         if grants:
             kept["data"] = grants
@@ -363,7 +370,173 @@ def normalize_node_config(kind: str, config: dict[str, Any] | None, database_ids
         if not _TABLE_RE.fullmatch(table):
             raise ValueError("Nama tabel hanya boleh huruf, angka, dan garis bawah.")
         return {"database": database, "table": table}
+    if kind == "datatable":
+        return _datatable_config(config)
     return {}
+
+
+def _datatable_column(value: Any, what: str) -> str:
+    text = str(value or "").strip()
+    if not text or len(text) > 64:
+        raise ValueError(f"{what} belum dipilih.")
+    return text
+
+
+def _datatable_config(config: dict[str, Any]) -> dict[str, Any]:
+    """A Data table node, like n8n's: one table of a data source, one operation, its conditions and column values."""
+    source = str(config.get("source") or "").strip().lower()
+    if not _SOURCE_RE.fullmatch(source):
+        raise ValueError("Pilih tabel data dulu: sumber datanya belum dipilih.")
+    table = str(config.get("table") or "").strip()
+    if len(table) > 120:
+        raise ValueError("Nama tabel terlalu panjang.")
+    operation = str(config.get("operation") or "get")
+    if operation not in DATATABLE_OPERATIONS:
+        raise ValueError(f"Operasi tabel tidak dikenal: {operation}.")
+    combine = str(config.get("combine") or "and").lower()
+    if combine not in GATE_COMBINES:
+        raise ValueError("Syarat tabel hanya bisa AND atau OR.")
+    where = []
+    for item in config.get("where") or []:
+        if not isinstance(item, dict):
+            continue
+        op = str(item.get("op") or "=")
+        if op not in DATATABLE_OPS:
+            raise ValueError(f"Operator syarat tidak dikenal: {op}.")
+        if not str(item.get("column") or "").strip():
+            continue
+        where.append({"column": _datatable_column(item.get("column"), "Kolom syarat"), "op": op,
+                      "value": str(item.get("value") or "")[:MAX_TEMPLATE_CHARS]})
+    values = []
+    for item in config.get("values") or []:
+        if isinstance(item, dict) and str(item.get("column") or "").strip():
+            values.append({"column": _datatable_column(item.get("column"), "Kolom"),
+                           "value": str(item.get("value") or "")[:MAX_TEMPLATE_CHARS]})
+    if operation in ("update", "delete") and not where:
+        raise ValueError("Ubah dan hapus baris butuh minimal satu syarat, supaya tidak mengenai semua baris.")
+    if operation in ("insert", "update", "upsert") and not values:
+        raise ValueError("Isi minimal satu kolom untuk baris ini.")
+    match = [str(c).strip() for c in config.get("match") or [] if str(c).strip()]
+    if operation == "upsert":
+        match = [c for c in match if c in {v["column"] for v in values}]
+        if not match:
+            raise ValueError("Upsert butuh kolom pencocok yang juga diisi nilainya, misalnya kode atau email.")
+    kept: dict[str, Any] = {"source": source, "table": table, "operation": operation}
+    if where:
+        kept["where"] = where
+        kept["combine"] = combine
+    if values:
+        kept["values"] = values
+    if match:
+        kept["match"] = match
+    if operation == "get":
+        try:
+            limit = int(config.get("limit") or 0)
+        except (TypeError, ValueError):
+            raise ValueError("Batas baris harus angka.") from None
+        if limit < 0:
+            raise ValueError("Batas baris tidak boleh negatif.")
+        if limit:
+            kept["limit"] = limit
+        sort = str(config.get("sort") or "").strip()
+        if sort:
+            kept["sort"] = sort[:64]
+            kept["desc"] = bool(config.get("desc"))
+        include = [str(r).strip() for r in config.get("include") or [] if str(r).strip()]
+        if include:
+            kept["include"] = list(dict.fromkeys(include))
+    return kept
+
+
+def json_values(text: str) -> dict[str, str]:
+    """``{{json.kolom}}`` for a node whose input is JSON: the fields of an object, or of a list's first object.
+
+    ``{{json}}`` is the whole input again, and ``{{json.0.kolom}}`` reaches into a list by position.
+    """
+    import json
+
+    try:
+        data = json.loads(text) if text.strip()[:1] in ("{", "[") else None
+    except ValueError:
+        data = None
+    if data is None:
+        return {}
+    out: dict[str, str] = {"json": text}
+
+    def show(value: Any) -> str:
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+
+    def walk(into: dict[str, str], prefix: str, value: Any, depth: int) -> None:
+        if depth > 3:
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                into[f"{prefix}.{key}"] = show(item)
+                walk(into, f"{prefix}.{key}", item, depth + 1)
+        elif isinstance(value, list):
+            for index, item in enumerate(value[:50]):
+                into[f"{prefix}.{index}"] = show(item)
+                walk(into, f"{prefix}.{index}", item, depth + 1)
+
+    walk(out, "json", data, 0)
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        # A list of rows reads like its first row: {{json.nama}}, {{json.produk.nama}}.
+        first: dict[str, str] = {}
+        walk(first, "json", data[0], 0)
+        for key, item in first.items():
+            out.setdefault(key, item)
+    out["json.count"] = str(len(data)) if isinstance(data, list) else "1"
+    return out
+
+
+def to_flow(members: list[dict[str, Any]], lead_id: str | None, reviewer_id: str | None) -> tuple[list[dict[str, Any]], list[str]]:
+    """A lead-and-reviewer team as a plain flow where every connection is drawn.
+
+    The lead becomes an agent fed by every worker that nobody else reads, the reviewer an agent after the lead that
+    fixes the answer itself, and an output left unconnected is fed the final answer. Returns the members and the ids
+    the trigger starts.
+    """
+    import copy
+
+    members = copy.deepcopy(members)
+    by_id = {m["id"]: m for m in members}
+    for m in members:
+        m["depends_on"] = [d for d in m.get("depends_on") or [] if d in by_id]
+    lead = lead_id if lead_id in by_id else None
+    reviewer = reviewer_id if reviewer_id in by_id and reviewer_id != lead else None
+    outputs = {"telegram", "database"}
+    after = {m["id"] for m in members if m.get("kind", "agent") in outputs and not m["depends_on"]}
+    anchors = {x for x in (lead, reviewer) if x}
+    changed = True
+    while changed:
+        changed = False
+        for m in members:
+            if m["id"] in after or m["id"] in anchors:
+                continue
+            if any(d in after or d in anchors for d in m["depends_on"]):
+                after.add(m["id"])
+                changed = True
+    depended = {d for m in members for d in m["depends_on"]}
+    workers = [m for m in members if m["id"] not in after and m["id"] not in anchors]
+    sinks = [m["id"] for m in workers if m["id"] not in depended]
+    final = reviewer or lead
+    if lead:
+        by_id[lead]["depends_on"] = list(dict.fromkeys([*by_id[lead]["depends_on"], *sinks]))
+    if reviewer:
+        node = by_id[reviewer]
+        node["depends_on"] = [lead] if lead else []
+        fix = ("Periksa jawaban dari langkah sebelumnya terhadap tugas. Perbaiki sendiri setiap masalah, lalu kembalikan "
+               "jawaban final yang lengkap, bukan daftar masalah.")
+        node["instructions"] = f"{node.get('instructions', '').strip()}\n\n{fix}".strip()
+        for m in members:
+            if m["id"] not in (reviewer, lead) and lead in m["depends_on"]:
+                m["depends_on"] = [reviewer if d == lead else d for d in m["depends_on"]]
+    ends = [final] if final else sinks
+    for m in members:
+        if m.get("kind", "agent") in outputs and not m["depends_on"] and m["id"] in after:
+            m["depends_on"] = [e for e in ends if e != m["id"]]
+    starts = [m["id"] for m in members if not m["depends_on"]]
+    return members, starts
 
 
 def check_condition(condition: dict[str, Any], text: str, now: datetime) -> bool | None:
@@ -388,6 +561,11 @@ def check_condition(condition: dict[str, Any], text: str, now: datetime) -> bool
 def render_template(template: str, values: dict[str, str]) -> str:
     """Fill {{name}} placeholders. Unknown names stay as written, so typos show."""
     return _PLACEHOLDER_RE.sub(lambda match: values.get(match.group(1), match.group(0)), template)
+
+
+def unfilled(text: str) -> list[str]:
+    """The {{placeholders}} a template left as written because nothing had that name."""
+    return list(dict.fromkeys(match.group(0) for match in _PLACEHOLDER_RE.finditer(text)))
 
 
 def clock_values(now: datetime) -> dict[str, str]:

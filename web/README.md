@@ -5,9 +5,9 @@ Server web (FastAPI) dan halaman chat. Halaman add-on (trading, Studio) ada di f
 | File / folder | Isi |
 |---|---|
 | `server.py` | Server utama: chat, upload, terminal, preview, halaman, dan pemasangan API add-on |
-| `team_api.py` | API tim agent |
+| `team_api.py` | API alur kerja (tim agent): simpan, aktif/nonaktif, jalankan, tes satu node, kredensial |
 | `router_api.py` | API halaman Router (provider, model default, harga, token) |
-| `data_api.py` | API datastore |
+| `data_api.py` | API Tabel data: sumber, tabel, baris, kolom, dan relasi antar tabel |
 | `static/` | Halaman chat (`index.html`, `js/`, `css/`), halaman Router (`router/`), font (`vendor/`) |
 | `tailwind/` | Konfigurasi Tailwind (prefix `tw-`) |
 | `data/` | Kredensial dari web, provider router, run tim (tidak ikut Git) |
