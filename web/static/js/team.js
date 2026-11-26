@@ -1176,13 +1176,7 @@
           ${method === 'POST' ? `<label class="field"><span>Isi (JSON atau teks)</span><textarea data-config="body" data-tpl rows="4" maxlength="8000">${esc(config.body || '')}</textarea></label>${chipsRow()}` : ''}
           <p class="hint">Hanya alamat publik. Balasannya diteruskan ke node berikutnya.</p>`;
       }
-      case 'telegram': {
-        const telegram = (S.integrations || {}).telegram || {};
-        return `${credentialNote(telegram.ready, 'Bot Telegram')}
-          <label class="field"><span>Chat ID</span><input data-config="chat_id" value="${esc(config.chat_id || '')}" placeholder="${telegram.default_chat ? 'Kosong = chat dari Kredensial' : 'Angka atau @nama_channel'}" maxlength="70"></label>
-          <p class="hint">Yang dikirim adalah input node ini, yaitu hasil node sebelumnya.</p>
-          <button id="test-telegram" class="btn btn-ghost btn-small btn-block" type="button" ${telegram.ready ? '' : 'disabled'}>Kirim pesan tes</button>`;
-      }
+      case 'telegram': return telegramFields(member);
       case 'database': {
         const options = (S.integrations || {}).databases || [{ id: 'sqlite', label: 'SQLite (file lokal)', ready: true }];
         const chosen = options.find(o => o.id === (config.database || 'sqlite')) || options[0];
@@ -1194,6 +1188,99 @@
       }
       default: return '';
     }
+  }
+
+  /* ── Telegram node ───────────────────────────────── */
+  const PAGE_MODE = {
+    own: url => `Jendela web memakai alamatmu sendiri (${url}).`,
+    tunnel: url => `Jendela web memakai alamat tunnel web server (${url}).`,
+    auto: url => (url ? `Jendela web aktif di ${url}. Hanya halaman hasil yang terbuka ke internet.`
+      : 'Alamat publik untuk jendela web dibuat otomatis (Cloudflare Tunnel) saat pertama dipakai. Hanya halaman hasil yang terbuka ke internet.'),
+  };
+
+  function telegramFields(member) {
+    const config = member.config || {};
+    const telegram = (S.integrations || {}).telegram || {};
+    const pages = telegram.pages || { mode: 'auto', url: '' };
+    const style = config.style || 'auto';
+    const buttons = config.buttons || [];
+    return `${credentialNote(telegram.ready, 'Bot Telegram')}
+      <label class="field"><span>Chat ID</span><input data-config="chat_id" value="${esc(config.chat_id || '')}" placeholder="${telegram.default_chat ? 'Kosong = chat yang memicu, atau chat di Kredensial' : 'Angka atau @nama_channel'}" maxlength="70"></label>
+      <label class="field"><span>Isi pesan</span><textarea data-config="text" data-tpl rows="5" maxlength="8000" placeholder="Kosong: kirim input apa adanya. Contoh: Halo! Ada **{{json.count}}** pesanan baru, terbaru dari {{json.nama}}.">${esc(config.text || '')}</textarea></label>
+      ${chipsRow()}
+      <div class="field"><span>Tampilan</span>
+        <div class="seg-choice">
+          <label><input type="radio" name="tg-style" value="auto" ${style === 'auto' ? 'checked' : ''}><span>Rapi otomatis</span></label>
+          <label><input type="radio" name="tg-style" value="plain" ${style === 'plain' ? 'checked' : ''}><span>Teks biasa</span></label>
+        </div>
+        <p class="hint">${style === 'auto' ? 'Markdown jadi huruf tebal, miring, daftar, dan kutipan. Tabel dibuat muat di layar HP. Data JSON (misalnya dari Tabel data) jadi daftar singkat yang mudah dibaca.' : 'Dikirim persis seperti tulisannya.'}</p>
+      </div>
+      <div class="field"><span>Tombol di bawah pesan</span>
+        ${buttons.map((b, i) => `<div class="tg-button-row">
+            <input data-tg-button="${i}" data-key="label" value="${esc(b.label || '')}" placeholder="Tulisan tombol" maxlength="64" aria-label="Tulisan tombol ${i + 1}">
+            <select data-tg-button="${i}" data-key="kind" aria-label="Jenis tombol ${i + 1}">
+              <option value="web" ${b.kind !== 'link' ? 'selected' : ''}>Buka jendela web</option>
+              <option value="link" ${b.kind === 'link' ? 'selected' : ''}>Tautan</option>
+            </select>
+            <button class="icon-btn" type="button" data-tg-button-remove="${i}" aria-label="Hapus tombol ${i + 1}">×</button>
+            ${b.kind === 'link' ? `<input class="tg-button-url" data-tg-button="${i}" data-key="url" data-tpl value="${esc(b.url || '')}" placeholder="https://… boleh pakai {{json.kode}}" aria-label="Alamat tombol ${i + 1}">` : ''}
+          </div>`).join('')}
+        <button class="btn btn-ghost btn-small" type="button" data-tg-button-add>+ Tombol</button>
+        <p class="hint">"Buka jendela web" membuka isi lengkap (input node ini) sebagai halaman di dalam Telegram, rapi di HP: tabel untuk data, teks untuk jawaban. Di grup atau channel tombolnya jadi tautan biasa.</p>
+      </div>
+      ${buttons.some(b => b.kind !== 'link') || style === 'auto' ? `<label class="field"><span>Judul jendela web</span><input data-config="page_title" data-tpl value="${esc(config.page_title || '')}" placeholder="${esc(member.name || 'Hasil')}" maxlength="120"></label>` : ''}
+      <label class="check"><input type="checkbox" data-flag="silent" ${config.silent ? 'checked' : ''}>Kirim tanpa bunyi notifikasi</label>
+      ${style === 'auto' ? `<label class="check"><input type="checkbox" data-flag="no_summary" ${config.no_summary ? 'checked' : ''}>Pesan panjang dikirim utuh (beberapa pesan), bukan ringkasan dengan tombol Buka lengkap</label>` : ''}
+      <p class="hint">${esc((PAGE_MODE[pages.mode] || PAGE_MODE.auto)(pages.url))} <button class="link-btn" type="button" data-go-creds>Atur di Kredensial</button></p>
+      <div class="field"><span>Pratinjau</span><div id="tg-preview" class="tg-preview" aria-live="polite"><p class="hint">Memuat pratinjau…</p></div></div>
+      <button id="test-telegram" class="btn btn-ghost btn-small btn-block" type="button" ${telegram.ready ? '' : 'disabled'}>Kirim pesan tes sederhana</button>`;
+  }
+
+  /* How the message will look in Telegram, from the input this node would get now. Nothing is sent. */
+  function previewTelegram(member) {
+    clearTimeout(S.tgPreviewTimer);
+    S.tgPreviewTimer = setTimeout(async () => {
+      const box = $('tg-preview');
+      if (!box || S.ndv !== member.id) return;
+      const input = inputFor(member) || 'Contoh isi dari node sebelumnya. **Tebal**, _miring_, dan daftar:\n- satu\n- dua';
+      try {
+        const out = await post('/api/teams/telegram/preview', { config: member.config || {}, input, team_name: $('team-name').value.trim() });
+        if (!document.body.contains(box)) return;
+        const allowed = { ALLOWED_TAGS: ['b', 'strong', 'i', 'em', 'u', 's', 'code', 'pre', 'a', 'blockquote', 'br'], ALLOWED_ATTR: ['href', 'class'] };
+        const clean = html => (window.DOMPurify ? window.DOMPurify.sanitize(html, allowed) : esc(html));
+        box.innerHTML = out.parts.map(part => `<div class="tg-bubble">${out.html ? clean(part) : esc(part)}</div>`).join('')
+          + (out.buttons.length ? `<div class="tg-keys">${out.buttons.map(b => `<span class="tg-key">${b.kind === 'web' ? '▣ ' : '↗ '}${esc(b.label)}</span>`).join('')}</div>` : '')
+          + (inputFor(member) ? '' : '<p class="hint">Contoh. Tes atau jalankan node sebelumnya untuk melihat pesan aslinya.</p>');
+      } catch (e) {
+        if (document.body.contains(box)) box.innerHTML = `<p class="hint hint-warn">${esc(e.message)}</p>`;
+      }
+    }, 350);
+  }
+
+  function bindTelegram(box, member) {
+    const save = (changes, rerender = true, merge = '') => {
+      checkpoint(merge);
+      member.config = { ...(member.config || {}), ...changes };
+      markDirty();
+      refreshNodeCard(member);
+      if (rerender) renderParams(box, member); else previewTelegram(member);
+    };
+    box.querySelectorAll('input[name="tg-style"]').forEach(radio => { radio.onchange = () => save({ style: radio.value === 'auto' ? undefined : radio.value }); });
+    box.querySelectorAll('[data-tg-button]').forEach(el => {
+      const live = el.tagName === 'INPUT';
+      el[live ? 'oninput' : 'onchange'] = () => {
+        const list = clone(member.config.buttons || []);
+        const index = Number(el.dataset.tgButton);
+        list[index] = { ...list[index], [el.dataset.key]: el.value };
+        save({ buttons: list }, !live, live ? `tg-button-${member.id}-${index}-${el.dataset.key}` : '');
+      };
+    });
+    box.querySelector('[data-tg-button-add]')?.addEventListener('click', () => save({ buttons: [...(member.config.buttons || []), { label: 'Buka lengkap', kind: 'web' }] }));
+    box.querySelectorAll('[data-tg-button-remove]').forEach(b => {
+      b.onclick = () => save({ buttons: (member.config.buttons || []).filter((_, i) => i !== Number(b.dataset.tgButtonRemove)) });
+    });
+    box.querySelectorAll('[data-config], [data-flag]').forEach(el => el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', () => previewTelegram(member)));
+    previewTelegram(member);
   }
 
   /* ── Data table node ─────────────────────────────── */
@@ -1465,6 +1552,7 @@
       </div>` : ''}`;
     bindParams(box, member);
     if (kind === 'datatable') bindDatatable(box, member);
+    if (kind === 'telegram') bindTelegram(box, member);
   }
 
   function refreshNodeCard(member) {
@@ -1731,7 +1819,8 @@
     const active = !finished(run.status);
     const elapsed = run.started_at ? ` · ${formatSeconds(((run.completed_at || Date.now() / 1000) - run.started_at) * 1000)}` : '';
     const info = $('run-info');
-    info.textContent = `${RUN_STATUS[run.status] || run.status}${elapsed} · ${formatTokens(run.total_tokens || 0)} token`;
+    const from = sourceLabel(run);
+    info.textContent = `${RUN_STATUS[run.status] || run.status}${elapsed} · ${formatTokens(run.total_tokens || 0)} token${from ? ` · dari ${from}` : ''}`;
     info.dataset.status = run.status;
     info.classList.remove('hidden');
     $('cancel').classList.toggle('hidden', !active);
@@ -1751,6 +1840,42 @@
 
   function stopEvents() {
     if (S.events) { S.events.close(); S.events = null; }
+  }
+
+  function sourceLabel(run) {
+    const trigger = run.trigger || {};
+    if (trigger.source === 'telegram') return `Telegram${trigger.sender ? ` (${trigger.sender})` : ''}`;
+    if (['interval', 'daily', 'cron', 'once'].includes(trigger.source)) return 'jadwal';
+    return '';
+  }
+
+  function stopTeamEvents() {
+    if (S.teamEvents) { S.teamEvents.close(); S.teamEvents = null; }
+  }
+
+  /* Every run of the open flow shows on the canvas as it happens, also one a Telegram message or a schedule started. */
+  function watchTeam(teamId) {
+    stopTeamEvents();
+    if (!teamId) return;
+    const source = new EventSource(`/api/teams/${teamId}/events`);
+    S.teamEvents = source;
+    source.onmessage = event => {
+      const data = JSON.parse(event.data);
+      const run = data.run;
+      if (!run || S.team !== teamId || S.teamEvents !== source) return;
+      if (S.run && S.run.id === run.id) {
+        showRun(run);
+        if (data.type === 'run_finished' && S.tab === 'runs') loadRuns();
+        return;
+      }
+      if (S.run && (S.run.created_at || 0) > (run.created_at || 0)) return;
+      S.tests = {};
+      S.openResult = false;
+      showRun(run);
+      const from = sourceLabel(run);
+      toast(`Alur berjalan${from ? ` dari ${from}` : ''}. Ikuti di kanvas.`);
+      if (S.tab === 'runs') loadRuns();
+    };
   }
 
   function watchRun(run) {
@@ -1825,6 +1950,7 @@
     autoLayout();
     showNote(note);
     showPage('editor');
+    watchTeam(teamId);
     render();
     requestAnimationFrame(fitView);
     markDirty(Boolean(note) || !teamId);
@@ -1939,6 +2065,7 @@
     const saved = S.team
       ? await api(`/api/teams/${S.team}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       : await post('/api/teams', body);
+    if (S.team !== saved.id) watchTeam(saved.id);
     S.team = saved.id;
     store.set('wf:last', saved.id);
     S.teams = (await api('/api/teams')).teams;
@@ -2064,6 +2191,7 @@
 
   function showHome(tab = S.homeTab || 'flows') {
     stopEvents();
+    stopTeamEvents();
     if (S.ndv) closeNdv();
     showPage('home');
     S.homeTab = tab;

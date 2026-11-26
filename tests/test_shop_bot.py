@@ -67,7 +67,14 @@ def sent(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     async def no_typing(_chat: str, _action: str = "typing") -> None:
         return None
 
+    async def fake_rich(parts: list[str], chat_id: str = "", **options: Any) -> int:
+        # The node sends formatted parts; the plain message it was made from is what these tests read.
+        fallback = options.get("fallback")
+        messages.append((fallback[0] if fallback else "\n\n".join(parts), chat_id))
+        return 1
+
     monkeypatch.setattr(team_orchestrator, "send_telegram", fake_send)
+    monkeypatch.setattr(team_orchestrator, "send_rich", fake_rich)
     monkeypatch.setattr(team_orchestrator, "send_chat_action", no_typing)
     return messages
 

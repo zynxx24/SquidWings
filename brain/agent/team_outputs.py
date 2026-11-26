@@ -11,10 +11,12 @@ never include the text of the underlying exception.
 from __future__ import annotations
 
 import asyncio
+import html as html_text
 import importlib
 import importlib.util
 import ipaddress
 import json
+import re
 import socket
 import sqlite3
 from pathlib import Path
@@ -64,10 +66,14 @@ def _split_message(text: str) -> list[str]:
     return parts
 
 
-async def _post_message(client: httpx.AsyncClient, url: str, chat_id: str, text: str) -> None:
+class _ParseError(OutputError):
+    """Telegram could not read the HTML of a message."""
+
+
+async def _post_message(client: httpx.AsyncClient, url: str, chat_id: str, text: str, extra: dict[str, Any] | None = None) -> None:
     for attempt in range(2):
         try:
-            response = await client.post(url, json={"chat_id": chat_id, "text": text})
+            response = await client.post(url, json={"chat_id": chat_id, "text": text, **(extra or {})})
         except httpx.HTTPError as exc:
             raise OutputError(f"Tidak bisa menghubungi Telegram ({type(exc).__name__})") from None
         if response.status_code == 429 and attempt == 0:
@@ -80,25 +86,83 @@ async def _post_message(client: httpx.AsyncClient, url: str, chat_id: str, text:
                 reason = str(response.json().get("description") or "")
             except ValueError:
                 reason = ""
+            if response.status_code == 400 and "parse entities" in reason:
+                raise _ParseError(reason[:200])
             raise OutputError(f"Telegram menolak pesan ({response.status_code}): {reason[:200]}")
         return
 
 
-async def send_telegram(text: str, chat_id: str = "") -> int:
-    """Send a text to a chat. Returns the number of messages it took."""
+def _target(chat_id: str) -> tuple[str, str]:
     token = credentials.get("telegram_bot_token")
     target = chat_id or credentials.get("telegram_chat_id")
     if not token:
         raise OutputError("Bot token Telegram belum diisi. Isi di Tim agent > Kredensial, atau TELEGRAM_BOT_TOKEN di .env.")
     if not target:
         raise OutputError("Chat ID kosong. Isi di node ini, di Tim agent > Kredensial, atau TELEGRAM_CHAT_ID di .env.")
+    return f"https://api.telegram.org/bot{token}/sendMessage", target
+
+
+async def send_telegram(text: str, chat_id: str = "") -> int:
+    """Send a text to a chat. Returns the number of messages it took."""
+    url, target = _target(chat_id)
     parts = _split_message(text)
     if not parts:
         raise OutputError("Tidak ada isi untuk dikirim")
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
     async with httpx.AsyncClient(timeout=20) as client:
         for part in parts:
             await _post_message(client, url, target, part)
+    return len(parts)
+
+
+def keyboard(buttons: list[dict[str, str]], private: bool) -> dict[str, Any] | None:
+    """Telegram's inline keyboard, two buttons a row. A "web" button opens inside Telegram (a Mini App), which
+    Telegram allows only in a private chat; elsewhere it becomes an ordinary link."""
+    keys = []
+    for button in buttons:
+        label, url = button.get("label", "").strip()[:64], button.get("url", "")
+        if not label or not url.startswith(("https://", "http://", "tg://")):
+            continue
+        web = button.get("kind") == "web" and private and url.startswith("https://")
+        keys.append({"text": label, "web_app": {"url": url}} if web else {"text": label, "url": url})
+    if not keys:
+        return None
+    return {"inline_keyboard": [keys[i:i + 2] for i in range(0, len(keys), 2)]}
+
+
+async def send_rich(parts: list[str], chat_id: str = "", *, html: bool = True, buttons: list[dict[str, str]] | None = None,
+                    silent: bool = False, fallback: list[str] | None = None) -> int:
+    """Send prepared messages: HTML from ``telegram_format``, buttons under the last one, optionally without a sound.
+
+    When Telegram cannot read the HTML, ``fallback`` (plain text) goes instead, so a formatting slip never loses
+    the message.
+    """
+    url, target = _target(chat_id)
+    parts = [p for p in parts if p.strip()]
+    if not parts:
+        raise OutputError("Tidak ada isi untuk dikirim")
+    private = bool(re.fullmatch(r"\d{1,20}", target))
+    markup = keyboard(buttons or [], private)
+    base: dict[str, Any] = {"disable_notification": True} if silent else {}
+    async with httpx.AsyncClient(timeout=20) as client:
+        for index, part in enumerate(parts):
+            extra = dict(base)
+            if html:
+                extra.update(parse_mode="HTML", link_preview_options={"is_disabled": True})
+            if markup and index == len(parts) - 1:
+                extra["reply_markup"] = markup
+            try:
+                await _post_message(client, url, target, part, extra)
+            except _ParseError:
+                # Nothing sent yet: the plain version of the whole thing. Halfway: the rest without its tags.
+                rest = fallback if index == 0 and fallback else [html_text.unescape(re.sub(r"<[^>]+>", "", p)) for p in parts[index:]]
+                logger.info("[teams] Telegram could not read the formatted message; sent it as plain text")
+                for spare_index, spare in enumerate(rest):
+                    spare_extra = dict(base)
+                    if markup and spare_index == len(rest) - 1:
+                        spare_extra["reply_markup"] = markup
+                    for chunk in _split_message(spare):
+                        await _post_message(client, url, target, chunk, spare_extra)
+                return len(rest)
     return len(parts)
 
 

@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from brain.agent import session_stack
+from brain.agent import session_stack, telegram_format
 from brain.agent.orchestrator import AgentResponse, Orchestrator
 from brain.agent.team_chats import ChatLog, Limiter
 from brain.agent.team_flow import (
@@ -43,8 +43,10 @@ from brain.agent.team_outputs import (
     http_request,
     save_to_database,
     send_chat_action,
+    send_rich,
     send_telegram,
 )
+from brain.agent.team_views import PublicPages, ViewStore, subtitle_for
 from brain.config import credentials
 from brain.config.constants import ResponseStatus
 from brain.config.edition import STUDIO_NOTE, studio_enabled, studio_module
@@ -311,12 +313,15 @@ class TeamEventHub:
         self._history: dict[str, list[dict[str, Any]]] = {}
         self._subscribers: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
 
-    def publish(self, run_id: str, event: dict[str, Any]) -> None:
-        history = self._history.setdefault(run_id, [])
-        history.append(event)
-        del history[:-100]
+    def publish(self, run_id: str, event: dict[str, Any], keep: bool = True) -> None:
+        """``keep`` replays the event to whoever subscribes later; a flow's live channel only reaches who listens now."""
+        if keep:
+            history = self._history.setdefault(run_id, [])
+            history.append(event)
+            del history[:-100]
         for queue in tuple(self._subscribers.get(run_id, ())):
-            queue.put_nowait(event)
+            with contextlib.suppress(asyncio.QueueFull):
+                queue.put_nowait(event)
 
     def subscribe(self, run_id: str) -> tuple[asyncio.Queue[dict[str, Any]], list[dict[str, Any]]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=120)
@@ -1163,6 +1168,8 @@ class TeamOrchestrator:
         self.orchestrator = orchestrator
         self.store = store
         self.events = TeamEventHub()
+        # The pages Telegram buttons open, and the public address they get.
+        self.pages = PublicPages(ViewStore(store.directory / "views"))
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._lock = asyncio.Lock()
         self._scheduler: asyncio.Task[None] | None = None
@@ -1926,10 +1933,7 @@ class TeamOrchestrator:
             state["content"] = await http_request(member.config["method"], member.config["url"], body)
             state["note"] = f"{member.config['method']} berhasil"
         elif member.kind == "telegram":
-            # A run started from a Telegram message answers in that chat.
-            chat_id = str(member.config.get("chat_id") or run.trigger.get("chat_id") or "")
-            sent = await send_telegram(text, chat_id)
-            state["note"] = f"{sent} pesan terkirim"
+            state["note"] = await self._send_telegram_node(run, team, member, text)
         elif member.kind == "datatable":
             state["content"], state["note"] = await asyncio.to_thread(
                 self._datatable, member.config, self._template_values(run, team, text))
@@ -1964,6 +1968,49 @@ class TeamOrchestrator:
             raise ValueError(str(exc)) from None
         return {"content": state.get("content", ""), "note": state.get("note", ""), "branch": state.get("branch", ""),
                 "tokens": run.total_tokens}
+
+    async def _send_telegram_node(self, run: TeamRun, team: Team, member: TeamMember, text: str) -> str:
+        """Send a Telegram node's message: its own text or the input, made to read well, with its buttons.
+
+        A "web" button, or a message too long for Telegram, gets a page with the whole input that opens inside
+        Telegram. Returns the note for the node.
+        """
+        config = member.config
+        # A run started from a Telegram message answers in that chat.
+        chat_id = str(config.get("chat_id") or run.trigger.get("chat_id") or "")
+        values = self._template_values(run, team, text)
+        message = text
+        if config.get("text"):
+            message = render_template(str(config["text"]), values)
+            left = unfilled(message)
+            if left:
+                raise OutputError(f"{', '.join(left)} tidak ada di input node ini, jadi pesannya tidak dikirim.")
+        style = str(config.get("style") or "auto")
+        buttons = [dict(b) for b in config.get("buttons") or []]
+        wants_page = any(b.get("kind") == "web" for b in buttons)
+        summarize = style == "auto" and not config.get("no_summary")
+        composed = telegram_format.compose(message, style, summarize=summarize)
+        page_url = ""
+        page_note = ""
+        if wants_page or composed.cut:
+            title = render_template(str(config.get("page_title") or ""), values).strip() or member.name or team.name
+            try:
+                page_url = await self.pages.publish(title, subtitle_for(team.name), text if text.strip() else message)
+            except RuntimeError as exc:
+                if wants_page:
+                    raise OutputError(str(exc)) from None
+                page_note = " · halaman lengkap tidak dibuat"
+                composed = telegram_format.compose(message, style, summarize=False)
+        if composed.cut and page_url and not wants_page:
+            buttons.insert(0, {"label": "Buka lengkap", "kind": "web"})
+        ready = []
+        for button in buttons:
+            url = page_url if button.get("kind") == "web" else render_template(str(button.get("url") or ""), values)
+            if url:
+                ready.append({"label": render_template(str(button["label"]), values), "kind": str(button["kind"]), "url": url})
+        sent = await send_rich(composed.parts, chat_id, html=composed.html, buttons=ready,
+                               silent=bool(config.get("silent")), fallback=[message] if composed.html else None)
+        return f"{sent} pesan terkirim" + (" · dengan jendela web" if page_url else "") + page_note
 
     @staticmethod
     def _datatable(config: dict[str, Any], values: dict[str, str]) -> tuple[str, str]:
@@ -2342,6 +2389,20 @@ class TeamOrchestrator:
         if member_id:
             payload["member_id"] = member_id
         self.events.publish(run.id, payload)
+        # Whoever has this flow open sees every run, also one started by Telegram or a schedule.
+        self.events.publish(f"team:{run.team_id}", payload, keep=False)
+
+    async def stream_team(self, team_id: str, ping_seconds: float = 20.0) -> AsyncIterator[dict[str, Any]]:
+        """Every run event of one flow from now on, with a ping now and then so a quiet connection stays open."""
+        queue, _ = self.events.subscribe(f"team:{team_id}")
+        try:
+            while True:
+                try:
+                    yield await asyncio.wait_for(queue.get(), timeout=ping_seconds)
+                except TimeoutError:
+                    yield {"type": "ping"}
+        finally:
+            self.events.unsubscribe(f"team:{team_id}", queue)
 
     async def stream_events(self, run_id: str) -> AsyncIterator[dict[str, Any]]:
         queue, history = self.events.subscribe(run_id)
@@ -2631,6 +2692,7 @@ class TeamOrchestrator:
             await asyncio.gather(*list(self._customer_tasks), return_exceptions=True)
 
     async def close(self) -> None:
+        self.pages.stop()
         for loop_task in (self._scheduler, self._telegram):
             if loop_task:
                 loop_task.cancel()

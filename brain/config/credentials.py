@@ -44,6 +44,10 @@ FIELDS: tuple[Field, ...] = (
     Field("telegram_chat_id", "Chat ID", "telegram", False, "TELEGRAM_CHAT_ID",
           "Chat yang boleh memicu alur dan menerima pesan. Kirim pesan ke bot, lalu buka "
           "api.telegram.org/bot<token>/getUpdates untuk melihat id-nya.", r"-?\d{1,20}|@\w{1,64}", "123456789 atau @channel"),
+    Field("telegram_web_url", "Alamat web publik (boleh kosong)", "telegram", False, "TELEGRAM_WEB_URL",
+          "Untuk tombol yang membuka jendela web di Telegram. Kosong: dibuat otomatis lewat Cloudflare Tunnel yang hanya "
+          "membuka halaman hasil. Isi bila punya domain https sendiri yang menuju server ini.", r"https://\S{3,300}",
+          "https://domainmu.com"),
     Field("brave_search_api_key", "Brave Search API key", "search", True, "BRAVE_SEARCH_API_KEY",
           "Dari api-dashboard.search.brave.com. Ada paket gratis.", r"[A-Za-z0-9_-]{10,200}", "BSA..."),
     Field("tavily_api_key", "Tavily API key", "search", True, "TAVILY_API_KEY",

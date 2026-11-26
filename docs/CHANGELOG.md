@@ -1,5 +1,13 @@
 # Catatan perubahan
 
+## 2026-11-26 (sore): pesan Telegram rapi, jendela web di Telegram, run langsung terlihat di web
+
+- **Run dari Telegram dan jadwal tampil di web.** Editor yang sedang membuka sebuah alur sekarang ikut menampilkan setiap run alur itu, apa pun pemicunya: node menyala satu per satu, hasilnya muncul, dan baris status menyebut asalnya ("dari Telegram (nama pengirim)", "dari jadwal"). Sebelumnya kanvas hanya bergerak untuk run yang dimulai dari tombol Jalankan alur, jadi pesan Telegram terlihat seperti tidak berefek padahal sudah dijalankan dan dibalas.
+- **Pesan Telegram yang rapi.** Mode "Rapi otomatis" (bawaan) mengubah Markdown jadi huruf tebal, miring, daftar berpoin, kutipan, dan kode. Tabel dibuat muat di layar HP. Data JSON, misalnya hasil Tabel data, jadi daftar singkat dengan angka yang mudah dibaca (75.000). Kalau Telegram menolak format, pesan dikirim ulang sebagai teks biasa, jadi tidak ada yang hilang. Mode "Teks biasa" tetap ada.
+- **Isi pesan sendiri**: node Telegram punya kotak Isi pesan dengan `{{input}}`, `{{json.kolom}}`, `{{date}}` dan lainnya, plus pratinjau berbentuk gelembung chat di editor tanpa mengirim apa pun. Bisa juga dikirim tanpa bunyi notifikasi.
+- **Tombol dan jendela web.** Tombol "Buka jendela web" membuka isi lengkap sebagai halaman di dalam Telegram: tabel untuk data, teks rapi untuk jawaban, mengikuti tema terang atau gelap Telegram. Tombol "Tautan" membuka alamat apa pun (boleh pakai `{{json.kode}}`). Pesan yang terlalu panjang otomatis dikirim sebagai ringkasan dengan tombol "Buka lengkap".
+- **Alamat publik untuk jendela web**: isi "Alamat web publik" di Kredensial > Telegram bila punya domain sendiri. Kalau kosong, dipakai tunnel web server (`--tunnel`), atau dibuat otomatis lewat Cloudflare Tunnel milik server kecil yang hanya berisi halaman hasil, jadi aplikasi lainnya tidak ikut terbuka ke internet. Halaman memakai tautan acak dan dihapus setelah 60 hari.
+
 ## 2026-11-26: Tim agent dirombak seperti n8n
 
 - **Yang tersambung itulah yang jalan.** Tidak ada lagi Lead dan Reviewer tersembunyi atau garis putus-putus otomatis. Pemicu menjalankan node yang ditarik garis darinya, tiap node menerima isi dari garis yang masuk, dan node yang tidak tersambung tidak dijalankan (tampil pudar di kanvas). Hasil akhir adalah output langkah terakhir.

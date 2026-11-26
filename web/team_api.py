@@ -10,16 +10,19 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from brain.agent.team_flow import to_flow
+from brain.agent import telegram_format
+from brain.agent.team_flow import normalize_node_config, render_template, to_flow
 from brain.agent.team_orchestrator import MAX_TEAM_MEMBERS, team_templates
 from brain.agent.team_outputs import OutputError, check_database, database_options, send_telegram
 from brain.config import credentials
 from web.router_api import admin
 
 router = APIRouter(prefix="/api/teams", tags=["AI teams"])
+# The pages Telegram buttons open, also on the web server itself for an own domain or the --tunnel address.
+pages_router = APIRouter(tags=["AI teams"])
 
 
 class MemberInput(BaseModel):
@@ -97,7 +100,8 @@ async def integrations(request: Request) -> dict[str, Any]:
     """What a flow can deliver to. Says what is set up, never the secrets themselves."""
     service(request)
     return {
-        "telegram": {"ready": bool(credentials.get("telegram_bot_token")), "default_chat": bool(credentials.get("telegram_chat_id"))},
+        "telegram": {"ready": bool(credentials.get("telegram_bot_token")), "default_chat": bool(credentials.get("telegram_chat_id")),
+                     "pages": service(request).pages.status()},
         "search": {"brave": bool(credentials.get("brave_search_api_key")), "searxng": bool(credentials.get("searxng_url"))},
         "databases": database_options(),
     }
@@ -217,6 +221,65 @@ async def test_telegram(payload: TelegramTest, request: Request) -> dict[str, bo
     except OutputError as exc:
         raise HTTPException(422, str(exc)) from exc
     return {"sent": True}
+
+
+class TelegramPreview(BaseModel):
+    config: dict[str, Any] = Field(default_factory=dict)
+    input: str = Field(default="", max_length=1_000_000)
+    team_name: str = Field(default="", max_length=100)
+
+
+@router.post("/telegram/preview")
+async def telegram_preview(payload: TelegramPreview) -> dict[str, Any]:
+    """How a Telegram node's message will look, without sending it: the formatted parts and the buttons."""
+    try:
+        config = normalize_node_config("telegram", payload.config, ())
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    from datetime import datetime
+
+    from brain.agent.team_flow import clock_values, json_values
+
+    # The same names a run fills, so the preview shows the date and the fields as they will be.
+    values = {**json_values(payload.input), "input": payload.input, "task": payload.input, "team": payload.team_name,
+              **clock_values(datetime.now())}
+    message = render_template(str(config.get("text") or ""), values) if config.get("text") else payload.input
+    style = str(config.get("style") or "auto")
+    composed = telegram_format.compose(message, style, summarize=style == "auto" and not config.get("no_summary"))
+    buttons = [{"label": render_template(b["label"], values), "kind": b["kind"]} for b in config.get("buttons") or []]
+    if composed.cut and not any(b["kind"] == "web" for b in buttons):
+        buttons.insert(0, {"label": "Buka lengkap", "kind": "web"})
+    return {"parts": composed.parts, "html": composed.html, "cut": composed.cut, "buttons": buttons}
+
+
+@router.get("/{team_id}/events")
+async def team_events(team_id: str, request: Request) -> StreamingResponse:
+    """Every run of one flow as it happens, whatever started it: the web, Telegram, or a schedule."""
+    manager = service(request)
+    if manager.store.get_team(team_id) is None:
+        raise HTTPException(404, "Team not found")
+
+    async def generate() -> AsyncIterator[str]:
+        yield ": ok\n\n"
+        async for event in manager.stream_team(team_id):
+            if await request.is_disconnected():
+                break
+            if event.get("type") == "ping":
+                yield ": ping\n\n"
+                continue
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache", "X-Accel-Buffering": "no",
+    })
+
+
+@pages_router.get("/v/{token}", response_class=HTMLResponse)
+async def telegram_page(token: str, request: Request) -> HTMLResponse:
+    body = service(request).pages.store.render(token)
+    if body is None:
+        return HTMLResponse("<!doctype html><meta charset=utf-8><p>Halaman ini tidak ada atau sudah kedaluwarsa.</p>", status_code=404)
+    return HTMLResponse(body, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer"})
 
 
 class NodeTest(BaseModel):

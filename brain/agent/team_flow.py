@@ -19,6 +19,9 @@ NODE_KINDS = ("agent", "delay", "gate", "switch", "merge", "set", "http", "teleg
 # "flow": runs exactly along the connections drawn, like n8n. "team": the older lead and reviewer model.
 FLOW_STYLES = ("flow", "team")
 TRIGGER_ID = "__trigger"
+TELEGRAM_STYLES = ("auto", "plain")
+# "web" opens the full content in Telegram's in-app window, "link" opens any address.
+TELEGRAM_BUTTONS = ("web", "link")
 DATATABLE_OPERATIONS = ("get", "insert", "update", "upsert", "delete")
 DATATABLE_OPS = ("=", "!=", ">", ">=", "<", "<=", "contains", "startswith")
 BRANCHING_KINDS = ("gate", "switch")
@@ -358,10 +361,7 @@ def normalize_node_config(kind: str, config: dict[str, Any] | None, database_ids
             raise ValueError("Alamat HTTP harus diawali http:// atau https://.")
         return {"method": method, "url": url, "body": str(config.get("body") or "")[:MAX_TEMPLATE_CHARS]}
     if kind == "telegram":
-        chat_id = str(config.get("chat_id") or "").strip()
-        if chat_id and not _CHAT_ID_RE.fullmatch(chat_id):
-            raise ValueError("Chat ID Telegram harus angka atau @nama_channel.")
-        return {"chat_id": chat_id}
+        return _telegram_config(config)
     if kind == "database":
         database = str(config.get("database") or "sqlite")
         if database not in database_ids:
@@ -373,6 +373,51 @@ def normalize_node_config(kind: str, config: dict[str, Any] | None, database_ids
     if kind == "datatable":
         return _datatable_config(config)
     return {}
+
+
+def _telegram_config(config: dict[str, Any]) -> dict[str, Any]:
+    """A Telegram node: where to, what text, how it looks, and buttons. Only what differs from the default is kept."""
+    chat_id = str(config.get("chat_id") or "").strip()
+    if chat_id and not _CHAT_ID_RE.fullmatch(chat_id):
+        raise ValueError("Chat ID Telegram harus angka atau @nama_channel.")
+    kept: dict[str, Any] = {"chat_id": chat_id}
+    style = str(config.get("style") or "auto")
+    if style not in TELEGRAM_STYLES:
+        raise ValueError("Tampilan pesan hanya rapi otomatis atau teks biasa.")
+    if style != "auto":
+        kept["style"] = style
+    text = str(config.get("text") or "").strip()
+    if text:
+        kept["text"] = text[:MAX_TEMPLATE_CHARS]
+    buttons = []
+    for item in config.get("buttons") or []:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or "").strip()
+        kind = str(item.get("kind") or "web")
+        url = str(item.get("url") or "").strip()
+        if not label and not url:
+            continue
+        if not label:
+            raise ValueError("Tiap tombol Telegram butuh tulisan.")
+        if kind not in TELEGRAM_BUTTONS:
+            raise ValueError(f"Jenis tombol tidak dikenal: {kind}.")
+        if kind == "link" and not re.match(r"(https?://|tg://|\{\{)", url):
+            raise ValueError(f"Tombol \"{label}\": tautan harus diawali https:// atau http://.")
+        button = {"label": label[:64], "kind": kind}
+        if kind == "link":
+            button["url"] = url[:2000]
+        buttons.append(button)
+    if buttons:
+        kept["buttons"] = buttons
+    title = str(config.get("page_title") or "").strip()
+    if title:
+        kept["page_title"] = title[:120]
+    if config.get("silent"):
+        kept["silent"] = True
+    if config.get("no_summary"):
+        kept["no_summary"] = True
+    return kept
 
 
 def _datatable_column(value: Any, what: str) -> str:

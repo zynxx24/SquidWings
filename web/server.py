@@ -62,6 +62,7 @@ from brain.utils.workspace_context import (
 from tools.code_intel import quality_tools
 from web import live_turns
 from web.data_api import router as data_router
+from web.team_api import pages_router as team_pages_router
 from web.team_api import router as team_router
 
 logger = get_logger(__name__)
@@ -151,6 +152,7 @@ app.state.team_orchestrator = None
 _TEAMS_ENABLED = get_settings().teams_enabled
 if _TEAMS_ENABLED:
     app.include_router(team_router)
+    app.include_router(team_pages_router)
     app.include_router(data_router)
 
 # Trading: the MT5 panel, the MT4 EA bridge and the quant API. They are mounted only when the
