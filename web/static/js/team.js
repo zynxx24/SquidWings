@@ -73,7 +73,7 @@
     { mode: 'daily', label: 'Jam tertentu', desc: 'Satu atau beberapa jam setiap hari yang dipilih.' },
     { mode: 'cron', label: 'Cron', desc: 'Pola jadwal lengkap, misalnya 0 7 * * 1-5.' },
     { mode: 'once', label: 'Sekali', desc: 'Pada tanggal dan jam tertentu.' },
-    { mode: 'telegram', label: 'Pesan Telegram', desc: 'Saat ada pesan ke bot: dari kamu saja, atau dari pelanggan.' },
+    { mode: 'telegram', label: 'Pesan Telegram', desc: 'Ngobrol lewat bot: hanya kamu, atau siapa saja.' },
   ];
   const NODE_DEFAULTS = {
     agent: { name: 'AI Agent', role: 'Asisten', config: {} },
@@ -186,7 +186,7 @@
       case 'daily': return `Jam ${(schedule.times || [schedule.time || '--:--']).join(', ')}`;
       case 'cron': return `Cron ${schedule.cron || '?'}`;
       case 'once': return `Sekali, ${(schedule.at || '').replace('T', ' ')}`;
-      case 'telegram': return `${schedule.audience === 'public' ? 'Pesan pelanggan' : 'Pesan Telegram'}${schedule.keyword ? ` ${schedule.keyword}` : ''}`;
+      case 'telegram': return `${schedule.audience === 'public' ? 'Pesan publik' : 'Pesan Telegram'}${schedule.keyword ? ` ${schedule.keyword}` : ''}`;
       default: return 'Saat Jalankan alur ditekan';
     }
   }
@@ -1520,7 +1520,7 @@
         ${grant.access ? `<input data-grant-hide value="${esc((grant.hide || []).join(', '))}" placeholder="Kolom yang disembunyikan, pisahkan dengan koma" aria-label="Kolom yang disembunyikan dari ${esc(row.label)}" maxlength="400">` : ''}
       </div>`;
     }).join('')}</div>
-      <p class="hint">Agent hanya menyentuh sumber yang diizinkan di sini, dan bisa mengikuti relasi antar tabel. Pada bot pelanggan, hak ubah dan hapus tidak pernah berlaku, dan kolom berawalan <code>_</code> selalu tersembunyi.</p>`;
+      <p class="hint">Agent hanya menyentuh sumber yang diizinkan di sini, dan bisa mengikuti relasi antar tabel. Untuk pengirim lain di bot publik, hak ubah dan hapus tidak pernah berlaku, dan kolom berawalan <code>_</code> selalu tersembunyi.</p>`;
   }
 
   function renderParams(box, member) {
@@ -1538,7 +1538,7 @@
         <details class="field more"><summary>Opsi lanjutan</summary>
           <label class="check"><input type="checkbox" data-flag="report" ${config.report ? 'checked' : ''}>Tulis sebagai laporan dengan bagian Hasil, Bukti, dan Belum pasti</label>
           <label class="check"><input type="checkbox" data-flag="direct" ${config.direct ? 'checked' : ''}>Jawab seperti chat singkat untuk orang (cocok untuk bot)</label>
-          ${publicBot ? `<label class="check"><input type="checkbox" data-flag="notify_owner" ${config.notify_owner ? 'checked' : ''}>Boleh mengabari saya lewat Telegram bila pelanggan butuh keputusan pemilik</label>` : ''}
+          ${publicBot ? `<label class="check"><input type="checkbox" data-flag="notify_owner" ${config.notify_owner ? 'checked' : ''}>Boleh mengabari saya lewat Telegram bila pengirim butuh keputusan pemilik</label>` : ''}
         </details>`;
     } else if (kind === 'datatable') body = datatableFields(member);
     else body = kindFields(member);
@@ -1698,12 +1698,12 @@
         <div class="field"><span>Siapa yang boleh menulis ke bot</span>
           <div class="seg-choice">
             <label><input type="radio" name="tg-audience" value="owner" ${audience === 'owner' ? 'checked' : ''}><span>Hanya saya</span></label>
-            <label><input type="radio" name="tg-audience" value="public" ${audience === 'public' ? 'checked' : ''}><span>Pelanggan (publik)</span></label>
+            <label><input type="radio" name="tg-audience" value="public" ${audience === 'public' ? 'checked' : ''}><span>Siapa saja (publik)</span></label>
           </div></div>
         <label class="field"><span>Kata pemicu (kosongkan untuk semua pesan)</span><input id="schedule-keyword" value="${esc(schedule.keyword || '')}" placeholder="${audience === 'public' ? '' : '/jadwal'}" maxlength="33"></label>
         ${audience === 'public' ? `
           <div class="trigger-grid two">
-            <label class="field"><span>Riwayat percakapan (giliran per pelanggan)</span><input id="schedule-history" type="number" min="0" max="20" value="${esc(schedule.history ?? 6)}"></label>
+            <label class="field"><span>Ingatan obrolan (giliran terakhir per chat)</span><input id="schedule-history" type="number" min="0" max="20" value="${esc(schedule.history ?? 6)}"></label>
             <label class="field"><span>Batas balasan otomatis per hari</span><input id="schedule-cap" type="number" min="1" max="5000" value="${esc(schedule.daily_cap ?? 300)}"></label>
           </div>
           <ul class="ready-list">
@@ -1711,8 +1711,9 @@
             <li class="${telegram.default_chat ? 'ok' : 'no'}">Chat ID kamu ${telegram.default_chat ? 'terisi, untuk kabar dan peringatan dari bot' : 'belum diisi, bot tidak bisa memberi kabar ke kamu'}</li>
             <li class="${(S.dataSources || []).length ? 'ok' : 'no'}">${(S.dataSources || []).length ? `${S.dataSources.length} sumber data siap dipakai agent` : 'Belum ada sumber data (katalog, pesanan)'}</li>
           </ul>
-          <p class="hint">Hanya chat pribadi yang dilayani, dan tiap pelanggan dibatasi 6 pesan per menit. Agent yang menjawab hanya boleh membaca dan menambah baris pada data yang kamu izinkan di node-nya, tidak mengubah atau menghapus, dan hanya memakai alat yang aman. Gangguan dan permintaan yang butuh keputusanmu dikabarkan ke chat Telegram milikmu.</p>` : `
-          <p class="hint">Hanya pesan dari chat di Kredensial yang menjalankan alur. Isi pesan menjadi input, dan node Telegram tanpa Chat ID membalas ke chat itu.</p>`}` : ''}
+          <p class="hint">Orang lain hanya dilayani di chat pribadi, maksimal 6 pesan per menit. Agent yang menjawab mereka hanya boleh membaca dan menambah baris pada data yang kamu izinkan di node-nya, dan hanya memakai alat yang aman. Gangguan dan permintaan yang butuh keputusanmu dikabarkan ke chat Telegram milikmu. Kalau kamu sendiri yang chat ke bot ini, kamu tetap dilayani sebagai pemilik: semua alat dan data, tanpa batas tadi.</p>` : `
+          <label class="field"><span>Ingatan obrolan (giliran terakhir yang diingat)</span><input id="schedule-history" type="number" min="0" max="20" value="${esc(schedule.history ?? 6)}"></label>
+          <p class="hint">Seperti chat biasa: hanya chat di Kredensial yang dilayani, agent memakai semua alat, pesan berikutnya menunggu giliran, dan node Telegram tanpa Chat ID membalas ke chat itu. Isi 0 kalau tiap pesan berdiri sendiri, misalnya perintah /catat.</p>`}` : ''}
       ${mode !== 'off' ? `<label class="field"><span>${mode === 'telegram' ? 'Konteks tambahan (boleh kosong)' : 'Input yang dikirim tiap kali berjalan'}</span><textarea id="schedule-task" rows="4" maxlength="4000" placeholder="Misalnya: apa yang penting hari ini di Jakarta?">${esc(schedule.task || '')}</textarea></label>
         <p class="hint">Berjalan sendiri selama server menyala dan alur <b>Aktif</b> (saklar di kanan atas). Tekan Simpan agar berlaku.</p>` : '<p class="hint">Isi kotak input di bawah kanvas, lalu tekan Jalankan alur.</p>'}
       <p class="hint">Node yang ditarik garis dari Pemicu adalah langkah pertama. Yang tidak tersambung tidak dijalankan.</p>`;
@@ -1735,9 +1736,9 @@
       if (S.schedule.times) S.schedule.time = S.schedule.times[0];
       if (S.schedule.mode === 'telegram') {
         const picked = box.querySelector('input[name="tg-audience"]:checked');
+        S.schedule.history = value('schedule-history') !== undefined ? Number(value('schedule-history')) : (before.history ?? 6);
         if ((picked ? picked.value : before.audience) === 'public') {
           S.schedule.audience = 'public';
-          S.schedule.history = value('schedule-history') !== undefined ? Number(value('schedule-history')) : (before.history ?? 6);
           S.schedule.daily_cap = value('schedule-cap') !== undefined ? Number(value('schedule-cap')) : (before.daily_cap ?? 300);
         }
       }

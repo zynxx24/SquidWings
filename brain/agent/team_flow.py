@@ -113,12 +113,13 @@ def normalize_schedule(schedule: dict[str, Any] | None) -> dict[str, Any]:
             raise ValueError("Kata pemicu Telegram satu kata saja, misalnya /jadwal.")
         audience = str(schedule.get("audience") or "owner")
         if audience not in AUDIENCES:
-            raise ValueError("Penerima pesan Telegram hanya pemilik atau pelanggan (publik).")
+            raise ValueError("Penerima pesan Telegram hanya kamu atau siapa saja (publik).")
+        # Every Telegram flow is a chat: it remembers the last turns of each chat, the owner's too.
+        history = _bounded(schedule.get("history"), DEFAULT_HISTORY_TURNS, 0, MAX_HISTORY_TURNS, "Ingatan obrolan")
         if audience == "owner":
-            return {"mode": mode, "keyword": keyword, "task": task}
+            return {"mode": mode, "keyword": keyword, "task": task, "history": history}
         return {
-            "mode": mode, "keyword": keyword, "task": task, "audience": audience,
-            "history": _bounded(schedule.get("history"), DEFAULT_HISTORY_TURNS, 0, MAX_HISTORY_TURNS, "Riwayat percakapan"),
+            "mode": mode, "keyword": keyword, "task": task, "audience": audience, "history": history,
             "daily_cap": _bounded(schedule.get("daily_cap"), DEFAULT_DAILY_CAP, 1, MAX_DAILY_CAP, "Batas balasan per hari"),
         }
     if not task:
@@ -621,12 +622,8 @@ def clock_values(now: datetime) -> dict[str, str]:
     }
 
 
-def telegram_task(schedule: dict[str, Any], text: str, history: str = "", sender: str = "") -> str | None:
-    """The task a Telegram message starts, or None if it is not for this team.
-
-    For a customer chat, ``sender`` says who writes and ``history`` is what was said before, so the answer
-    can follow the conversation.
-    """
+def telegram_message(schedule: dict[str, Any], text: str) -> str | None:
+    """The message a flow works on (the trigger word taken off), or None if it is not for this flow."""
     keyword = str(schedule.get("keyword") or "")
     message = text.strip()
     if keyword:
@@ -635,16 +632,26 @@ def telegram_task(schedule: dict[str, Any], text: str, history: str = "", sender
         if first.split("@")[0].lower() != keyword.lower():
             return None
         message = rest.strip() or first
-    if not message:
+    return message or None
+
+
+def telegram_task(schedule: dict[str, Any], text: str, history: str = "", sender: str = "") -> str | None:
+    """The task a Telegram message starts, or None if it is not for this team.
+
+    ``history`` is what was said before in this chat, so the answer follows the conversation. ``sender`` is set for
+    someone who is not the owner: who writes, so the agent knows it is a stranger.
+    """
+    message = telegram_message(schedule, text)
+    if message is None:
         return None
     context = str(schedule.get("task") or "")
     if sender or history:
         parts = [context] if context else []
         if sender:
-            parts.append(f"[PELANGGAN]\n{sender}")
+            parts.append(f"[PENGIRIM]\n{sender}")
         if history:
             parts.append(f"[PERCAKAPAN SEBELUMNYA]\n{history}")
-        parts.append(f"[PESAN BARU DARI PELANGGAN]\n{message}")
+        parts.append(f"[PESAN BARU]\n{message}")
         return "\n\n".join(parts)
     return f"{context}\n\nPesan: {message}" if context else message
 

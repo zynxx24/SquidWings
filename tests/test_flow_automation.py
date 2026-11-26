@@ -129,16 +129,42 @@ async def test_only_the_allowed_chat_can_start_a_flow(tmp_path: Path, settings: 
         return batches.pop(0)
 
     monkeypatch.setattr(team_orchestrator, "fetch_telegram_updates", fake_fetch)
-    started = await manager.poll_telegram(wait=0)
+    taken = await manager.poll_telegram(wait=0)
     assert offsets == [-1, 10]  # the message waiting since before startup is dropped
-    assert len(started) == 1
-    await asyncio.wait_for(manager.run_tasks[started[0]], timeout=5)
-    run = manager.store.get_run(started[0])
-    assert run is not None and run.task == "cek jadwal"
-    assert run.trigger == {"source": "telegram", "chat_id": "42"}
+    assert taken == [team.id]
+    await asyncio.wait_for(manager.drain_customers(), timeout=5)
+    [run] = manager.store.list_runs(team.id)
+    assert run.task == "cek jadwal"
+    assert run.trigger == {"source": "telegram", "chat_id": "42", "sender": "pengirim", "text": "cek jadwal"}
     assert sent == [("balasan", "42")]
     assert manager._telegram_offset == 12
-    assert team.id == run.team_id
+
+
+async def test_the_owner_chats_with_a_flow_like_any_chat(tmp_path: Path, settings: Any, sent: list[Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Earlier turns come back, a second message waits for the first instead of being refused, and the agent
+    that answers is told it is chatting with the owner."""
+    manager, orchestrator = make(tmp_path, {"-a-": "Jakarta cerah, 31 derajat"})
+    team = manager.create_team("chat", "", [agent("a"), node("balas", "telegram", {}, "a")], None,
+                               schedule={"mode": "telegram"}, style="flow", starts=["a"])
+    batches = [[], [
+        {"update_id": 1, "message": {"chat": {"id": 42, "type": "private"}, "text": "cuaca jakarta?"}},
+        {"update_id": 2, "message": {"chat": {"id": 42, "type": "private"}, "text": "kalau besok?"}},
+    ]]
+
+    async def fake_fetch(offset: int | None, wait: int = 25) -> list[dict[str, Any]]:
+        return batches.pop(0) if batches else []
+
+    monkeypatch.setattr(team_orchestrator, "fetch_telegram_updates", fake_fetch)
+    assert await manager.poll_telegram(wait=0) == [team.id, team.id]   # learns where to start, then reads both
+    await asyncio.wait_for(manager.drain_customers(), timeout=5)
+    runs = sorted(manager.store.list_runs(team.id), key=lambda r: r.created_at)
+    assert [r.status for r in runs] == ["completed", "completed"]
+    assert sent == [("Jakarta cerah, 31 derajat", "42")] * 2
+    second = runs[1].task
+    assert "Pemilik: cuaca jakarta?" in second and "Asisten: Jakarta cerah, 31 derajat" in second
+    assert second.endswith("[PESAN BARU]\nkalau besok?") and "[PENGIRIM]" not in second
+    assert runs[1].trigger["text"] == "kalau besok?"
+    assert all("with the owner of this app" in call["user_input"] for call in orchestrator.calls)
 
 
 async def test_telegram_trigger_is_off_without_an_allowed_chat(tmp_path: Path, settings: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -302,7 +328,7 @@ async def test_http_node_passes_the_reply_on(tmp_path: Path, settings: Any, monk
 # --- templates -----------------------------------------------------------
 
 
-@pytest.mark.parametrize("key", ["reminder", "telegram-bot"])
+@pytest.mark.parametrize("key", ["reminder", "telegram-bot", "telegram-chat"])
 def test_new_templates_are_valid(tmp_path: Path, settings: Any, key: str) -> None:
     manager, _ = make(tmp_path)
     template = next(t for t in team_templates(["m"]) if t["key"] == key)

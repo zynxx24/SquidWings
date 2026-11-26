@@ -1,5 +1,14 @@
 # Catatan perubahan
 
+## 2026-11-26 (malam): Telegram jadi chat biasa, bukan cuma bot toko
+
+- **Chatmu ke bot selalu dilayani sebagai pemilik.** Pesan dari chat di Kredensial tidak lagi diperlakukan sebagai pelanggan, juga saat menulis ke alur publik: agent memakai semua alat dan data, tanpa batas pesan per menit atau per hari, dan tanpa aturan untuk orang asing.
+- **Ingat obrolan.** Alur Telegram "Hanya saya" sekarang juga mengingat giliran terakhir tiap chat (bawaan 6, isi 0 untuk perintah yang berdiri sendiri), jadi "kalau besok?" nyambung dengan pertanyaan sebelumnya.
+- **Pesan berikutnya antre, tidak ditolak.** Pesan yang datang saat jawaban sebelumnya belum selesai menunggu gilirannya, bukan dibalas "masih berjalan". Kalau alur gagal, alasannya dikirim ke chatmu.
+- **Agent yang membalas tahu ia sedang chat** denganmu: jawaban mengikuti percakapan, panjangnya secukupnya, Markdown dirapikan untuk Telegram. Alur tanpa node Telegram tetap membalas dengan hasil akhirnya.
+- Template baru **Ngobrol lewat Telegram**: Pemicu Telegram, satu Asisten dengan semua alat, lalu balas di chat yang sama.
+- Pilihan penerima sekarang "Hanya saya" dan "Siapa saja (publik)"; penanda untuk agent jadi netral ([PENGIRIM], [PESAN BARU]), tidak lagi menganggap setiap pengirim pelanggan toko.
+
 ## 2026-11-26 (sore): pesan Telegram rapi, jendela web di Telegram, run langsung terlihat di web
 
 - **Run dari Telegram dan jadwal tampil di web.** Editor yang sedang membuka sebuah alur sekarang ikut menampilkan setiap run alur itu, apa pun pemicunya: node menyala satu per satu, hasilnya muncul, dan baris status menyebut asalnya ("dari Telegram (nama pengirim)", "dari jadwal"). Sebelumnya kanvas hanya bergerak untuk run yang dimulai dari tombol Jalankan alur, jadi pesan Telegram terlihat seperti tidak berefek padahal sudah dijalankan dan dibalas.

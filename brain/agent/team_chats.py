@@ -1,4 +1,4 @@
-"""Customer chats on Telegram: how often someone may write, what was said before, and the day's budget.
+"""Telegram chats: how often a stranger may write, what was said before, and the day's budget.
 
 A bot that answers the public is open to anyone who finds its name, so each chat gets a small allowance per minute
 and the bot a cap per day. Both are plain counters in memory: they reset when the server restarts, which only ever
