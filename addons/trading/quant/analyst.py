@@ -301,7 +301,7 @@ def calibration(closed: list[dict[str, Any]]) -> dict[str, Any]:
     if not scored:
         return {"plans": 0, "brier": None, "bands": [], "verdict": "belum ada rencana selesai dengan confidence"}
     brier = sum((c - hit) ** 2 for c, hit in scored) / len(scored)
-    bands = []
+    bands: list[dict[str, Any]] = []
     for lo, hi, label in CONFIDENCE_BINS:
         inside = [(c, hit) for c, hit in scored if lo <= c < hi]
         if inside:

@@ -3,7 +3,8 @@
 ``sources.json`` (next to this file) lists skill repositories. At start-up the
 missing ones are cloned into ``skills/.sources/<owner>__<repo>`` (shallow,
 and sparse when the entry lists ``paths``, so a 100 MB repo costs a few MB), and
-once a day every clone is fast-forwarded to its newest commit. The folder is
+every 12 hours (``UPDATE_EVERY_HOURS``, or ``SKILL_SOURCES_UPDATE_HOURS``), when online, every clone is
+fast-forwarded to its newest commit. The folder is
 git-ignored: the skills are fetched, never committed here.
 
 A source decides which of its skills matter:
@@ -99,10 +100,14 @@ def enabled() -> bool:
 def manifest(path: Path | None = None) -> dict[str, Any]:
     path = path or MANIFEST
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         logger.warning(f"[skills] cannot read {path.name}: {exc}")
         return {}
+    if not isinstance(data, dict):
+        logger.warning(f"[skills] {path.name} is not a JSON object")
+        return {}
+    return data
 
 
 def sources(path: Path | None = None) -> list[Source]:
@@ -195,7 +200,9 @@ def sync(update: bool = False, path: Path | None = None) -> list[dict[str, str]]
 
 
 def _due_for_update(now: float) -> bool:
-    hours = float(os.getenv("SKILL_SOURCES_UPDATE_HOURS", "24") or 0)
+    from brain.utils import online
+
+    hours = online.every_hours("SKILL_SOURCES_UPDATE_HOURS")
     if hours <= 0:
         return False
     state: dict[str, Any] = {}
@@ -230,7 +237,7 @@ def start_background() -> bool:
     """Keep GitHub skills in step, in a daemon thread started once per process.
 
     First pass: clone what is missing, pull if a day has passed, link Claude Code. Then every
-    ten minutes: a repo newly added to sources.json is cloned, and the daily pull happens on
+    ten minutes: a repo newly added to sources.json is cloned, and the 12-hourly pull happens on
     time, without a restart. False when disabled, under tests, or already started.
     """
     global _started_once
@@ -242,9 +249,16 @@ def start_background() -> bool:
         _started_once = True
 
     def worker() -> None:
+        global _linked_once
+        from brain.utils import online
+
         while True:
             try:
-                if _missing() or _due_for_update(time.time()) or not _linked_once:
+                if not _linked_once and not online.is_online():
+                    # Offline at start: link what is already here, pull once the network is back.
+                    link_claude_code()
+                    _linked_once = True
+                elif (_missing() or _due_for_update(time.time()) or not _linked_once) and online.is_online():
                     run_startup()
             except Exception as exc:  # noqa: BLE001 - skills from GitHub must never stop the app
                 logger.warning(f"[skills] GitHub skill sync failed: {exc}")
@@ -306,7 +320,7 @@ def _skill_files(source: Source) -> list[Path]:
     return sorted(found)
 
 
-def _build(path: Path, source: Source, header: dict[str, Any] | None):
+def _build(path: Path, source: Source, header: dict[str, Any] | None) -> Any:
     """A Skill from an upstream SKILL.md. ``header`` (from the manifest) makes it active; None makes it stored.
 
     An active skill with an adapter in skills/adapters/ carries our adjustment in front of (or
@@ -392,15 +406,16 @@ def _catalog() -> tuple[dict[str, Any], dict[str, Any]]:
         # Upstream files not named SKILL.md (graphify's skill.md) are read where the manifest says.
         extra = [target for target, header in wanted.items() if header.get("file") and target.is_file()]
         for path in [*_skill_files(source), *extra]:
-            header = wanted.pop(path.resolve(), None)
+            key = path.resolve()
+            found = wanted.pop(key) if key in wanted else None
             try:
-                skill = _build(path, source, header)
+                skill = _build(path, source, found)
             except (OSError, UnicodeDecodeError) as exc:
                 logger.warning(f"[skills] cannot read {path}: {exc}")
                 continue
             if not skill.name or skill.name == "template-skill":
                 continue
-            bucket = active if header else stored
+            bucket = active if found else stored
             if skill.name in active or skill.name in stored:
                 logger.debug(f"[skills] duplicate skill name {skill.name} in {source.repo}; first one kept")
                 continue
@@ -430,7 +445,9 @@ def reload() -> None:
 
     adapters.reload()
 
-    skills_module.load_all.cache_clear()
+    clear = getattr(skills_module.load_all, "cache_clear", None)
+    if clear is not None:
+        clear()
 
 
 def search_stored(query: str, limit: int = 8) -> list[tuple[str, str]]:
@@ -538,9 +555,9 @@ def link_claude_code() -> dict[str, str]:
                 wanted[name] = (skill, upstream)
 
     done: dict[str, str] = {}
-    for name, (skill, upstream) in wanted.items():
+    for name, (chosen, front) in wanted.items():
         try:
-            done[name] = _link_one(skill, target, upstream)
+            done[name] = _link_one(chosen, target, front)
         except OSError as exc:
             done[name] = f"failed: {exc}"
     # Remove our own links for skills that are no longer wanted (moved to storage, or renamed).

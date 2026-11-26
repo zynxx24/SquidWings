@@ -1,1 +1,1 @@
-Before answering, separate evidence from assumptions, test credible alternatives, and calibrate the conclusion to the available evidence.
+Before answering, separate evidence from assumptions. Name the obvious answer, then test at least two credible alternatives against it, including the one you would reject first (steelman it). Calibrate the conclusion to the evidence, commit to a recommendation when one is asked for, and say what would change it.

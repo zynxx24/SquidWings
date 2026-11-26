@@ -60,7 +60,8 @@ def test_upgrades_only_the_tool_that_is_behind(tmp_path, monkeypatch):
     monkeypatch.setattr(tool_updates, "_run_upgrade", fake_upgrade)
     out = tool_updates.run_check(state, force=True, now=5.0)
     actions = {r["tool"]: r["action"] for r in out["results"]}
-    assert actions == {"graphify": "upgraded", "aislop": "none", "yt-dlp": "none", "hyperframes": "none", "motlab": "none"}
+    assert actions == {"graphify": "upgraded", "aislop": "none", "yt-dlp": "none", "hyperframes": "none", "motlab": "none",
+                       "agent-reach": "not installed"}
     assert ran == [["uv", "tool", "upgrade", "graphifyy"]]
     assert json.loads(state.read_text(encoding="utf-8"))["checked_at"] == 5.0
 

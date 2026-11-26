@@ -96,7 +96,7 @@ def follow(side: int, entry: float, stop: float | None, target: float | None, at
         worst = b["l"] if side > 0 else b["h"] + spread
         best = b["h"] if side > 0 else b["l"] + spread
         if state.update(worst) == "exit":
-            exit_price = float(state.stop)
+            exit_price = float(state.stop if state.stop is not None else worst)
             return {"status": state.exit_label, "exit": round(exit_price, digits), "closed_at": b["t"] + bar_seconds,
                     "result_atr": round((exit_price - entry) * side / atr, 3) if atr else None, "trail": state.to_dict()}
         state.update(best)

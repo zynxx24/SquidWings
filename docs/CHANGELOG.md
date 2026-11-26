@@ -1,5 +1,50 @@
 # Catatan perubahan
 
+## 2026-11-27: harness lebih tahan kasus pinggir
+
+- Koneksi SQLite (simpan hasil tim, tabel data baru) sekarang ditutup setelah dipakai; sebelumnya hanya di-commit dan file-nya tetap terbuka.
+- Sumber skill GitHub: skill dari file selain SKILL.md masuk ke daftar aktif atau simpanan sesuai manifest; `sources.json` yang rusak (bukan objek JSON) tidak lagi membuat pemuatan skill gagal.
+- Tunnel: membaca alasan gagal tidak lagi error kalau log tunnel belum ada.
+- Add-on trading: status run yang rusak, run yang sudah berhenti, dan stop yang kosong ditangani tanpa error.
+- Pemeriksaan kode bersih seluruhnya: ruff, mypy (250 file), dan 2058 tes.
+
+## 2026-11-27: voice-over yang memeriksa dirinya sendiri
+
+- `voice_track` mendengar ulang trek yang sudah jadi (whisper lokal). Baris yang tidak terdengar, terdengar lain, atau katanya kepotong ke baris tetangga diucapkan ulang sendiri satu kali, lalu trek disusun lagi. Hasilnya `ok_audio`, `check`, dan `repaired`.
+- Kata yang sudah cocok dengan naskah tidak lagi pindah ke baris berikutnya hanya karena jeda napas sebelumnya lebih panjang (kasus "lunas. Beres.").
+- Naskah diperiksa sebelum kuota dipakai: rentang terbalik, tumpang tindih, lewat panjang video, atau terlalu banyak kata untuk rentangnya.
+- Baris yang tetap kepanjangan tidak lagi menimpa baris berikutnya; baris berikutnya mundur sedikit dan dilaporkan di `shifted`. Volume antarbaris disamakan.
+- Gemini TTS mencoba lagi saat server sibuk (5xx), koneksi putus, jawaban tanpa audio, atau audio yang terpotong jauh dari teksnya.
+- `video_add_voice` menolak menimpa video aslinya dan memberi tahu kalau suara masih bicara setelah videonya habis. `mode="recut"` tanpa rekaman utuh menjelaskan apa yang kurang, bukan error mentah.
+
+## 2026-11-27: voice-over video dengan Gemini TTS, tepat di detik adegannya
+
+- **Gemini TTS** sebagai engine suara (`voice_speak` engine `gemini`, suara seperti `Kira`, `Kore`, `Puck`). Suaranya mengikuti arahan gaya, jeda, dan nada, seperti di AI Studio. Key diisi di Kredensial > Gemini API key (atau `GEMINI_API_KEY`). Batas paket gratis (3 permintaan per menit, 10 per hari) ditangani: tunggu otomatis untuk batas per menit, dan pesan jelas saat kuota harian habis.
+- **`voice_track`**: naskah bertimestamp (`mic.txt`, atau format "## Transcript" dari AI Studio) menjadi satu trek suara yang tiap barisnya jatuh di detik adegannya. Baris yang terlalu panjang dipercepat sedikit (maks 1,3x). Hasilnya juga berisi caption `.srt` dan `.words.json`. Tanda baca suara seperti (↑) (↓) (...) (//), `*tekanan*`, `[senyum]`, `Gaya suara :`, dan `"Nama" dibaca: ...` dibaca sebagai arahan, tidak ikut diucapkan.
+- **Sekali ambil**: dengan Gemini, seluruh naskah diucapkan dalam 1 permintaan (nada menyambung, hemat kuota), lalu dipotong per baris dengan whisper lokal dan pencarian jeda di audio. Rekaman utuhnya disimpan (`voice.take.wav`), jadi `mode="recut"` bisa memotong ulang tanpa memakai kuota.
+- **`video_add_voice`**: video yang sudah dirender langsung diberi suara tanpa render ulang; musik bawaannya mengecil saat ada suara.
+- **Skill baru `voice-over`**: format naskah, pilihan engine, cara memasukkan suara ke Remotion, HyperFrames, atau Studio, dan cara mengecek hasilnya. Video promosi dan explainer sekarang selalu diberi suara, dan `video_check` mengingatkan bila proyek punya naskah tapi belum punya trek suara.
+
+## 2026-11-26 (malam): pembaruan otomatis tiap 12 jam, dan semua jalur mencatat perubahan file
+
+- **Pembaruan otomatis tiap 12 jam selama terminal atau web menyala, hanya saat online.** Repo SquidWings (dari tiap 30 menit), skill dari GitHub (dari tiap 24 jam), dan alat lokal seperti Agent Reach, graphify, aislop, dan yt-dlp (dulu hanya sekali saat start, sekarang berulang dan ikut jalan di chat terminal). Saat offline tidak ada yang dicoba, start tidak menunggu fetch, dan pembaruan berjalan begitu jaringan kembali. Satu pengaturan untuk semuanya: `UPDATE_EVERY_HOURS` (bawaan 12).
+- **Perubahan file dari chat terminal dan run alur juga tercatat**, bukan hanya dari chat web: IDE dan "Perubahan AI" menampilkan dan bisa mengurungkan semuanya, termasuk pekerjaan dari Telegram. Chat terminal menulis ringkasannya di bawah jawaban.
+
+## 2026-11-26 (malam): Agent Reach di harness
+
+- **Agent Reach** ([Panniantong/Agent-Reach](https://github.com/Panniantong/Agent-Reach)) terpasang sebagai alat harness. AI bisa membaca subtitle dan transkrip YouTube, thread Reddit beserta komentarnya, X/Twitter, issue dan PR GitHub, Bilibili, V2EX, lowongan LinkedIn, kurs Xueqiu, dan platform lain yang sulit dibaca pencarian biasa. Tool barunya: `reach_read`, `reach`, `reach_status`, `reach_manage`. Semuanya hanya membaca, tidak pernah posting, dan tidak pernah login atas namamu.
+- `web_read` otomatis memakai Agent Reach untuk link YouTube, Reddit, X, Bilibili, Instagram, Facebook, dan LinkedIn, serta sebagai cadangan ketika halaman GitHub atau V2EX gagal dibaca.
+- **Diperbarui otomatis tiap hari** bersama graphify, aislop, dan yt-dlp (`agent-reach update` saat ada rilis baru di GitHub).
+- Penyesuaiannya ada di harness (`brain/utils/agent_reach.py`), bukan di skill upstream. Skill bawaan Agent Reach dicabut dari folder skill AI lain (Claude Code, Gemini, dan sebagainya); skill untuk Claude Code tetap dipilih lewat `skills/sources.json`.
+- Perintah terminal: `python main.py reach install | update | status | add <platform> | remove <platform> | read <link>`. Login ke platform dilakukan sendiri dengan `agent-reach login <platform>` di Terminal. Matikan dengan `AGENT_REACH=off`.
+
+## 2026-11-26 (malam): AI berpikir lebih luas di semua bidang
+
+- **Berpikir lebih luas di setiap giliran yang punya ruang pilihan**: desain, kode, matematika, tulisan, strategi, dan data. AI mendapat daftar jawaban autopilot yang biasa dibuat semua model (hero di tengah dengan gradasi, loop bersarang O(n²), langsung pakai rumus pertama, "Di era digital ini") sebagai patokan yang harus dikalahkan. AI juga mendapat tiga sumbu variasi, tiga lensa sudut pandang yang belum dipakai belakangan di chat mana pun, dan cara membuktikan hasilnya: kode dijalankan, soal matematika diselesaikan dengan cara kedua, halaman dicek terhadap arah desainnya. Permintaan seperti "yang beda" atau "jangan sama" meminta perubahan di paling sedikit dua sumbu.
+- Tool baru **`think_wider`** untuk brainstorming atau saat hasil pertama terasa biasa: lebih banyak lensa, semua sumbu, dan aturan memilih satu yang terkuat lalu membangunnya.
+- Think prompt untuk kode, matematika, gambar, dan penalaran sekarang meminta membandingkan beberapa cara sebelum memilih.
+- Katalognya `input/think/lenses.yaml` (bisa ditambah tanpa restart). `THINK_WIDER=off` mematikannya. Desain dan tulisan memakai temperatur sedikit lebih tinggi; kode dan matematika tetap presisi.
+
 ## 2026-11-26 (malam): desain tidak lagi itu-itu saja
 
 - **Aplikasi punya gaya aplikasi.** `style_pick` mengenali aplikasi, dashboard, panel admin, dan sistem sekolah atau toko (`medium="app"`, juga otomatis dari subjeknya). Hasilnya 14 tata letak aplikasi sungguhan, misalnya rail dan workspace, daftar dan detail, tabel dulu, langkah dengan ringkasan, roster foto, form dan pratinjau cetak, satu tugas fokus. Tata letaknya dipilih menurut kegunaan layar (pendaftaran, kamera absensi, stok, jadwal), bukan landing page. Font poster dan tulisan tangan tidak dipakai untuk layar aplikasi.

@@ -34,7 +34,7 @@ from brain.config.constants import TOKEN_BUFFER, ResponseStatus, TaskType
 from brain.config.edition import studio_module
 from brain.config.secrets import get_secrets
 from brain.config.settings import Settings
-from brain.harness import Harness, RunLimits, autopilot, model_errors, scaffold_for
+from brain.harness import Harness, RunLimits, autopilot, divergence, model_errors, scaffold_for
 from brain.harness.advisor import pick_advisor
 from brain.harness.briefing import build_briefing, skill_guidance
 from brain.harness.guards import tool_trace
@@ -568,6 +568,14 @@ class Orchestrator:
                 )
                 if recalled:
                     self._append_system(ctx.messages, recalled)
+            # 5a''. Think past the first idea: autopilot to beat, axes, fresh lenses, a proof that fits the work.
+            # Not for a yes-or-no gate (no tools, one round), which needs one exact answer.
+            wider_domains: list[str] = []
+            if not (limits is not None and limits.max_tools == 0):
+                wider = divergence.block(classification.task_type, intent_text)
+                if wider:
+                    self._append_system(ctx.messages, wider)
+                    wider_domains = divergence.domains_for(classification.task_type, intent_text)
 
             # 5b. Attach images (data URLs) to the final user message
             if images and not getattr(model, "supports_vision", True):
@@ -578,6 +586,8 @@ class Orchestrator:
             # 6. Prepare request params
             params = handler.prepare_request_params(model)
             temperature = params.get("temperature", 0.5)
+            if wider_domains:
+                temperature = divergence.temperature_for(wider_domains, temperature)
             max_tokens = ctx.max_output_tokens
             # Reasoning models spend max_tokens on thinking first; honour the
             # handler's headroom, but never beyond the remaining window room.

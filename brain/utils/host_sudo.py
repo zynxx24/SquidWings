@@ -94,7 +94,7 @@ async def run(command: str, cwd: str = ".", timeout: int = 900) -> dict[str, Any
     timed_out = False
     try:
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         timed_out = True
         kill_tree(proc.pid)
         out, err = await proc.communicate()

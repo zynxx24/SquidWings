@@ -7,8 +7,9 @@ kept, exactly as in a clone. From then on it updates like a clone, and nobody do
 
 At start, ``main.py`` fetches the branch's upstream and, when GitHub has newer commits, moves
 to them with a fast-forward only, then restarts itself so the new code runs. While the web
-server or the chat runs, a background thread checks again every ``AUTO_UPDATE_EVERY_MIN``
-minutes and pulls what is new; that code is used from the next start.
+server or the chat runs, a background thread checks again every 12 hours (``UPDATE_EVERY_HOURS``, or
+``AUTO_UPDATE_EVERY_MIN`` for this one alone) and pulls what is new; that code is used from the next start.
+Offline, nothing is tried: the start does not wait for a fetch, and the check runs once the network is back.
 
 It never loses work:
 
@@ -74,10 +75,16 @@ def enabled() -> bool:
 
 
 def interval_s() -> int:
-    try:
-        return max(0, int(float(_env("AUTO_UPDATE_EVERY_MIN", "30")) * 60))
-    except ValueError:
-        return 30 * 60
+    """Seconds between checks while the app runs: AUTO_UPDATE_EVERY_MIN, else UPDATE_EVERY_HOURS, else 12 hours."""
+    from brain.utils import online
+
+    own = _env("AUTO_UPDATE_EVERY_MIN", "")
+    if own:
+        try:
+            return max(0, int(float(own) * 60))
+        except ValueError:
+            pass
+    return int(online.every_hours() * 3600)
 
 
 @dataclass
@@ -281,6 +288,12 @@ def update_at_start(notify: Callable[[str], None], root: Path = ROOT) -> None:
     """Pull at start and restart this process on the new code. Runs once per launch."""
     if not enabled() or os.environ.get(RESTARTED_ENV):
         return
+    from brain.utils import online
+
+    if not online.is_online():
+        # Offline: a fetch would only wait for its timeout. The background check pulls once the network is back.
+        notify("[dim]Auto-update: offline, dicoba lagi saat online.[/dim]")
+        return
     result = update(root)
     logger.info(f"[update] {result.message}")
     if result.status == "skipped":
@@ -306,9 +319,17 @@ def start_background(notify: Callable[[str], None], root: Path = ROOT) -> bool:
         _started_once = True
 
     def loop() -> None:
+        from brain.utils import online
+
+        due = time.time() + every
         while True:
-            time.sleep(every)
+            time.sleep(max(1.0, min(online.RETRY_OFFLINE_S, due - time.time())))
+            if time.time() < due:
+                continue
+            if not online.is_online():
+                continue   # checked again every few minutes until the network is back
             result = update(root)
+            due = time.time() + every
             if result.updated:
                 logger.warning(f"[update] {result.message}; restart to use it")
                 notify(f"[bold green]⟳ Update pulled: {result.message}. Restart to use it.[/bold green]")

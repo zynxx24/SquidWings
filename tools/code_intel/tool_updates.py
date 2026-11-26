@@ -1,6 +1,8 @@
-"""Keeps the local tools current: graphify, aislop, yt-dlp and (when installed globally) HyperFrames and motlab.
+"""Keeps the local tools current: graphify, aislop, yt-dlp, Agent Reach and (when installed globally) HyperFrames
+and motlab.
 
-Once a day, in a background thread, this compares the installed version of each program with
+Every 12 hours while the app runs (``UPDATE_EVERY_HOURS``, or ``TOOLS_UPDATE_HOURS``), and only when online, a
+background thread compares the installed version of each program with
 the newest release and upgrades it when there is a newer one. It never blocks a request.
 
 * graphify is a Python tool: upgraded with ``uv tool upgrade`` (package ``graphifyy``).
@@ -8,6 +10,7 @@ the newest release and upgrades it when there is a newer one. It never blocks a 
 * yt-dlp lives in this app's own Python and is upgraded there: sites like YouTube change often,
   and a yt-dlp a few months old stops downloading from them.
 * HyperFrames, only when installed with ``npm install -g hyperframes`` (``npx`` always fetches the newest).
+* Agent Reach, when installed: ``agent-reach update`` when GitHub has a newer release.
 * motlab (``@motlab/cli``), when installed: the motlab skills follow its releases, so an old engine
   would miss commands they use (``motlab working``). Its version is read from package.json.
 
@@ -36,7 +39,14 @@ from brain.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-CHECK_EVERY_S = 24 * 3600
+CHECK_EVERY_S = 12 * 3600
+
+
+def check_every_s() -> float:
+    """TOOLS_UPDATE_HOURS, else UPDATE_EVERY_HOURS, else 12 hours."""
+    from brain.utils import online
+
+    return online.every_hours("TOOLS_UPDATE_HOURS", CHECK_EVERY_S / 3600) * 3600
 _NETWORK_TIMEOUT = 10.0
 _UPGRADE_TIMEOUT = 600
 
@@ -163,13 +173,34 @@ def _pip_upgrade(requirement: str) -> list[str]:
     return ["uv", "pip", "install", "-q", "--python", sys.executable, "-U", requirement]
 
 
+def _update_agent_reach() -> dict[str, Any]:
+    """Agent Reach updates itself (program, every added platform's tools, its skill copy) with ``agent-reach update``;
+    the harness then keeps its skill out of other AIs' folders (brain/utils/agent_reach.py)."""
+    from brain.utils import agent_reach
+
+    installed = agent_reach.version()
+    if installed is None:
+        return {"tool": "agent-reach", "installed": None, "latest": None, "action": "not installed"}
+    latest = agent_reach.latest_release()
+    result: dict[str, Any] = {"tool": "agent-reach", "installed": installed, "latest": latest, "action": "none"}
+    if not is_newer(latest, installed):
+        return result
+    done = agent_reach.update()
+    after = agent_reach.version()
+    raw_error = done.get("error")
+    error: dict[str, Any] = raw_error if isinstance(raw_error, dict) else {}
+    result.update(action="upgraded" if done.get("ok") else "upgrade failed", installed_after=after,
+                  output="" if done.get("ok") else str(error.get("message", ""))[-300:])
+    return result
+
+
 def run_check(state_path: Path, *, force: bool = False, now: float | None = None) -> dict[str, Any]:
     """One check-and-upgrade pass. Skipped when the last one was less than a day ago unless forced."""
     now = time.time() if now is None else now
     state: dict[str, Any] = {}
     with contextlib.suppress(OSError, ValueError):
         state = json.loads(state_path.read_text(encoding="utf-8"))
-    if not force and now - float(state.get("checked_at", 0)) < CHECK_EVERY_S:
+    if not force and now - float(state.get("checked_at", 0)) < check_every_s():
         return {"skipped": True, "reason": "checked recently", **state}
 
     results = [
@@ -183,6 +214,8 @@ def run_check(state_path: Path, *, force: bool = False, now: float | None = None
         # The motlab skills in skills follow upstream releases; the engine has to keep up with them.
         _update_one("motlab", _motlab_version, latest_npm(MOTLAB_PACKAGE),
                     ["npm", "install", "-g", f"{MOTLAB_PACKAGE}@latest"]),
+        # YouTube, Reddit, X and the other platforms change often; Agent Reach follows them.
+        _update_agent_reach(),
     ]
     out = {"checked_at": now, "results": results}
     try:
@@ -207,10 +240,17 @@ def start_background(state_path: Path) -> bool:
         _started_once = True
 
     def _worker() -> None:
-        try:
-            run_check(state_path)
-        except Exception as exc:  # noqa: BLE001 - a failed update must never stop the server
-            logger.warning(f"[tools] auto-update check failed: {exc}")
+        from brain.utils import online
+
+        # While the app runs: every few minutes, see whether a check is due (12 hours by default) and the network
+        # answers. Offline, nothing is tried and nothing is recorded, so the check runs as soon as it is back.
+        while True:
+            try:
+                if check_every_s() > 0 and online.is_online():
+                    run_check(state_path)
+            except Exception as exc:  # noqa: BLE001 - a failed update must never stop the server
+                logger.warning(f"[tools] auto-update check failed: {exc}")
+            time.sleep(online.RETRY_OFFLINE_S)
 
     threading.Thread(target=_worker, name="tool-auto-update", daemon=True).start()
     return True

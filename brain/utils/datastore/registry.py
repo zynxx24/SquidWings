@@ -274,7 +274,7 @@ def create_local(filename: str, columns: list[str], label: str = "", name: str =
         from .base import valid_name
 
         names = [valid_name(c, "Nama kolom") for c in columns if str(c).strip()] or ["nama"]
-        with sqlite3.connect(path) as connection:
+        with contextlib.closing(sqlite3.connect(path)) as connection, connection:
             connection.execute("CREATE TABLE data (id INTEGER PRIMARY KEY AUTOINCREMENT, "
                                + ", ".join(f'"{c}" TEXT' for c in names if c.lower() != "id") + ")")
     else:

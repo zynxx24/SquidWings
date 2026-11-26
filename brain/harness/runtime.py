@@ -67,7 +67,10 @@ class RunLimits:
         """A shared run keeps its rounds, tokens and time budget, but never sees less than the tier allows:
         what a model may read (context, tool results, tools, briefing, skills) is only ever raised here,
         because the owner's rule is that only the provider's context window limits it."""
-        more = dict(
+        rounds = self.max_rounds if self.override_tier else min(scaffold.max_iterations, self.max_rounds)
+        return replace(
+            scaffold,
+            max_iterations=rounds,
             context_chars=max(scaffold.context_chars, self.context_chars),
             tool_result_chars=max(scaffold.tool_result_chars, self.tool_result_chars),
             # 0 is a deliberate "answer without tools" (a gate), not a size limit
@@ -77,8 +80,6 @@ class RunLimits:
             verify_rounds=min(scaffold.verify_rounds, 1),
             advisor_calls=0,
         )
-        rounds = self.max_rounds if self.override_tier else min(scaffold.max_iterations, self.max_rounds)
-        return replace(scaffold, max_iterations=rounds, **more)
 
     def exceeded(self, tokens_used: int) -> bool:
         return tokens_used >= self.tokens or time.time() >= self.deadline

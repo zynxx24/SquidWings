@@ -57,6 +57,16 @@ _ON_DEMAND: dict[tuple[str, ...], list[str]] = {
         "vault_graph_build", "vault_neighbours", "vault_explain", "graphify_query", "graphify_ingest",
     ],
     ("git", "commit", "diff", "branch"): ["git_status", "git_diff"],
+    # Platforms web search reads badly: Agent Reach (subtitles, threads with comments, posts, issues).
+    ("youtube", "youtu", "reddit", "subreddit", "twitter", "tweet", "bilibili", "v2ex", "linkedin", "xiaohongshu",
+     "xueqiu", "instagram", "facebook", "subtitle", "transkrip", "transcript", "agent reach", "agent-reach",
+     "github issue", "pull request", "lowongan", "loker"): ["reach_read", "reach", "reach_status", "reach_manage"],
+    # A video's voice: a timed script spoken line by line onto its scenes, or added to a rendered video.
+    ("voice over", "voiceover", "isi suara", "suara video", "narasi", "narator", "mic.txt", "dubbing", "tts",
+     "naskah suara", "sulih suara", "gemini tts"): ["voice_track", "video_add_voice", "voice_speak", "voice_list"],
+    # Asking for something different: more angles than the first idea.
+    ("ide", "ideas", "brainstorm", "alternatif", "alternative", "beda", "lain", "variasi", "kreatif", "creative",
+     "inovatif", "innovative", "jangan sama", "itu itu aja", "monoton", "cara lain", "pendekatan"): ["think_wider"],
     # Building any screen: a direction first, so an app or a page does not fall back to the same default look.
     ("desain", "design", "tampilan", "landing", "website", "dashboard", "aplikasi", "ui", "frontend", "halaman",
      "blade", "laravel", "react", "vue", "css", "admin", "redesign", "ganti gaya", "style"): ["style_pick", "design_explore"],

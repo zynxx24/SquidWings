@@ -138,11 +138,12 @@ class IntentClassifier:
         cached = _LLM_CACHE.get(key)
         if cached is not None:
             # The same request classified a moment ago: no second model call for the same answer.
-            refined = copy.deepcopy(cached)
-            if refined.confidence >= result.confidence:
-                refined.matched_rules = [*result.matched_rules, *refined.matched_rules, "llm_cache"]
-                return refined
+            remembered: ClassificationResult = copy.deepcopy(cached)
+            if remembered.confidence >= result.confidence:
+                remembered.matched_rules = [*result.matched_rules, *remembered.matched_rules, "llm_cache"]
+                return remembered
             return result
+        refined: ClassificationResult | None
         try:
             refined = await self._llm_classifier.classify(user_input)
             if refined is not None:

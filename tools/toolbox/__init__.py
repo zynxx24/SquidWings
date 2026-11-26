@@ -21,8 +21,10 @@ from . import (  # noqa: F401 - importing registers the tools in the catalog
     math_tools,
     media_tools,
     office_tools,
+    reach_tools,
     style_tools,
     text_encode_tools,
+    think_tools,
     units_time_tools,
     voice_tools,
 )

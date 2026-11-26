@@ -485,7 +485,8 @@ def auto_start(body: AutoIn) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(422, f"Setelan auto trade tidak valid: {exc}") from exc
     threading.Thread(target=_auto.run, name="auto-trade", daemon=True).start()
-    return _auto.report()
+    report: dict[str, Any] = _auto.report()
+    return report
 
 
 @router.post("/auto/stop", dependencies=[Depends(guard)])
@@ -493,14 +494,16 @@ def auto_stop() -> dict[str, Any]:
     if _auto is None:
         raise HTTPException(404, "Belum ada auto trade.")
     _auto.stop_event.set()
-    return _auto.report()
+    report: dict[str, Any] = _auto.report()
+    return report
 
 
 @router.get("/auto/status")
 def auto_status() -> dict[str, Any]:
     if _auto is None:
         return {"state": "idle"}
-    return _auto.report()
+    report: dict[str, Any] = _auto.report()
+    return report
 
 
 def _sim_folder() -> Path:

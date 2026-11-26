@@ -109,7 +109,7 @@ def test_the_stop_button_still_cancels(orch: _Orch):
         while ws.receive_json().get("type") != "content":
             pass
         ws.send_json({"type": "stop"})
-        while (m := ws.receive_json())["type"] != "stopped":
+        while ws.receive_json()["type"] != "stopped":
             pass
     _wait(lambda: orch.cancelled)
     assert not orch.finished

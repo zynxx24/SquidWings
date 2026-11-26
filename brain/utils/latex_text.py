@@ -51,7 +51,8 @@ def convert(tex: str) -> str:
     out = re.sub(r"_" + _BRACED, lambda m: _sub(m.group(1)), out)
     out = re.sub(r"_(\d)", lambda m: _sub(m.group(1)), out)
     for name in sorted(_SYMBOLS, key=len, reverse=True):
-        out = re.sub(re.escape(name) + r"(?![A-Za-z])", lambda _m, v=_SYMBOLS[name]: v, out)
+        # A literal replacement: backslashes in the symbol are escaped so re.sub does not read them as groups.
+        out = re.sub(re.escape(name) + r"(?![A-Za-z])", _SYMBOLS[name].replace("\\", "\\\\"), out)
     out = re.sub(r"\\([A-Za-z]+)", r"\1", out)          # an unknown command: its name, without the backslash
     out = out.replace("{", "").replace("}", "")
     out = re.sub(r"(?<=\S) - (?=\S)", " − ", out)

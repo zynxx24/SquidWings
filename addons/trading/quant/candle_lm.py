@@ -268,7 +268,8 @@ def features(bars: np.ndarray) -> dict[str, np.ndarray]:
 
     def place(n: int) -> np.ndarray:                             # -1 at the low of the last n bars, +1 at the high
         hi, lo = _rolling(h, n, np.max), _rolling(low, n, np.min)
-        return 2 * (c - lo) / np.maximum(hi - lo, 1e-9) - 1
+        placed: np.ndarray = 2 * (c - lo) / np.maximum(hi - lo, 1e-9) - 1
+        return placed
 
     day_key = t // 86400
     first = np.r_[True, day_key[1:] != day_key[:-1]]
@@ -388,11 +389,18 @@ class Block(nn.Module):
         a = F.scaled_dot_product_attention(q, k, v, is_causal=True, dropout_p=self.p if self.training else 0.0)
         x = x + self.drop(self.out(a.transpose(1, 2).reshape(b, n, d)))
         y = self.n2(x)
-        return x + self.drop(self.w2(F.silu(self.w1(y)) * self.w3(y)))
+        out: torch.Tensor = x + self.drop(self.w2(F.silu(self.w1(y)) * self.w3(y)))
+        return out
 
 
 class CandleGPT(nn.Module):
     """Gives [B, n, targets, 3]: the 10%, 50% and 90% guesses of each target, in ATR from the current close."""
+
+    # Buffers (register_buffer): typed here so the type checker knows they are tensors.
+    cos: torch.Tensor
+    sin: torch.Tensor
+    center: torch.Tensor
+    scale: torch.Tensor
 
     def __init__(self, cfg: Config, stats: dict[str, list[float]]) -> None:
         super().__init__()
@@ -610,7 +618,7 @@ def train(symbol: str = "XAUUSD", size: str = "base", hours: float = 0.0, epochs
     rng = np.random.default_rng(seed + epoch)
     if compile_model is None:
         compile_model = cfg.size in ("large", "xl")
-    forward = model
+    forward: Any = model
     if compile_model:
         try:
             forward = torch.compile(model)
@@ -754,7 +762,7 @@ def train(symbol: str = "XAUUSD", size: str = "base", hours: float = 0.0, epochs
                **{k: v for k, v in exam.items() if k != "per_candle"}, "best": improved, "at": time.strftime("%Y-%m-%d %H:%M:%S")}
         with open(folder / "log.jsonl", "a", encoding="utf-8") as out:
             out.write(json.dumps({**row, **({"per_candle": exam["per_candle"]} if improved else {})}) + "\n")
-        if best_dirty and (time.time() - best_saved_at > SAVE_BEST_EVERY_S or waiting or note):
+        if best_dirty and best_exam is not None and (time.time() - best_saved_at > SAVE_BEST_EVERY_S or waiting or note):
             save_best(best_exam)
             best_dirty, best_saved_at = False, time.time()
         (folder / "status.json").write_text(json.dumps({**row, "per_candle": exam["per_candle"], "best_score": round(best, 5),
@@ -854,7 +862,9 @@ def predict(model: CandleGPT, state: dict[str, Any], bars: np.ndarray) -> dict[s
 def status(symbol: str = "XAUUSD", size: str = "base") -> dict[str, Any]:
     folder = run_dir(m5store.instrument(symbol), size)
     with contextlib.suppress(OSError, ValueError):
-        return json.loads((folder / "status.json").read_text(encoding="utf-8"))
+        data = json.loads((folder / "status.json").read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data
     return {"running": False, "note": f"belum ada run di {folder}"}
 
 

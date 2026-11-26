@@ -186,7 +186,8 @@ class RoutingType:
             )
             if choice is not None:
                 self.last_reason = f"Auto: {choice.reason}"
-                return choice.model
+                picked: ModelInfo = choice.model
+                return picked
 
         if not task_config:
             logger.warning(

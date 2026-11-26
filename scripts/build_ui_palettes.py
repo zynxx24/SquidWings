@@ -169,7 +169,7 @@ def build() -> tuple[str, list[str], list[str]]:
                      f"accent {contrast(dp['accent'], dp['surface']):4.2f}  ink {contrast(dp['accent-ink'], dp['accent']):4.2f}")
         sel = f':root[data-palette="{pid}"]'
         light_sel = f":root, {sel}" if i == 0 else sel
-        dark_auto = f':root:not([data-theme="light"])' + (f', :root:not([data-theme="light"])[data-palette="{pid}"]' if i == 0
+        dark_auto = ':root:not([data-theme="light"])' + (f', :root:not([data-theme="light"])[data-palette="{pid}"]' if i == 0
                                                           else f'[data-palette="{pid}"]')
         dark_forced = ':root[data-theme="dark"]' + (f', :root[data-theme="dark"][data-palette="{pid}"]' if i == 0 else f'[data-palette="{pid}"]')
         parts.append(f"/* {label}: hue {h}, accent chroma {c} */")

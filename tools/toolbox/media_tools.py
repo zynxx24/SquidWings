@@ -419,6 +419,19 @@ async def _remotion_compositions(project: Path) -> list[str]:
     return [word for word in last.split() if _COMPOSITION_ID.fullmatch(word)]
 
 
+def _voice_note(folder: Path) -> dict[str, str]:
+    """A video with a voice script but no voice track yet: say so, with the step that makes it."""
+    scripts = [p for p in (folder / "mic.txt", folder.parent / "mic.txt", folder.parent.parent / "mic.txt") if p.is_file()]
+    if not scripts:
+        return {}
+    voiced = any(folder.glob("public/voice.*")) or any(folder.glob("voice.*")) or any(folder.glob("assets/voice.*"))
+    if voiced:
+        return {}
+    return {"voice_note": f"Ada naskah suara ({scripts[0].name}) tapi belum ada trek suara. Buat dengan "
+                          f"voice_track(script=..., output='{folder.name}/public/voice.wav') lalu masukkan ke "
+                          "komposisi (skill voice-over), sebelum render."}
+
+
 @spec("video_check", "Check a video project before rendering. HyperFrames: lints the compositions (errors, "
       "warnings, unmounted compositions) and returns the findings. Remotion: lists the composition ids that can be "
       "rendered. Fix every error before video_render.",
@@ -428,7 +441,7 @@ async def video_check(project: str, workspace_path: str | None = None) -> dict[s
     folder = _project(project, workspace_path)
     engine = _engine(folder)
     if engine == "remotion":
-        return {"ok": True, "engine": engine, "compositions": await _remotion_compositions(folder)}
+        return {"ok": True, "engine": engine, "compositions": await _remotion_compositions(folder), **_voice_note(folder)}
     code, output, _ = await _run([*_hyperframes(), "lint", ".", "--json"], folder, 5 * 60, _HF_ENV)
     try:
         report = json.loads(output[output.find("{"):])
@@ -436,7 +449,7 @@ async def video_check(project: str, workspace_path: str | None = None) -> dict[s
         return {"ok": False, "engine": engine, "error": "lint tidak memberi hasil JSON", "log_tail": _tail(output)}
     return {"ok": bool(report.get("ok")) and code == 0, "engine": engine, "errors": report.get("errorCount", 0),
             "warnings": report.get("warningCount", 0), "findings": (report.get("findings") or [])[:25],
-            "unmounted": report.get("unmountedCompositions") or []}
+            "unmounted": report.get("unmountedCompositions") or [], **_voice_note(folder)}
 
 
 @spec("video_render", "Render a HyperFrames or Remotion project in the workspace to an MP4 and show it in the chat. "

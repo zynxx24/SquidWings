@@ -1,0 +1,180 @@
+# Thinking wider, per kind of work. brain/harness/divergence.py reads this file (edits apply without a restart).
+#
+# For each domain:
+#   words:     request words that point to it (the task type decides first)
+#   autopilot: the answers every model gives without thinking; named so they can be beaten
+#   axes:      dimensions along which real alternatives differ; three are drawn per turn
+#   lenses:    reframings; three fresh ones per turn, skipping the ones used lately in any chat
+#   proof:     how the chosen answer is shown to be right, not just plausible
+#
+# Add lines freely: more lenses and axes mean more different answers. Keep each line one concrete move.
+
+design:
+  words: [desain, design, tampilan, ui, ux, landing, website, halaman, dashboard, poster, logo, banner, slide, presentasi, deck, ilustrasi, thumbnail, layout, warna, font, tipografi, brand, branding, mockup, wireframe, figma, css, frontend, redesign]
+  autopilot:
+    - "a centred hero with a gradient, three identical feature cards, a testimonial row and a CTA band"
+    - "Inter or Poppins, purple-to-blue or emerald gradients, glassmorphism, emoji as icons"
+    - "every section the same height and width, everything centred, nothing breaking the grid"
+    - "a dashboard of four stat cards with an icon in a circle, a line chart and a table below"
+  axes:
+    - "structure: stacked sections / one long column / asymmetric grid / split screen / index or list / board or canvas / a single screen that changes state"
+    - "first screen: a claim / a number / a real photo / the product working / a question / a list the user can act on"
+    - "type: serif-led / grotesk-led / mono-led / condensed display / one family in many weights"
+    - "colour: near-monochrome plus one accent / two strong complementaries / paper and ink / dark and one neon-free accent"
+    - "density: airy and slow / balanced / dense and information-rich like a ledger or terminal"
+    - "interaction metaphor: document / tool / feed / map / timeline / conversation / physical object (cards, tickets, labels)"
+    - "navigation: top bar / side rail / none (the content is the navigation) / command palette / tabs at the bottom"
+  lenses:
+    - "Design it for the busiest real user (a teacher between classes, a cashier at rush hour), not for a screenshot."
+    - "Remove the hero entirely: what does the first screen show instead?"
+    - "Make the most important thing three times bigger than anything else and everything else quieter."
+    - "Borrow the structure of a non-web object: a train ticket, a menu board, a lab notebook, a newspaper index, a receipt."
+    - "One colour plus black and the paper colour. Hierarchy by size and weight only."
+    - "Show real content in place of every placeholder: real names, prices, dates, photos the subject would have."
+    - "Turn the main list into the interface itself: no cards, no chrome, just rows that act."
+    - "What would this look like if it were printed and pinned on a wall? Start from that, then make it interactive."
+    - "Let one element break the grid on purpose per screen; keep everything else strict."
+    - "Design the empty state, the error and the slow network first, then the happy path."
+    - "Use the local place: its signage, its materials, its typefaces. Make it impossible to move to another city unchanged."
+    - "Replace every icon-in-a-circle with a word, a number or a real image."
+    - "Make the navigation disappear: what if the content were the menu?"
+    - "Give it one signature motion that means something (a stamp, a page turn, a counter), and nothing else moves."
+    - "Use the brand's own artefact (its receipt, its packaging, its uniform) as the visual motif."
+    - "Design for a 360px phone first and let the desktop be the bonus, not the other way round."
+    - "Ask: if the logo were removed, would anyone know whose this is? Add what only this subject has."
+    - "Swap the expected direction: dark where light is expected, editorial where tech is expected, calm where loud is expected."
+    - "Tell the content as a sequence (1, 2, 3) instead of as a grid of equals."
+    - "Make one decision radical (type scale, colour, layout) and keep the other two conventional."
+  proof: "Call style_pick first and build exactly its direction; after building, look at it at 360px and desktop, run the contrast check, and fix every point the design check reports."
+
+code:
+  words: [kode, code, coding, program, script, fungsi, function, api, bug, error, refactor, optimasi, optimize, algoritma, algorithm, database, query, backend, laravel, python, javascript, typescript, react, test, deploy, aplikasi, app, class, endpoint, crud, parser]
+  autopilot:
+    - "one big file with everything in it, globals, and a try/except that swallows errors"
+    - "nested loops over everything (O(n²)) where an index or a map would do"
+    - "a framework or library pulled in for something the standard library already does"
+    - "the first data structure that came to mind, chosen before the access pattern was known"
+    - "parsing with a fragile regex where a real parser or the format's own library exists"
+  axes:
+    - "data structure: list / dict or hash map / set / heap / sorted array plus bisect / trie / graph / dataframe / database table with an index"
+    - "algorithm family: direct / sort-then-scan / two pointers / sliding window / dynamic programming / greedy with proof / divide and conquer / BFS or DFS / streaming in one pass"
+    - "architecture: one pure function / pipeline of small functions / class with state / event-driven / CLI plus library / service with an API"
+    - "where the work happens: in memory / in the database (SQL does it) / at build time / lazily on demand / cached"
+    - "dependencies: standard library only / one focused library / the framework's built-in way"
+    - "failure handling: fail fast with a clear error / retry with backoff / degrade gracefully / validate at the boundary only"
+  lenses:
+    - "Write the test that would catch the most likely bug first, then the code that passes it."
+    - "Ask what the input looks like at 1000x the size: what breaks first? Choose the structure for that."
+    - "Delete half of the code you were about to write: what is the smallest version that still does the job?"
+    - "Solve it in the database or with the language's built-ins before writing a loop."
+    - "Make illegal states unrepresentable: pick types and structures so the bug cannot be written."
+    - "Read the code the project already has and do it the way that code does it."
+    - "Turn the special cases into data (a table, a mapping) instead of branches."
+    - "Consider doing it in one streaming pass with constant memory."
+    - "Precompute what is asked for often; compute lazily what is asked for rarely."
+    - "Find the invariant the loop keeps; write it as a comment or an assert, then write the loop."
+    - "Look for the library function that already exists in the language for exactly this."
+    - "Swap the direction: iterate over the smaller collection, or search from the answer backwards."
+    - "Write the error messages the user will read before the code that raises them."
+    - "Make the slow part measurable first (time it), then improve only what the numbers show."
+    - "Explain the solution to a new teammate in three sentences; if you cannot, it is too clever."
+    - "What would a well-known project in this language do here? Follow its idiom."
+    - "Check the boundaries: empty input, one item, duplicates, unicode, time zones, very large numbers."
+    - "Split what changes often from what never changes, and put them in different places."
+  proof: "Run it: execute the code or its tests, show the real output, and check the boundary cases (empty, one, many, wrong input). State the complexity when performance matters."
+
+math:
+  words: [matematika, math, hitung, hitungan, rumus, persamaan, equation, integral, turunan, derivative, limit, probabilitas, peluang, statistik, statistic, aljabar, geometri, trigonometri, matriks, matrix, vektor, bukti, proof, buktikan, soal, deret, barisan, kombinatorik, logaritma, fungsi]
+  autopilot:
+    - "plug numbers into the first formula that looks related, without checking its conditions"
+    - "long brute-force expansion where a symmetry or substitution would finish in two lines"
+    - "an answer with no check against the original question"
+    - "rounding early and carrying the error through"
+  axes:
+    - "method: algebraic manipulation / substitution / geometric picture / coordinates or vectors / counting two ways / complementary counting / probability tree or symmetry / induction / contradiction / invariant or monovariant / generating function / bounding and squeezing / numerical estimate"
+    - "representation: equation / graph / table of small cases / diagram / matrix / recurrence"
+    - "direction: forward from the givens / backward from the goal / from the extreme or special case / from the general case"
+  lenses:
+    - "Try the smallest cases (n = 1, 2, 3) and look for the pattern before the general proof."
+    - "Look for a symmetry or an invariant: what stays the same?"
+    - "Count the complement: is the opposite easier?"
+    - "Draw it. Many algebra problems are geometry, and geometry problems are algebra."
+    - "Change variables so the expression becomes simpler (shift, scale, substitute)."
+    - "Check the extremes: what happens at 0, at 1, as n grows without limit?"
+    - "Estimate the answer roughly first; the exact answer must land near it."
+    - "Work backwards from what the answer must satisfy."
+    - "Solve a simpler version of the problem (fewer variables, smaller numbers) and generalise."
+    - "Ask whether the formula's conditions actually hold here (independence, continuity, domain)."
+    - "Find a second, independent method; if both agree, the answer is very likely right."
+    - "Look at units and dimensions: does the answer have the right ones?"
+    - "Translate the words into exact conditions before calculating anything."
+    - "Use a known identity or theorem by name, and say why it applies."
+  proof: "Check the answer against the original conditions, and confirm it a second way: a different method, a substitution back into the equation, or an exact computation with calc or execute_command. Keep exact values until the end."
+
+writing:
+  words: [tulis, tulisan, menulis, artikel, esai, essay, caption, copy, copywriting, cerita, story, puisi, poem, naskah, script, pidato, speech, surat, email, deskripsi, bio, slogan, tagline, judul, headline, konten, content, thread, blog, sinopsis]
+  autopilot:
+    - "an opener like 'Di era digital ini' or 'In today's fast-paced world'"
+    - "three points, each with a bold label, and a conclusion that repeats the introduction"
+    - "the same rhythm in every sentence, adjectives stacked in threes, and a rhetorical question at the end"
+    - "generic claims with no names, numbers, places or examples"
+  axes:
+    - "angle: a story / a number / a contrarian claim / a question the reader has / a scene / a confession / a how-to"
+    - "structure: chronological / problem-solution / inverted pyramid / list that builds / letter / dialogue / before-after"
+    - "voice: plain and direct / warm and personal / dry and witty / formal and exact / the brand's own slang"
+    - "length and rhythm: very short lines / long flowing paragraphs / a mix with one short punch per paragraph"
+  lenses:
+    - "Start in the middle of a real moment, not with background."
+    - "Write the sentence only this subject could have: a name, a number, a place, a smell."
+    - "Cut the first paragraph; the piece probably starts in the second."
+    - "Say the opposite of the obvious take, then earn it."
+    - "Write it for one specific reader, by name in your head."
+    - "Replace every adjective with a fact."
+    - "End on an image or an action, not a summary."
+    - "Read it aloud: any sentence you would not say to a friend, rewrite."
+    - "Use the reader's own words (from the request, the brand, the place)."
+    - "Make the title a promise the text keeps in its first three lines."
+  proof: "Reread as a stranger: remove stock phrases and filler, check every fact and name, and make sure the first and last lines are the strongest."
+
+reason:
+  words: [strategi, strategy, rencana, plan, bisnis, business, keputusan, decision, analisis, analysis, ide, idea, solusi, solution, bandingkan, compare, pilih, choose, rekomendasi, recommend, kenapa, why, evaluasi, riset, research, pemasaran, marketing, produk, product, startup]
+  autopilot:
+    - "a balanced list of pros and cons that never commits to an answer"
+    - "the most famous framework (SWOT, 4P) applied mechanically"
+    - "advice that would fit any business in any city"
+  axes:
+    - "frame: cost / time / risk / customer / competitor / regulation / what could be undone"
+    - "scale: what to do today / this month / this year"
+    - "option type: do more / do less / do differently / do nothing / buy / build / partner"
+  lenses:
+    - "Steelman the option you are about to reject."
+    - "What would change your mind? Name the evidence."
+    - "Invert it: what would guarantee failure? Then avoid exactly that."
+    - "Find the cheapest experiment that would settle the question this week."
+    - "Look at it from the person who pays, the person who uses, and the person who says no."
+    - "Second-order effects: and then what happens?"
+    - "Use real numbers from the request or a quick estimate instead of adjectives."
+    - "Ask what a competitor or an outsider in another industry would do."
+    - "Separate what is reversible from what is not; move fast on the first, slow on the second."
+    - "Decide, then list the one or two conditions under which the decision flips."
+  proof: "Commit to one recommendation with the reason it beats the alternatives, the main risk, and the first concrete step. Mark what is assumed and what is checked."
+
+data:
+  words: [data, dataset, csv, excel, xlsx, tabel, grafik, chart, visualisasi, analisis data, statistik, rekap, laporan, report, dashboard, sql, pandas, tren, trend, prediksi, forecast]
+  autopilot:
+    - "a bar chart of everything with default colours and no message"
+    - "averages that hide the distribution, and totals with no comparison"
+    - "a table copied as is with no ordering or highlight"
+  axes:
+    - "question: what changed / what is unusual / what drives what / who or what is biggest / what will happen next"
+    - "view: one number with context / ranked list / time series / distribution / comparison of two groups / map / small multiples"
+    - "unit: totals / per person / per day / percentage change / share of whole"
+  lenses:
+    - "Write the one-sentence finding first, then choose the chart that proves it."
+    - "Look at the distribution, not only the average: outliers, gaps, skew."
+    - "Compare against something: last period, a target, another group."
+    - "Sort by what matters; highlight one series and grey the rest."
+    - "Check the data before trusting it: duplicates, missing values, units, dates."
+    - "Normalise: per capita, per day, per transaction, before ranking."
+    - "Ask what would surprise the owner of this data, and look for that."
+  proof: "Compute with code from the real file, show the numbers the claim rests on, and state the caveats of the data (missing, sampled, estimated)."

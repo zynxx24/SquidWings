@@ -382,12 +382,12 @@ def lab_status(symbol: str = "XAUUSD", size: str | None = None) -> dict[str, Any
         sizes.append({"size": name, "has_model": path.exists(), "current_design": arch == candle_lm.ARCH if path.exists() else None,
                       "best_score": sub.get("best_score"), "epoch": sub.get("epoch"), "exam_score": score,
                       "shape": {k: candle_lm.SIZES[name][k] for k in ("ctx", "d_model", "layers", "heads")},
-                      "running": bool(running and running["size"] == name)})
+                      "running": bool(running is not None and running["size"] == name)})
     return {
         "instrument": instrument, "size": size, "arch": candle_lm.ARCH,
         "running": this_running, "other_running": None if this_running or not running else running,
-        "waiting": bool(st.get("waiting")) and this_running, "pid": running["pid"] if this_running else None,
-        "process": process_stats(running["pid"]) if this_running else None, "machine": _machine(),
+        "waiting": bool(st.get("waiting")) and this_running, "pid": running["pid"] if this_running and running else None,
+        "process": process_stats(running["pid"]) if this_running and running else None, "machine": _machine(),
         "epoch": st.get("epoch"), "step": st.get("step"), "lr": st.get("lr"), "lr_scale": st.get("lr_scale"),
         "seconds": st.get("seconds"), "steps_per_epoch": st.get("steps_per_epoch"), "at": st.get("at"),
         "started_at": st.get("started_at") if this_running else None, "limit": st.get("limit") if this_running else None,
@@ -415,12 +415,11 @@ def lab_history(symbol: str = "XAUUSD", size: str = "base", points: int = 600) -
     path = candle_lm.run_dir(m5store.instrument(symbol), size) / "log.jsonl"
     keep = ("epoch", "step", "lr", "train_ratio", "train_loss", "score", "closeness_avg", "gain_avg_points", "seconds", "best", "at")
     rows: list[dict[str, Any]] = []
-    with contextlib.suppress(OSError):
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                with contextlib.suppress(ValueError):
-                    row = json.loads(line)
-                    rows.append({k: row.get(k) for k in keep})
+    with contextlib.suppress(OSError), open(path, encoding="utf-8") as f:
+        for line in f:
+            with contextlib.suppress(ValueError):
+                row = json.loads(line)
+                rows.append({k: row.get(k) for k in keep})
     total = len(rows)
     if total > points:
         every = math.ceil(total / points)

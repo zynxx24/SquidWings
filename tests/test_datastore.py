@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextlib
 import json
 import re
 import sqlite3
@@ -207,7 +208,7 @@ def test_jsonl(tmp_path: Path) -> None:
 @pytest.fixture
 def lite(tmp_path: Path) -> SqlBackend:
     path = tmp_path / "toko.sqlite"
-    with sqlite3.connect(path) as db:
+    with contextlib.closing(sqlite3.connect(path)) as db, db:
         db.execute("CREATE TABLE produk (id INTEGER PRIMARY KEY, nama TEXT, harga INTEGER)")
         db.execute("CREATE TABLE log (pesan TEXT)")
         db.executemany("INSERT INTO produk (nama, harga) VALUES (?, ?)", [("Kaos 100%", 50000), ("Topi", 30000)])

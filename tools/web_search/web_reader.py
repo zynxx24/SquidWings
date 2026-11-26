@@ -27,6 +27,7 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify
 
 from brain.config.settings import get_settings
+from brain.utils import agent_reach
 from brain.utils.cache import cache
 from brain.utils.logger import get_logger
 from brain.utils.markdown_compact import compact_markdown
@@ -324,11 +325,20 @@ async def web_read(url: str, query: str = "", max_chars: int = _DEFAULT_PAGE_CHA
         elif " " in url or not url:
             found = await web_research(f"{url} {query}".strip())
             return {**found, "note": f"'{url}' is not an address, so it was searched instead. " + str(found.get("note", ""))}
+    budget = max(500, min(max_chars, 400_000))
+    if agent_reach.installed() and agent_reach.prefers(url):
+        reached = await _read_with_reach(url, query, budget)
+        if reached is not None:
+            return reached
     try:
         page = await fetch_page(url)
     except PageUnavailableError as exc:
+        if agent_reach.installed() and agent_reach.handles(url) and not agent_reach.prefers(url):
+            reached = await _read_with_reach(url, query, budget)
+            if reached is not None:
+                return reached
         return {"ok": False, "url": url, "error": str(exc), "note": "Try another source."}
-    content, cut = passages(page.text, query, max(500, min(max_chars, 400_000)))
+    content, cut = passages(page.text, query, budget)
     return {
         "ok": True,
         "url": page.url,
@@ -337,6 +347,34 @@ async def web_read(url: str, query: str = "", max_chars: int = _DEFAULT_PAGE_CHA
         "content": content,
         "truncated": cut,
         "total_chars": len(page.text),
+        "note": _UNTRUSTED_NOTE,
+    }
+
+
+async def _read_with_reach(url: str, query: str, budget: int) -> dict[str, Any] | None:
+    """A link read by Agent Reach (subtitles, a thread with its comments, a post), shaped like web_read's answer.
+    None when Agent Reach could not read it, so the plain fetch still gets its turn."""
+    result = await asyncio.to_thread(agent_reach.read, url)
+    items = [i for i in result.get("items") or [] if isinstance(i, dict)]
+    if not result.get("ok") or not items:
+        return None
+    parts = []
+    for item in items:
+        head = " · ".join(str(item.get(k)) for k in ("title", "author", "published_at") if item.get(k))
+        parts.append(f"{head}\n{item.get('text') or ''}".strip())
+    text = "\n\n".join(p for p in parts if p)
+    if not text.strip():
+        return None
+    content, cut = passages(text, query, budget)
+    return {
+        "ok": True,
+        "url": str(items[0].get("url") or url),
+        "title": str(items[0].get("title") or ""),
+        "published": str(items[0].get("published_at") or ""),
+        "content": content,
+        "truncated": cut,
+        "total_chars": len(text),
+        "source": f"agent-reach ({result.get('channel') or 'web'})",
         "note": _UNTRUSTED_NOTE,
     }
 

@@ -166,6 +166,8 @@ class CloudflareTunnel:
 
     def _read_failure(self) -> None:
         """Remember the last error line of tunnel.log so the CLI can show it."""
+        if self._log_file is None:
+            return
         try:
             lines = [ln.strip() for ln in self._log_file.read_text(encoding="utf-8", errors="ignore").splitlines()]
         except Exception:

@@ -134,7 +134,8 @@ def _atr(h: np.ndarray, lo: np.ndarray, c: np.ndarray, n: int = 14) -> np.ndarra
     for i, value in enumerate(tr):
         acc = value if i == 0 else acc + (value - acc) / n
         out[i] = acc
-    return np.maximum(out, 1e-12)
+    smoothed: np.ndarray = np.maximum(out, 1e-12)
+    return smoothed
 
 
 def _ema(x: np.ndarray, period: int) -> np.ndarray:
@@ -164,7 +165,8 @@ def _rsi(c: np.ndarray, n: int = 14) -> np.ndarray:
     delta = np.diff(c, prepend=c[0])
     up, dn = np.maximum(delta, 0.0), np.maximum(-delta, 0.0)
     au, ad = _ema(up, 2 * n - 1), _ema(dn, 2 * n - 1)       # Wilder's smoothing is an EMA of span 2n-1
-    return 100.0 - 100.0 / (1.0 + au / np.maximum(ad, 1e-12))
+    rsi: np.ndarray = 100.0 - 100.0 / (1.0 + au / np.maximum(ad, 1e-12))
+    return rsi
 
 
 def _rank(x: np.ndarray, window: int) -> np.ndarray:

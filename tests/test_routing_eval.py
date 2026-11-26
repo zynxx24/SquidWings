@@ -6,18 +6,18 @@ from dataclasses import replace
 
 import pytest
 
+from brain.classifier.intent_classifier import IntentClassifier
+from brain.config.constants import TaskType
 from brain.harness.tiers import scaffold_for
+from brain.harness.tool_select import select_tools
+from tests.routing_eval import INTENT_FLOOR, check_intent, check_routing, intent_accuracy, load
+from tools import toolbox
+from tools.register_tools import register_all_tools
 
 
 def _capped(model: str):
     """The priority-ordered list a run with a tool cap gets (tiers themselves no longer cap)."""
     return replace(scaffold_for(model), max_tools=16)
-from brain.classifier.intent_classifier import IntentClassifier
-from brain.config.constants import TaskType
-from brain.harness.tool_select import select_tools
-from tests.routing_eval import INTENT_FLOOR, check_intent, check_routing, intent_accuracy, load
-from tools import toolbox
-from tools.register_tools import register_all_tools
 
 
 def _params(cases: list[dict]) -> list:

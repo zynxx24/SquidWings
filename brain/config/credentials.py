@@ -63,6 +63,13 @@ FIELDS: tuple[Field, ...] = (
     Field("elevenlabs_api_key", "ElevenLabs API key", "voice", True, "ELEVENLABS_API_KEY",
           "Dari elevenlabs.io → Developers → API Keys. Ada paket gratis. Dipakai tool voice_speak untuk voice-over.",
           r"[A-Za-z0-9_-]{20,200}", "sk_..."),
+    Field("gemini_api_key", "Gemini API key (suara)", "voice", True, "GEMINI_API_KEY",
+          "Dari aistudio.google.com → Get API key. Dipakai voice_speak engine gemini (Gemini TTS) untuk voice-over "
+          "yang mengikuti arahan gaya, jeda, dan nada.", r"[A-Za-z0-9._-]{20,300}", "AIza... atau AQ...."),
+    Field("gemini_tts_model", "Model Gemini TTS", "voice", False, "GEMINI_TTS_MODEL",
+          "Opsional. Bawaan gemini-3.8-flash-tts.", r"[a-z0-9.\-]{3,80}", "gemini-3.8-flash-tts"),
+    Field("gemini_tts_voice", "Suara Gemini bawaan", "voice", False, "GEMINI_TTS_VOICE",
+          "Opsional. Nama suara bawaan, misalnya Kira.", r"[A-Za-z]{2,40}", "Kira"),
     Field("elevenlabs_voice_id", "Voice ID bawaan", "voice", False, "ELEVENLABS_VOICE_ID",
           "Opsional. Suara yang dipakai bila agent tidak memilih. Lihat daftarnya dengan tool voice_list.",
           r"[A-Za-z0-9]{10,40}", "21m00Tcm4TlvDq8ikWAM"),

@@ -4,7 +4,7 @@ description: Video dan audio - unduh video, audio, atau subtitle dari link (yt-d
 triggers: youtube, unduh video, download video, download audio, unduh lagu, mp3, subtitle, subtitel, takarir, transkrip, transkripsi, transcribe, transcript, speech to text, suara ke teks, whisper, yt-dlp, hyperframes, remotion, render video, bikin video, buat video, video intro, video explainer, video promosi, caption video, video vertikal, reels, shorts
 scope: contextual
 context: video, audio, mp4, mp3, link, youtube, youtu.be, tiktok, instagram, rekaman, podcast, wawancara, rapat, kuliah, intro, explainer, caption, subtitle, render, klip, clip, reels, shorts, durasi, detik, menit
-tools: media_tools_status, media_info, media_download, transcribe, video_new, video_docs, video_check, video_render, share_file, read_file, file_write, file_patch, style_pick, voice_speak, voice_list, aislop_scan
+tools: media_tools_status, media_info, media_download, transcribe, video_new, video_docs, video_check, video_render, share_file, read_file, file_write, file_patch, style_pick, voice_speak, voice_list, voice_track, video_add_voice, aislop_scan
 ---
 # Video dan audio
 
@@ -46,6 +46,9 @@ Alur:
 Kalau render gagal, baca `log_tail`, perbaiki penyebabnya, dan render lagi. Jangan menurunkan kualitas hanya untuk menyembunyikan error.
 
 ## Suara (voice-over) — selalu bisa, gratis
+
+Video promosi dan explainer **selalu diberi suara**, kecuali pengguna minta musik saja. Untuk video dengan naskah bertimestamp (`mic.txt`), pakai skill **voice-over**: `voice_track` meletakkan tiap baris tepat di detik adegannya (Gemini TTS yang bisa diarahkan gaya, ElevenLabs, atau Edge gratis), dan `video_add_voice` memberi suara pada video yang sudah dirender tanpa render ulang. `voice_speak` di bawah untuk satu narasi tanpa rentang waktu.
+
 
 `voice_speak(text, output)` membuat MP3. Tanpa key ElevenLabs ia memakai suara neural Edge **gratis**:
 `id-ID-GadisNeural` (wanita) dan `id-ID-ArdiNeural` (pria) untuk Indonesia, atau `voice="pria"`/`"wanita"`;

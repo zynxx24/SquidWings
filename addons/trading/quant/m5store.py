@@ -86,7 +86,7 @@ def to_m5(bars: list[tuple[int, float, float, float, float, float]]) -> list[tup
             out[key] = [o, h, low, c, v]
         else:
             b[1], b[2], b[3], b[4] = max(b[1], h), min(b[2], low), c, b[4] + v
-    return [(t, *out[t]) for t in sorted(out)]
+    return [(t, out[t][0], out[t][1], out[t][2], out[t][3], out[t][4]) for t in sorted(out)]
 
 
 def _pick_server(name: str) -> Path | None:

@@ -1,1 +1,1 @@
-Before generating, convert the request into a coherent visual plan covering subject, composition, style, lighting, color, perspective, and format.
+Before generating, name the obvious picture any model would make for this request (one centred subject, a gradient or blurred background, glossy 3D) and go past it. Choose a direction first (style_pick), then plan subject, composition, viewpoint, light, palette, texture and format so that only this subject could have this picture. Add one natural imperfection, render it, look at the result, and fix what looks generic.

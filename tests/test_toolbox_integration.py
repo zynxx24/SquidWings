@@ -10,19 +10,19 @@ from typing import Any
 import pytest
 
 from brain.agent.agent_loop import AgentLoop
+from brain.config.constants import TaskType
 from brain.harness import Harness, scaffold_for
+from brain.harness.guards import normalize_arguments
+from brain.harness.tool_select import select_tools, toolbox_hint
+from tools.register_tools import register_all_tools
+from tools.registry.tool_registry import WORKSPACE_TOOLS, ToolRegistry, is_read_only
+from tools.toolbox import CATALOG, deferred_names
 
 
 def _capped(model: str):
     """A run with a tool cap (tiers themselves no longer cap): the priority order is what these tests pin."""
     scaffold = scaffold_for(model)
     return scaffold if "opus" in model else replace(scaffold, max_tools=16)
-from brain.config.constants import TaskType
-from brain.harness.guards import normalize_arguments
-from brain.harness.tool_select import select_tools, toolbox_hint
-from tools.register_tools import register_all_tools
-from tools.registry.tool_registry import WORKSPACE_TOOLS, ToolRegistry, is_read_only
-from tools.toolbox import CATALOG, deferred_names
 
 
 @pytest.fixture(scope="module")

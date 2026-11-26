@@ -53,7 +53,7 @@ from brain.config import credentials
 from brain.config.constants import ResponseStatus
 from brain.config.edition import STUDIO_NOTE, studio_enabled, studio_module
 from brain.harness import RunLimits, Tier, tier_for
-from brain.utils import session_settings, shared_files, workspace_context
+from brain.utils import file_history, session_settings, shared_files, workspace_context
 from brain.utils.datastore import access as data_access
 from brain.utils.datastore.access import Access
 from brain.utils.datastore.base import DataError
@@ -1792,6 +1792,14 @@ class TeamOrchestrator:
         run.session = session_id
         shared_before = set(shared_files.shared(stack.workspace))
         self._shared_at_start[run.id] = shared_before
+        # What the run changes in its folder, as in a chat turn: the IDE's "Perubahan AI" shows it and can undo it.
+        tracker = file_history.FileHistory(stack.workspace)
+        history: file_history.FileHistory | None = tracker
+        history_started = 0.0
+        try:
+            history_started = await asyncio.to_thread(tracker.begin)
+        except OSError:
+            history = None
         if team.mode == "video":
             session_settings.activate_skills(stack.workspace, [VIDEO_SKILL])
         elif team.mode == "motion":
@@ -1882,6 +1890,10 @@ class TeamOrchestrator:
             run.completed_at = time.time()
             self._workspaces.pop(run.id, None)
             self._shared_at_start.pop(run.id, None)
+            if history is not None:
+                with contextlib.suppress(OSError):
+                    await asyncio.to_thread(history.end, history_started,
+                                            f"[{team.name}] {run.title or self._message(run)}", session_id)
             self._checkpoint(run, "run_finished")
 
     @staticmethod

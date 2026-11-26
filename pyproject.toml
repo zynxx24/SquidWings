@@ -13,6 +13,9 @@ exclude = [
     "*.corrupt",
     # Vendored skill code, kept as upstream wrote it.
     "skills/*/tools",
+    # Helper scripts shipped inside skills (motlab, humanizer-indonesia): run by the skill, kept as written;
+    # mypy skips skills/builtin/ for the same reason.
+    "skills/builtin/*/scripts",
 ]
 
 [tool.ruff.lint]

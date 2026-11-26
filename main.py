@@ -752,7 +752,7 @@ def _handle_ide_command(
             if registry.get(arg) is None:
                 console.print(f"[yellow]Model tidak dikenal: {escape(arg)}. Ketik /model untuk daftar, atau /model auto.[/yellow]")
                 return True, None, active_workspace
-            selected = arg
+            selected: str | None = arg
         else:
             selected = _display_model_selector(registry, current_model)
         if selected:
@@ -1301,6 +1301,17 @@ async def process_input(
             else:
                 activity.update(str(event.get("text") or ""))
 
+    # What the AI changes in the folder this turn, as in the web chat: the IDE shows it and can undo it.
+    from brain.utils import file_history
+
+    folder = getattr(stack, "workspace", None)
+    history = file_history.FileHistory(folder) if folder else None
+    history_started = 0.0
+    if history is not None:
+        try:
+            history_started = await asyncio.to_thread(history.begin)
+        except OSError:
+            history = None
     try:
         response = await orchestrator.process(
             user_input=user_input,
@@ -1316,6 +1327,16 @@ async def process_input(
         )
     finally:
         activity.stop()
+        changed = None
+        if history is not None:
+            try:
+                changed = await asyncio.to_thread(history.end, history_started, user_input, session_id)
+            except OSError:
+                changed = None
+        if changed is not None:
+            stats = changed.public()
+            console.print(f"  [dim]↳ {len(changed.changes)} file diubah AI (+{stats['added']} −{stats['removed']}); "
+                          "lihat atau urungkan di IDE (Alt+6 di web)[/dim]")
 
     if response.status == ResponseStatus.ERROR:
         renderer.finish("")
@@ -2010,6 +2031,39 @@ def _choose_web_port(host: str, port: int, strict: bool = False, replace: bool =
     return alternative
 
 
+def _reach_cmd(action: str, target: str) -> int:
+    """Agent Reach from the terminal. Logging in to a platform is `agent-reach login <channel>`, run by the user."""
+    import json as _json
+
+    from brain.utils import agent_reach
+
+    if action == "install":
+        console.print("[cyan]Memasang Agent Reach dari GitHub (uv tool install), lalu channel bawaannya...[/cyan]")
+        result = agent_reach.install()
+    elif action == "update":
+        result = agent_reach.update()
+    elif action in {"add", "remove"}:
+        if not target:
+            console.print(f"[yellow]Sebutkan platformnya: python main.py reach {action} reddit[/yellow]")
+            return 2
+        result = agent_reach.explain(agent_reach.run([action, target], timeout=agent_reach.SETUP_TIMEOUT))
+    elif action == "read":
+        if not target:
+            console.print("[yellow]Sebutkan link-nya: python main.py reach read https://youtu.be/...[/yellow]")
+            return 2
+        result = agent_reach.read(target)
+    else:
+        result = {"installed": agent_reach.installed(), "version": agent_reach.version(),
+                  "latest": agent_reach.latest_release(),
+                  "doctor": agent_reach.run(["doctor"], timeout=120) if agent_reach.installed() else None}
+    report = result.get("report") if isinstance(result, dict) else None
+    if report:
+        console.print(report)
+    console.print_json(_json.dumps({k: v for k, v in result.items() if k != "report"}, ensure_ascii=False, default=str))
+    ok = result.get("ok", result.get("installed", False))
+    return 0 if ok else 1
+
+
 def _addon_cmd(action: str, names: list[str]) -> int:
     """``addon list``, ``addon install <name>`` (packages + switch on), ``addon enable`` (switch on only),
     ``addon remove <name>`` (switch off; files and data stay)."""
@@ -2176,6 +2230,14 @@ Examples:
     addon_parser.add_argument("action", nargs="?", choices=["list", "install", "enable", "remove"], default="list")
     addon_parser.add_argument("names", nargs="*", help="Which add-ons, e.g. trading studio")
 
+    # reach command: Agent Reach (YouTube subtitles, Reddit, X, GitHub issues...), updated daily with the other tools
+    reach_parser = subparsers.add_parser(
+        "reach", help="Agent Reach: install, update, status, add/remove a platform, read a link",
+    )
+    reach_parser.add_argument("action", nargs="?", choices=["status", "install", "update", "add", "remove", "read"],
+                              default="status")
+    reach_parser.add_argument("target", nargs="?", default="", help="The platform (add/remove) or the link (read)")
+
     # web command
     web_parser = subparsers.add_parser("web", help="Start the Web GUI server")
     web_parser.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
@@ -2225,10 +2287,17 @@ Examples:
             console.print(f"[dim]↳ dirapikan: {line}[/dim]")
 
     if args.command in ("chat", "web", None):
-        # Clone missing GitHub skills, pull them once a day, link the chosen ones into Claude Code.
+        # While the terminal or the web runs, and only when online (brain/utils/online.py), every 12 hours:
+        # GitHub skills are pulled (and missing ones cloned), and the local tools (Agent Reach, graphify, aislop,
+        # yt-dlp...) are upgraded. The repository itself is checked by repo_update above.
         from skills import sources as skill_sources
 
         skill_sources.start_background()
+        if args.command != "web":   # the web server starts its own in its lifespan
+            from brain.config.settings import get_settings as _settings
+            from tools.code_intel import tool_updates
+
+            tool_updates.start_background(_settings().project_root / ".agent_memory" / "tool_updates.json")
 
     if args.command == "chat" or args.command is None:
         _run_async(chat_mode, getattr(args, "project", None))
@@ -2250,6 +2319,8 @@ Examples:
         sys.exit(_skills_cmd(args.action, " ".join(args.query)))
     elif args.command == "addon":
         sys.exit(_addon_cmd(args.action, args.names))
+    elif args.command == "reach":
+        sys.exit(_reach_cmd(args.action, args.target))
     elif args.command == "trading":
         from brain.config.edition import ENTERPRISE_NOTE, trading_enabled
 

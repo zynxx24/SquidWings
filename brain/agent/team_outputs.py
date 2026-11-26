@@ -11,6 +11,7 @@ never include the text of the underlying exception.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import html as html_text
 import importlib
 import importlib.util
@@ -291,7 +292,8 @@ def database_options() -> list[dict[str, Any]]:
 def _save_sqlite(table: str, record: dict[str, Any]) -> None:
     path = Path(credentials.get("team_db_sqlite_path"))
     path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(path) as connection:
+    # `with connection` only commits; closing() closes it, so no file handle is left open per saved row.
+    with contextlib.closing(sqlite3.connect(path)) as connection, connection:
         connection.execute(_create_table(table, "INTEGER PRIMARY KEY AUTOINCREMENT"))
         connection.execute(_insert(table, record, "?"), list(record.values()))
 
