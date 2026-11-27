@@ -289,10 +289,20 @@ def fake_client(monkeypatch: pytest.MonkeyPatch, answers: list[FakeResponse], se
 
     monkeypatch.setattr(gemini_tts.httpx, "AsyncClient", Client)
 
-    async def no_wait(_s: float) -> None:
-        return None
+    now = [1000.0]
 
+    async def no_wait(seconds: float) -> None:
+        now[0] += seconds                  # the routing clock moves as if the wait had happened
+
+    monkeypatch.setattr(gemini_tts, "_clock", lambda: now[0])
     monkeypatch.setattr(gemini_tts.asyncio, "sleep", no_wait)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_routes() -> None:
+    from brain.utils import cache
+
+    cache.clear("gemini_tts_rest")
 
 
 async def test_gemini_speaks_with_direction_and_turns_raw_pcm_into_wav(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -319,9 +329,62 @@ async def test_gemini_waits_out_the_per_minute_limit_and_names_the_daily_one(mon
     assert (await gemini_tts.speak("Tes."))[:4] == b"RIFF" and len(seen) == 2
     day = FakeResponse(429, {"error": {"details": [{"violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel"}]},
                                                     {"retryDelay": "64658s"}]}})
-    fake_client(monkeypatch, [day], [])
+    tried: list[dict[str, Any]] = []
+    fake_client(monkeypatch, [day] * len(gemini_tts.models()), tried)
     with pytest.raises(gemini_tts.TTSError, match="Kuota harian"):
         await gemini_tts.speak("Tes.")
+    # the daily limit moves the voice down the model list before giving up
+    assert [t["url"].split("/models/")[1].split(":")[0] for t in tried] == gemini_tts.models()
+
+
+def _day() -> FakeResponse:
+    return FakeResponse(429, {"error": {"details": [{"violations": [{"quotaId": "GenerateRequestsPerDayPerProjectPerModel"}]},
+                                                     {"retryDelay": "64658s"}]}})
+
+
+def _minute() -> FakeResponse:
+    return FakeResponse(429, {"error": {"details": [{"violations": [{"quotaId": "GenerateRequestsPerMinutePerProjectPerModel"}]},
+                                                     {"retryDelay": "40s"}]}})
+
+
+async def test_gemini_routes_to_the_next_key_on_the_same_model_without_waiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gemini_tts, "key", lambda: "key-one-aaaaaaaaaaaaaaaa, key-two-bbbbbbbbbbbbbbbb")
+    slept: list[float] = []
+    seen: list[dict[str, Any]] = []
+    fake_client(monkeypatch, [_minute(), audio_answer(tone(0.2), "audio/wav")], seen)
+
+    async def sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(gemini_tts.asyncio, "sleep", sleep)
+    assert (await gemini_tts.speak("Tes."))[:4] == b"RIFF"
+    used = [s["headers"]["x-goog-api-key"] for s in seen]
+    models = {s["url"].split("/models/")[1].split(":")[0] for s in seen}
+    assert len(set(used)) == 2 and models == {gemini_tts.models()[0]} and not slept
+    # the resting pair shows up by its last four characters only
+    status = gemini_tts.route_status()
+    assert status and all("key-" not in str(s["key"]) for s in status)
+
+
+async def test_a_key_out_for_the_day_leaves_the_other_keys_on_the_best_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gemini_tts, "key", lambda: "key-one-aaaaaaaaaaaaaaaa\nkey-two-bbbbbbbbbbbbbbbb")
+    seen: list[dict[str, Any]] = []
+    fake_client(monkeypatch, [_day(), audio_answer(tone(0.2), "audio/wav"), audio_answer(tone(0.2), "audio/wav")], seen)
+    await gemini_tts.speak("Satu.")
+    await gemini_tts.speak("Dua.")
+    first_model = gemini_tts.models()[0]
+    assert all(first_model in s["url"] for s in seen)
+    assert seen[1]["headers"] == seen[2]["headers"] != seen[0]["headers"]       # the tired key is skipped after
+
+
+def test_several_keys_fit_the_credential_field() -> None:
+    from brain.config import credentials
+
+    spec = credentials.BY_KEY["gemini_api_key"]
+    import re as _re
+
+    assert _re.fullmatch(spec.pattern, "AQ.aaaaaaaaaaaaaaaaaaaaaa, AIzabbbbbbbbbbbbbbbbbbbbbbbb")
+    assert not _re.fullmatch(spec.pattern, "short, key")
 
 
 async def test_without_a_key_the_tool_says_how_to_connect(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

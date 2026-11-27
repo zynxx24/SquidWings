@@ -64,7 +64,13 @@ voice_track(script="mic.txt", output="videos/<proyek>/public/voice.wav", total_s
 | `elevenlabs` | Pengguna punya key ElevenLabs | Berbayar per karakter |
 | `edge` | Gratis tanpa batas, tanpa key (`id-ID-GadisNeural`, `id-ID-ArdiNeural`) | Tidak bisa diarahkan gaya; pakai saat kuota Gemini habis |
 
-Kalau Gemini menjawab kuota harian habis, katakan apa adanya ke pengguna. Tawarkan menunggu besok atau memakai `engine="edge"` sekarang. Jangan diam-diam pindah engine.
+**Routing Gemini.** Isi Gemini API key di Kredensial boleh beberapa key, dipisah koma. Kuota gratis dihitung per key per model, jadi setiap permintaan dikirim ke pasangan (key, model) yang masih segar:
+- Kena batas per menit: key lain di model yang sama dipakai langsung. Kalau semua key sedang kena, tunggu jedanya di model yang sama, supaya satu trek tetap satu warna suara.
+- Kena batas harian: key itu diistirahatkan untuk model tersebut. Key lain tetap dipakai, dan baru pindah ke model berikutnya (`gemini-3.8-flash-tts`, lalu `gemini-3.8-flash-lite-tts`, `gemini-3.1-flash-tts-preview`, `gemini-2.5-flash-preview-tts`) setelah semua key habis di model itu.
+- Key yang ditolak (401/403) diistirahatkan 30 menit kalau masih ada key lain.
+- Arahan gaya ditulis di bagian `## Director's notes` dan tidak ikut diucapkan. Jangan menaruh instruksi di dalam teks yang dibacakan, karena model TTS akan ikut membacanya.
+
+Kalau Gemini menjawab kuota harian habis di semua key dan model, katakan apa adanya ke pengguna. Tawarkan menunggu besok atau memakai `engine="edge"` sekarang. Jangan diam-diam pindah engine.
 
 ## 3. Masukkan ke video
 

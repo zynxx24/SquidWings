@@ -5,8 +5,15 @@ The request is the one AI Studio's code example makes, sent with httpx (no extra
 (``audio/L16;rate=24000``) which gets a WAV header here. The prompt follows AI Studio's structure: a director's note
 (how to say it) above ``## Transcript:`` (what to say), so the note steers the voice and is not read aloud.
 
-The key is ``gemini_api_key`` in Kredensial (or ``GEMINI_API_KEY``); ``gemini_tts_model`` and ``gemini_tts_voice``
-change the defaults. The key is sent as a header, never put in a URL, a result or a log line.
+The key is ``gemini_api_key`` in Kredensial (or ``GEMINI_API_KEY``); several keys may be given, separated by commas
+or new lines. ``gemini_tts_model`` and ``gemini_tts_voice`` change the defaults. A key is sent as a header, never put
+in a URL, a result or a log line.
+
+Routing: the free tier counts per key and per model, so each request goes to a (key, model) pair. The best model is
+tried on every key in turn first. A pair that answers 429 rests: until the delay Google names for the per-minute
+limit, for hours for the daily one, half an hour for a refused key. Only when every key is out for the day on a model
+does the voice move to the next model in ``FALLBACK_MODELS``; a per-minute limit is waited out on the same model, so
+one track keeps one sound.
 """
 
 from __future__ import annotations
@@ -14,18 +21,27 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import hashlib
 import io
+import itertools
 import json
 import re
 import struct
+import time
 import wave
 
 import httpx
 
 from brain.config import credentials
+from brain.utils import cache
 
 API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 DEFAULT_MODEL = "gemini-3.8-flash-tts"
+# Where the voice goes when every key is out for the day on the model before it; best first.
+FALLBACK_MODELS = ("gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts", "gemini-3.1-flash-tts-preview",
+                   "gemini-2.5-flash-preview-tts")
+DAY_REST_S = 6 * 3600.0
+AUTH_REST_S = 30 * 60.0
 DEFAULT_VOICE = "Kira"
 # One request speaks at most this much; longer text goes in pieces cut at sentence ends, joined in order.
 MAX_CHARS = 1800
@@ -50,12 +66,82 @@ class TTSError(RuntimeError):
     pass
 
 
+# (key fingerprint, model or "*") -> (kind, monotonic time it may serve again). Bounded; the key itself is never kept.
+_rest = cache.cache("gemini_tts_rest", max_entries=512)
+_turn = itertools.count()
+_clock = time.monotonic
+
+
 def key() -> str:
+    """Everything typed in the key field: one key, or several separated by commas or new lines."""
     return credentials.get("gemini_api_key")
+
+
+def keys() -> list[str]:
+    found: list[str] = []
+    for part in re.split(r"[\s,;]+", key() or ""):
+        if part and part not in found:
+            found.append(part)
+    return found
 
 
 def model() -> str:
     return credentials.get("gemini_tts_model") or DEFAULT_MODEL
+
+
+def models() -> list[str]:
+    first = model()
+    return [first, *(m for m in FALLBACK_MODELS if m != first)]
+
+
+def _tag(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode()).hexdigest()[:16]
+
+
+def _resting(api_key: str, name: str, now: float) -> tuple[str, float] | None:
+    for scope in (name, "*"):
+        state = _rest.get((_tag(api_key), scope))
+        if state and state[1] > now:
+            return str(state[0]), float(state[1])
+    return None
+
+
+def _set_rest(api_key: str, scope: str, kind: str, seconds: float) -> None:
+    _rest.set((_tag(api_key), scope), (kind, _clock() + seconds), ttl=seconds)
+
+
+def pick_route() -> tuple[str, str] | float | None:
+    """(key, model) to send to now; or seconds to wait for the best model's per-minute limit; or None when every
+    key is out for the day (or refused) on every model."""
+    pool = keys()
+    if not pool:
+        return None
+    now = _clock()
+    start = next(_turn) % len(pool)
+    for name in models():
+        waits: list[float] = []
+        for i in range(len(pool)):
+            api_key = pool[(start + i) % len(pool)]
+            state = _resting(api_key, name, now)
+            if state is None:
+                return api_key, name
+            if state[0] == "minute":
+                waits.append(state[1] - now)
+        if waits:
+            return max(0.5, min(waits))
+    return None
+
+
+def route_status() -> list[dict[str, object]]:
+    """Which key (by its last four characters) is resting on which model, for the page and for errors."""
+    now = _clock()
+    out: list[dict[str, object]] = []
+    for api_key in keys():
+        for name in [*models(), "*"]:
+            state = _rest.get((_tag(api_key), name))
+            if state and state[1] > now:
+                out.append({"key": f"…{api_key[-4:]}", "model": name, "why": state[0], "seconds": round(state[1] - now)})
+    return out
 
 
 def voice(name: str = "") -> str:
@@ -132,14 +218,26 @@ def join_wavs(parts: list[bytes]) -> bytes:
     return buffer.getvalue()
 
 
-async def _post(client: httpx.AsyncClient, body: dict, api_key: str) -> httpx.Response:
-    """One request. The free tier's per-minute limit (429) waits the delay Google names; a busy server (5xx) or a
-    dropped connection is tried again a few times; the daily limit says so and stops."""
+async def _post(client: httpx.AsyncClient, body: dict) -> httpx.Response:
+    """One request, routed over every (key, model) pair. A 429 rests that pair and the next one is tried; a busy
+    server (5xx) or a dropped connection is tried again a few times; when every pair is out, the reason is raised."""
     hiccups = 0
-    attempt = 0
+    waits = 0
     while True:
+        route = pick_route()
+        if route is None:
+            raise TTSError("Kuota harian Gemini TTS habis di semua key dan model (paket gratis: 10 permintaan per hari "
+                           "per model per key). Tambah key lain di Kredensial (pisahkan dengan koma), coba lagi besok, "
+                           "aktifkan billing di AI Studio, atau pakai engine edge (gratis) dulu.")
+        if isinstance(route, float):
+            waits += 1
+            if waits > MAX_RETRIES or route > MAX_WAIT_S:
+                raise TTSError(f"Semua key Gemini TTS sedang kena batas per menit; coba lagi sekitar {round(route)} detik.")
+            await asyncio.sleep(route + 1)
+            continue
+        api_key, name = route
         try:
-            response = await client.post(API.format(model=model()), headers={"x-goog-api-key": api_key}, json=body)
+            response = await client.post(API.format(model=name), headers={"x-goog-api-key": api_key}, json=body)
         except httpx.HTTPError as exc:
             hiccups += 1
             if hiccups > HICCUP_RETRIES:
@@ -150,23 +248,27 @@ async def _post(client: httpx.AsyncClient, body: dict, api_key: str) -> httpx.Re
             hiccups += 1
             await asyncio.sleep(2.0 * hiccups * hiccups)
             continue
-        if response.status_code != 429 or attempt >= MAX_RETRIES:
-            return response
-        attempt += 1
-        wait = _retry_delay(response)
-        if wait is None or wait > MAX_WAIT_S:
-            if "PerDay" in response.text:
-                raise TTSError("Kuota harian Gemini TTS habis (paket gratis: 10 permintaan per hari per model). Coba "
-                               "lagi besok, aktifkan billing di AI Studio, atau pakai engine edge (gratis) dulu.")
-            return response          # a long wait: say so instead of hanging
-        await asyncio.sleep(wait + 1)
+        if response.status_code == 429:
+            delay = _retry_delay(response)
+            if delay is None:
+                _set_rest(api_key, name, "day", DAY_REST_S)
+            else:
+                _set_rest(api_key, name, "minute", min(delay, MAX_WAIT_S))
+            continue
+        if response.status_code in (401, 403) and len(keys()) > 1:
+            _set_rest(api_key, "*", "key ditolak", AUTH_REST_S)
+            continue
+        if response.status_code == 404 and name != models()[-1]:
+            _set_rest(api_key, name, "day", DAY_REST_S)       # this key cannot use that model; try the next one
+            continue
+        return response
 
 
 def _retry_delay(response: httpx.Response) -> float | None:
     try:
         details = response.json().get("error", {}).get("details", [])
     except ValueError:
-        return None
+        return 30.0
     for detail in details:
         if "PerDay" in json.dumps(detail):
             return None
@@ -203,12 +305,12 @@ def _answer_audio(response: httpx.Response) -> tuple[bytes | None, str]:
     return None, f"tanpa audio ({reason})"
 
 
-async def _speak_piece(client: httpx.AsyncClient, body: dict, api_key: str, text: str) -> bytes:
+async def _speak_piece(client: httpx.AsyncClient, body: dict, text: str) -> bytes:
     """One piece of speech, asked once more when the answer has no audio or stops far short of the text."""
     why = ""
     best = b""
     for _ in range(2):
-        response = await _post(client, body, api_key)
+        response = await _post(client, body)
         if response.status_code != 200:
             try:
                 reason = str(response.json().get("error", {}).get("message", ""))[:300]
@@ -229,8 +331,7 @@ async def _speak_piece(client: httpx.AsyncClient, body: dict, api_key: str, text
 
 async def speak(text: str, direction: str = "", voice_name: str = "", temperature: float = 1.0) -> bytes:
     """WAV bytes of the text spoken in the voice, following the direction. Raises TTSError with a reason."""
-    api_key = key()
-    if not api_key:
+    if not keys():
         raise TTSError("Gemini belum tersambung: isi Gemini API key di Tim agent > Kredensial (atau GEMINI_API_KEY).")
     chosen = voice(voice_name)
     clips: list[bytes] = []
@@ -244,5 +345,5 @@ async def speak(text: str, direction: str = "", voice_name: str = "", temperatur
                     "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": chosen}}},
                 },
             }
-            clips.append(await _speak_piece(client, body, api_key, piece))
+            clips.append(await _speak_piece(client, body, piece))
     return join_wavs(clips)

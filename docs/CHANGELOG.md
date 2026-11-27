@@ -1,5 +1,12 @@
 # Catatan perubahan
 
+## 2026-11-27: routing Gemini TTS lintas key dan model
+
+- Kredensial > Gemini API key sekarang bisa diisi beberapa key, dipisah koma atau baris baru.
+- Gemini TTS memilih pasangan (key, model) yang masih segar. Batas per menit langsung pindah ke key lain di model yang sama; kalau semua key sedang kena, jedanya ditunggu di model yang sama supaya satu trek tetap satu warna suara.
+- Batas harian mengistirahatkan key itu untuk model tersebut. Setelah semua key habis di satu model, suara pindah ke model berikutnya: `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts`, `gemini-3.1-flash-tts-preview`, lalu `gemini-2.5-flash-preview-tts`. Key yang ditolak diistirahatkan 30 menit. Key tidak pernah disimpan di status routing, hanya sidik jarinya.
+- Skill voice-over menjelaskan routing ini dan mengingatkan bahwa arahan gaya harus di `## Director's notes`, bukan di teks yang dibacakan.
+
 ## 2026-11-27: harness lebih tahan kasus pinggir
 
 - Koneksi SQLite (simpan hasil tim, tabel data baru) sekarang ditutup setelah dipakai; sebelumnya hanya di-commit dan file-nya tetap terbuka.
