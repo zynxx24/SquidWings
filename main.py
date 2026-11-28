@@ -2130,6 +2130,15 @@ def _skills_cmd(action: str, query: str = "") -> int:
             console.print("  No skill updates are waiting.")
         console.print("  Read the changes (they are instructions for the agent), then: python main.py skills approve <repo|all>")
         return 0
+    if action == "history":
+        moves = skill_sources.history()[-20:]
+        for move in moves:
+            when = time.strftime("%Y-%m-%d %H:%M", time.localtime(float(move.get("at", 0))))
+            console.print(f"  {when}  {move.get('repo')}: {str(move.get('from', ''))[:12]} → {str(move.get('to', ''))[:12]}"
+                          f"  ({len(move.get('files', []))} file(s))")
+        if not moves:
+            console.print("  No skill updates recorded yet.")
+        return 0
     if action == "approve":
         target = query.strip() or "all"
         done = skill_sources.approve(target)
@@ -2241,7 +2250,7 @@ Examples:
     skills_parser = subparsers.add_parser(
         "skills", help="Skills from GitHub: status, clone missing (sync), pull newest (update), link into Claude Code",
     )
-    skills_parser.add_argument("action", nargs="?", choices=["status", "sync", "update", "link", "search", "pending", "approve"],
+    skills_parser.add_argument("action", nargs="?", choices=["status", "sync", "update", "link", "search", "pending", "approve", "history"],
                                default="status")
     skills_parser.add_argument("query", nargs="*", help="For search: what you need. For approve: a repo or 'all'.")
 

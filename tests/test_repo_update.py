@@ -172,14 +172,18 @@ def test_off_in_tests_so_start_never_restarts(monkeypatch):
     assert not repo_update.enabled() and called == []
 
 
-def test_by_default_new_commits_are_only_reported(repos, monkeypatch):
+def test_by_default_new_commits_are_pulled_and_notify_only_reports(repos, monkeypatch):
     local, other = repos
     commit(other, "app.py", "v2\n")
     git(other, "push", "-q")
-    monkeypatch.delenv("AUTO_UPDATE", raising=False)
+    monkeypatch.setenv("AUTO_UPDATE", "notify")
     assert repo_update.enabled() and not repo_update.applies_by_itself()
     result = repo_update.update(local, apply=repo_update.applies_by_itself())
     assert result.status == "available" and "python main.py update" in result.message
-    assert (local / "app.py").read_text() == "v1\n", "the code is not replaced without the owner"
-    monkeypatch.setenv("AUTO_UPDATE", "apply")
-    assert repo_update.applies_by_itself()
+    assert (local / "app.py").read_text() == "v1\n"
+    monkeypatch.delenv("AUTO_UPDATE")
+    assert repo_update.applies_by_itself(), "in sync with GitHub by default"
+    assert repo_update.update(local, apply=repo_update.applies_by_itself()).updated
+    assert (local / "app.py").read_text() == "v2\n"
+    monkeypatch.setenv("AUTO_UPDATE", "false")
+    assert not repo_update.enabled() and not repo_update.applies_by_itself()

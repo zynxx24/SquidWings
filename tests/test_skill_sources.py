@@ -106,10 +106,26 @@ def test_load_skill_opens_stored_skills_and_suggests_close_ones(setup: Path):
     assert not missing["ok"] and "beta" in missing["error"].split("Stored skills")[1]
 
 
-def test_upstream_changes_wait_for_approval(setup: Path, upstream: Path):
+def test_upstream_changes_follow_by_themselves_and_are_recorded(setup: Path, upstream: Path):
     sources.sync()
     pinned = sources.sources()[0].commit
     assert len(pinned) == 40, "the first clone pins the commit it got"
+    (upstream / "skills" / "alpha" / "SKILL.md").write_text("---\nname: alpha\n---\nNew body\n", encoding="utf-8")
+    _git(upstream, "commit", "-qam", "change")
+
+    assert sources.sync(update=True)[0]["action"] == "updated"
+    assert sources.active()["alpha"].body == "New body"
+    now = sources.sources()[0].commit
+    assert now != pinned, "the pin follows upstream"
+    move = sources.history()[-1]
+    assert move["from"] == pinned and move["to"] == now and "skills/alpha/SKILL.md" in move["files"]
+    assert sources.sync(update=True)[0]["action"] == "up to date"
+
+
+def test_with_auto_approve_off_changes_wait(setup: Path, upstream: Path, monkeypatch):
+    monkeypatch.setenv("SKILL_SOURCES_AUTO_APPROVE", "0")
+    sources.sync()
+    pinned = sources.sources()[0].commit
     before = sources.active()["alpha"].body
     (upstream / "skills" / "alpha" / "SKILL.md").write_text("---\nname: alpha\n---\nNew body\n", encoding="utf-8")
     _git(upstream, "commit", "-qam", "change")
@@ -117,14 +133,11 @@ def test_upstream_changes_wait_for_approval(setup: Path, upstream: Path):
     action = sources.sync(update=True)[0]["action"]
     assert action.startswith("update available") and "approve" in action
     assert sources.active()["alpha"].body == before, "nothing moves without approval"
-    waiting = sources.pending()
     repo = sources.sources()[0].repo
-    assert repo in waiting and "skills/alpha/SKILL.md" in waiting[repo]["files"]
-
+    assert "skills/alpha/SKILL.md" in sources.pending()[repo]["files"]
     assert sources.approve(repo)[0]["action"].startswith("approved")
     assert sources.active()["alpha"].body == "New body"
     assert sources.sources()[0].commit != pinned and not sources.pending()
-    assert sources.sync(update=True)[0]["action"] == "up to date"
 
 
 def test_claude_code_links_only_our_folders(setup: Path):

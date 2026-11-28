@@ -27,10 +27,11 @@ so we only ever touch folders we made.
 A manifest entry may set ``url`` to clone from somewhere other than GitHub, and
 ``ref`` to follow a branch or tag other than the default.
 
-Every source is **pinned** to the ``commit`` in its manifest entry, so what the agents read never changes
-behind the owner's back (a skill is instructions for an agent that can run commands). A source without a pin
-is pinned to what its first clone got. The daily pull only *looks*: newer upstream commits are recorded as
-pending, with the files they change, and nothing moves until ``python main.py skills approve <repo|all>``.
+Every source is **pinned** to the ``commit`` in its manifest entry, so the exact version in use is on record.
+A source without a pin is pinned to what its first clone got. The daily pull keeps the skills in sync with
+upstream by itself (the owner's rule, 2026-11-28): the clone moves to the newest commit, the pin follows, and
+the move (from, to, changed files) is added to ``history`` in ``.sources/.state.json`` for audit and rollback.
+``SKILL_SOURCES_AUTO_APPROVE=0`` holds new commits as pending instead, for ``python main.py skills approve``.
 
 Environment:
     SKILL_SOURCES=0              no cloning, no loading of GitHub skills
@@ -212,8 +213,37 @@ def _pull(source: Source) -> str:
         _set_pending(source.repo, None)
         return "up to date"
     files = _git("diff", "--name-only", source.commit, latest, cwd=source.folder).stdout.split()
+    if auto_approve():
+        _checkout(source.folder, latest)
+        pin(source.repo, latest)
+        _set_pending(source.repo, None)
+        _remember_move(source.repo, source.commit, latest, files)
+        return "updated"
     _set_pending(source.repo, {"commit": latest, "files": files[:200], "seen_at": time.time()})
     return f"update available ({len(files)} file(s) changed; approve with: python main.py skills approve {source.repo})"
+
+
+def auto_approve() -> bool:
+    return os.getenv("SKILL_SOURCES_AUTO_APPROVE", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+_HISTORY_MAX = 200
+
+
+def _remember_move(repo: str, old: str, new: str, files: list[str]) -> None:
+    """Keep the last moves for audit and rollback (``python main.py skills history``)."""
+    with _manifest_lock:
+        state = _read_state()
+        history = state.setdefault("history", [])
+        history.append({"repo": repo, "from": old, "to": new, "files": files[:200], "at": time.time()})
+        del history[:-_HISTORY_MAX]
+        SOURCES_DIR.mkdir(parents=True, exist_ok=True)
+        _state_file().write_text(json.dumps(state, indent=1), encoding="utf-8")
+
+
+def history() -> list[dict[str, Any]]:
+    found = _read_state().get("history", [])
+    return found if isinstance(found, list) else []
 
 
 def _read_state() -> dict[str, Any]:
@@ -254,6 +284,7 @@ def approve(which: str = "all") -> list[dict[str, str]]:
             _checkout(source.folder, commit)
             pin(source.repo, commit)
             _set_pending(source.repo, None)
+            _remember_move(source.repo, source.commit, commit, list(waiting[source.repo].get("files", [])))
             results.append({"repo": source.repo, "action": f"approved {commit[:12]}"})
         except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
             results.append({"repo": source.repo, "action": "failed", "detail": str(exc)[:300]})
@@ -283,7 +314,7 @@ def sync(update: bool = False, path: Path | None = None) -> list[dict[str, str]]
     for item in results:
         if item["action"] in {"cloned", "updated", "failed"}:
             logger.info(f"[skills] {item['repo']}: {item['action']} {item.get('detail', '')}".rstrip())
-    if any(item["action"] == "cloned" for item in results):
+    if any(item["action"] in {"cloned", "updated"} for item in results):
         reload()
     return results
 

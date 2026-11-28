@@ -6,9 +6,9 @@ found by comparing the files, so anything the user changed since counts as their
 kept, exactly as in a clone. From then on it updates like a clone, and nobody downloads again.
 
 At start, and every 12 hours while the app runs (``UPDATE_EVERY_HOURS``, or ``AUTO_UPDATE_EVERY_MIN``),
-``main.py`` fetches the branch's upstream and **only reports** newer commits: code that runs an agent with
-access to this machine is not replaced without the owner's say. ``python main.py update`` applies them (a
-fast-forward only). ``AUTO_UPDATE=apply`` brings back the old behaviour of pulling and restarting by itself.
+``main.py`` fetches the branch's upstream and moves to newer commits with a fast-forward only (the owner's
+rule, 2026-11-28: the checkout stays in sync with GitHub by itself). ``AUTO_UPDATE=notify`` only reports
+them for ``python main.py update``; ``AUTO_UPDATE=false`` turns the check off.
 Offline, nothing is tried: the start does not wait for a fetch, and the check runs once the network is back.
 
 It never loses work:
@@ -18,8 +18,8 @@ It never loses work:
   nothing changes;
 * ignored files (trading, .env, workspace) are never touched.
 
-When ``requirements.txt`` changed, ``python main.py update`` installs the packages, held to the versions in
-``requirements.lock``; an automatic pull does so only with ``AUTO_UPDATE_DEPS=true``.
+When ``requirements.txt`` or ``requirements.lock`` changed, the packages are installed, held to the versions in
+``requirements.lock`` (``AUTO_UPDATE_DEPS=false`` leaves that to ``python main.py update``).
 
 ``AUTO_UPDATE=false`` (or ``python main.py --no-update ...``) turns the check off. Tests turn it off.
 """
@@ -72,12 +72,16 @@ def _env(name: str, default: str, *, lower: bool = True) -> str:
 
 
 def enabled() -> bool:
-    return _env("AUTO_UPDATE", "notify") not in ("false", "0", "off", "no")
+    return _env("AUTO_UPDATE", "apply") not in ("false", "0", "off", "no")
 
 
 def applies_by_itself() -> bool:
-    """Only ``AUTO_UPDATE=apply`` pulls new code without the owner running ``python main.py update``."""
-    return _env("AUTO_UPDATE", "notify") == "apply"
+    """New commits are pulled by themselves unless ``AUTO_UPDATE=notify`` (report only)."""
+    return enabled() and _env("AUTO_UPDATE", "apply") != "notify"
+
+
+def _deps_too() -> bool:
+    return _env("AUTO_UPDATE_DEPS", "true") not in ("false", "0", "off", "no")
 
 
 def interval_s() -> int:
@@ -310,7 +314,7 @@ def update_at_start(notify: Callable[[str], None], root: Path = ROOT) -> None:
         # Offline: a fetch would only wait for its timeout. The background check pulls once the network is back.
         notify("[dim]Auto-update: offline, dicoba lagi saat online.[/dim]")
         return
-    result = update(root, apply=applies_by_itself(), deps=_env("AUTO_UPDATE_DEPS", "false") in ("true", "1", "yes", "on"))
+    result = update(root, apply=applies_by_itself(), deps=_deps_too())
     logger.info(f"[update] {result.message}")
     if result.status == "available":
         notify(f"[yellow]Update tersedia: {result.message}[/yellow]")
@@ -346,8 +350,7 @@ def start_background(notify: Callable[[str], None], root: Path = ROOT) -> bool:
                 continue
             if not online.is_online():
                 continue   # checked again every few minutes until the network is back
-            result = update(root, apply=applies_by_itself(),
-                            deps=_env("AUTO_UPDATE_DEPS", "false") in ("true", "1", "yes", "on"))
+            result = update(root, apply=applies_by_itself(), deps=_deps_too())
             due = time.time() + every
             if result.status == "available":
                 notify(f"[yellow]Update tersedia: {result.message}[/yellow]")

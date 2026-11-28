@@ -1,5 +1,10 @@
 # Catatan perubahan
 
+## 2026-11-28: update otomatis lagi, repo dan skill selalu sinkron
+
+- Repo kembali menarik commit baru dari GitHub sendiri saat start dan setiap 12 jam (`AUTO_UPDATE`, bawaan `apply`; `notify` kalau hanya mau diberi tahu, `false` untuk mati). Paket yang berubah ikut terpasang, tetap mengikuti `requirements.lock`.
+- Skill GitHub juga mengikuti upstream setiap hari tanpa perlu disetujui. Pin commit tetap mencatat versi yang dipakai, dan setiap perpindahan (dari, ke, file yang berubah) tercatat di `python main.py skills history` untuk audit dan rollback. `SKILL_SOURCES_AUTO_APPROVE=0` mengembalikan mode tahan-dulu.
+
 ## 2026-11-28: pengerasan keamanan dan efisiensi setelah review
 
 - **Akses jarak jauh butuh PIN.** Siapa pun yang membuka lewat tunnel atau jaringan harus masuk di `/access` dengan PIN akses, termasuk untuk socket chat. PIN dibuat otomatis dan tampil sekali di konsol saat tunnel dibuka, disimpan sebagai hash, dan cookie-nya batal saat PIN diganti (`PUT /api/access/pin` dari komputer ini). Dari komputer ini tetap tanpa login. Router dan kredensial dari luar juga butuh PIN router.
