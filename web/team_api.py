@@ -95,6 +95,13 @@ async def list_teams(request: Request) -> dict[str, Any]:
 async def list_templates(request: Request) -> dict[str, Any]:
     manager = service(request)
     models = [m.id for m in manager.orchestrator.registry.get_all() if m.supports_tools]
+    if not models:
+        # Just after a start the models are still being fetched: wait for that sync instead of answering with
+        # an empty list (the page would show no templates until it is reloaded).
+        from web.server import ensure_models
+
+        await ensure_models()
+        models = [m.id for m in manager.orchestrator.registry.get_all() if m.supports_tools]
     return {"templates": [template_view(t) for t in team_templates(models)]}
 
 

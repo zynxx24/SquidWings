@@ -8,6 +8,7 @@ import os
 import shutil
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -261,8 +262,12 @@ async def test_video_check_plays_the_film_and_flags_a_root_without_duration(tmp_
         return 0, ("[hyperframes] check: analyze 1/3\n" + json.dumps(CHECK_REPORT, indent=2)
                    + "\n[hyperframes] check: report saved to x.json\n"), False
 
+    async def fake_probe(folder: Path) -> dict[str, Any]:
+        return {"findings": [], "samples": 0}
+
     monkeypatch.setattr(media_tools, "_run", fake_run)
     monkeypatch.setattr(media_tools, "_hyperframes", lambda: ["hyperframes"])
+    monkeypatch.setattr(media_tools.video_probe, "probe", fake_probe)
     result = await media_tools.video_check("vid", workspace_path=str(tmp_path))
     assert calls[0][1:] == ["check", "--json"]
     codes = [f["code"] for f in result["findings"]]

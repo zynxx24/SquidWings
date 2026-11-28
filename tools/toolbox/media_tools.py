@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from brain.utils import render_hub, toolkit, whisper_stt
+from brain.utils import render_hub, toolkit, video_probe, whisper_stt
 from brain.utils.platform_compat import kill_tree
 from tools.local_ops.path_guard import resolve_inside
 
@@ -517,7 +517,8 @@ def _voice_note(folder: Path) -> dict[str, str]:
 
 @spec("video_check", "Check a video project before rendering. HyperFrames: plays the film in a browser and reports "
       "errors and warnings for lint, runtime, layout, contrast and craft (lines shown too briefly to read, tiny text, "
-      "an empty first frame), plus a root without data-duration. Remotion: lists the composition ids that can be "
+      "an empty first frame), plus a root without data-duration, and a measured layout probe (text out of its box, "
+      "frames mostly empty, the same layout in every scene). Remotion: lists the composition ids that can be "
       "rendered. Fix every error and every layout, contrast and craft warning before video_render.",
       "media", [param("project", description="The project folder in the workspace.")],
       keywords="cek video, lint video, periksa video, hyperframes lint, remotion compositions", workspace=True)
@@ -535,22 +536,28 @@ async def video_check(project: str, workspace_path: str | None = None) -> dict[s
     # text, an empty first frame). Without a browser it is skipped and the plain lint below still runs.
     code, output, _ = await _run([*_hyperframes(), "check", "--json"], folder, 10 * 60, _HF_ENV)
     full = _json_tail(output)
+    # Our own measurement of what check misses: text out of its box (SVG too), empty frames, one layout throughout.
+    measured = await video_probe.probe(folder)
+    probe_findings = measured.get("findings") or []
+    probe_note = {"probe": {k: v for k, v in measured.items() if k != "findings"}}
     if full is not None and not full.get("browserSkipped") and isinstance(full.get("lint"), dict):
-        findings = [*root_note, *_check_findings(full)]
+        findings = [*root_note, *_check_findings(full), *probe_findings]
         errors = sum(int((full.get(k) or {}).get("errorCount") or 0) for k in _CHECK_SECTIONS)
         return {"ok": code == 0 and errors == 0, "engine": engine, "errors": errors,
                 "warnings": sum(1 for f in findings if f["severity"] == "warning"), "findings": findings[:40],
                 "unmounted": full["lint"].get("unmountedCompositions") or [], "declared_seconds": declared,
-                "fix": "Fix every error and every layout, contrast and craft warning, then check again.",
-                **_voice_note(folder)}
+                "fix": "Fix every error and every layout, contrast, craft and probe warning, then check again.",
+                **probe_note, **_voice_note(folder)}
     code, output, _ = await _run([*_hyperframes(), "lint", ".", "--json"], folder, 5 * 60, _HF_ENV)
     try:
         report = json.loads(output[output.find("{"):])
     except ValueError:
         return {"ok": False, "engine": engine, "error": "lint tidak memberi hasil JSON", "log_tail": _tail(output)}
     return {"ok": bool(report.get("ok")) and code == 0, "engine": engine, "errors": report.get("errorCount", 0),
-            "warnings": report.get("warningCount", 0) + len(root_note), "findings": [*root_note, *(report.get("findings") or [])][:25],
-            "unmounted": report.get("unmountedCompositions") or [], "declared_seconds": declared, **_voice_note(folder)}
+            "warnings": report.get("warningCount", 0) + len(root_note) + len(probe_findings),
+            "findings": [*root_note, *probe_findings, *(report.get("findings") or [])][:25],
+            "unmounted": report.get("unmountedCompositions") or [], "declared_seconds": declared, **probe_note,
+            **_voice_note(folder)}
 
 
 @spec("video_render", "Render a HyperFrames or Remotion project in the workspace to an MP4 and show it in the chat. "

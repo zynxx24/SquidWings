@@ -1,5 +1,11 @@
 # Catatan perubahan
 
+## 2026-11-28: video tim yang lebih rapi dan lebih kaya, template langsung tampil
+
+- **`video_check` mengukur tata letak sendiri** (`brain/utils/video_probe.py`), melengkapi `hyperframes check`. Di tengah setiap adegan videonya diputar di Chrome, lalu diukur: teks yang keluar dari kotaknya (termasuk teks di dalam ilustrasi SVG, seperti "NOMOR 042" yang meluber dari layar tiket di uji coba), teks di luar frame, frame yang hampir kosong tanpa judul besar, dan semua adegan yang memakai kotak yang sama di tempat yang sama. Jeda sesaat antar adegan tidak dihitung kosong.
+- **Tim "Video lengkap" diminta membuat video yang tidak polos:** naskah punya kolom tata letak dan visual per adegan, tiap adegan tata letaknya berbeda dan punya visual yang membawa idenya, dan frame dipakai penuh. Probe di atas yang memastikannya.
+- **Daftar template Tim agent tidak kosong lagi** tepat setelah server start: halaman menunggu daftar model selesai dimuat, bukan menampilkan daftar kosong.
+
 ## 2026-11-28: Menu cepat di web dan Telegram
 
 - **Menu yang muncul sendiri.** Tempel link atau lampirkan file di chat web, chip Menu cepat langsung muncul di atas kotak ketik: link video dapat "Download video" dan "Transkrip", link biasa "Ringkas halaman", PDF dan Word "Analisa dokumen" (Word juga "Jadikan PDF"), ZIP "Perbaiki ZIP", audio dan video "Transkrip". Tombol **Menu** di sebelah lampiran membuka semuanya dengan pilihannya (resolusi, mode analisa, catatan).

@@ -68,6 +68,33 @@ def fresh_caches() -> None:
     cache.clear()
 
 
+_REAL_CREATE_CONNECTION = socket.create_connection
+_REAL_CONNECT = socket.socket.connect
+_LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+
+@pytest.fixture
+def loopback_only(block_all_network: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """For a test that drives a local program (headless Chrome, a server it starts itself): connections to this
+    machine work, everything else is still refused, so the suite stays offline."""
+
+    def host_of(address: Any) -> str:
+        return str(address[0]) if isinstance(address, tuple) and address else ""
+
+    def create_connection(address: Any, *args: Any, **kwargs: Any) -> Any:
+        if host_of(address) not in _LOOPBACK:
+            raise AssertionError("Network access is forbidden in the offline test suite")
+        return _REAL_CREATE_CONNECTION(address, *args, **kwargs)
+
+    def connect(self: socket.socket, address: Any) -> Any:
+        if host_of(address) not in _LOOPBACK:
+            raise AssertionError("Network access is forbidden in the offline test suite")
+        return _REAL_CONNECT(self, address)
+
+    monkeypatch.setattr(socket, "create_connection", create_connection)
+    monkeypatch.setattr(socket.socket, "connect", connect)
+
+
 @pytest.fixture(autouse=True)
 def block_all_network(monkeypatch: pytest.MonkeyPatch) -> None:
     """Fail immediately if production code tries to contact a real model/API."""
