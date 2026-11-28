@@ -305,7 +305,7 @@ async def studio_still(name: str, times: list[float] | None = None, share: bool 
 def _still_result(root: Path, name: str, out: Path, moments: list[float], share: bool) -> dict[str, Any]:
     if not out.is_file():
         return {"ok": False, "error": "no image was made"}
-    relative = str(out.relative_to(root))
+    relative = out.relative_to(root).as_posix()
     result: dict[str, Any] = {"ok": True, "file": relative, "times": moments}
     if share:
         shared_files.add(root, relative)

@@ -230,7 +230,7 @@ async def export_finish(session: str, name: str, job: str = Query(...), fps: int
             part.unlink(missing_ok=True)
     if error or not target.exists():
         raise HTTPException(status_code=500, detail=f"ffmpeg gagal: {(error or 'tidak ada file')[-400:]}")
-    relative = str(target.relative_to(workspace))
+    relative = target.relative_to(workspace).as_posix()
     await asyncio.to_thread(shared_files.add, workspace, relative)
     return {"file": relative, "url": shared_files.url_for(session, relative),
             "markdown": shared_files.markdown(session, relative, target.name), "bytes": target.stat().st_size}
@@ -302,7 +302,7 @@ async def start_render(session: str, name: str, payload: dict[str, Any] | None =
         job.state = "running"
         try:
             target = renderer.export(workspace, name, scale=scale, quality=quality, gpu=gpu, job=job)
-            relative = str(target.relative_to(workspace))
+            relative = target.relative_to(workspace).as_posix()
             shared_files.add(workspace, relative)
             job.file = relative
             job.state = "done"
@@ -666,7 +666,7 @@ async def code_render(session: str, payload: dict[str, Any]) -> dict[str, Any]:
     async def work() -> None:
         job.state, job.message = "running", f"Merender {kind}"
         try:
-            result = await media_tools.video_render(str(folder.relative_to(workspace.resolve())) or ".",
+            result = await media_tools.video_render(folder.relative_to(workspace.resolve()).as_posix() or ".",
                                                     composition=composition, share=False, workspace_path=str(workspace))
         except Exception as exc:  # noqa: BLE001 - any failure of the external renderer is shown to the user as is
             result = {"ok": False, "error": str(exc)}

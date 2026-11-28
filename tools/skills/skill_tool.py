@@ -64,7 +64,7 @@ async def load_skill(name: str = "", file: str = "", install_files: bool = False
             target = install(skill, Path(workspace), get_active_session())
         except (ValueError, OSError) as exc:
             return {"ok": False, "error": str(exc)}
-        result["installed_at"] = str(target.relative_to(workspace))
+        result["installed_at"] = target.relative_to(workspace).as_posix()
         result["note"] = "This copy belongs to this session only. Run its tools from installed_at."
         return result
     workspace = get_active_workspace()

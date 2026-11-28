@@ -46,7 +46,8 @@ def _provider(kind="openai", keys=("key-aaaa-1111", "key-bbbb-2222"), **extra):
 def test_store_saves_with_owner_only_permissions_and_masks_keys(tmp_path):
     p = _provider()
     path = get_store().path
-    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    if os.name != "nt":                      # Windows keeps a profile private with ACLs, not mode bits
+        assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
     public = json.dumps(get_store().public(), ensure_ascii=False)
     assert "key-aaaa-1111" not in public and "key-aa…1111" in public
     assert get_store().route("t/gpt-x").id == p.id and get_store().route("other/x") is None

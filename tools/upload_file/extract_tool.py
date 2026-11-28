@@ -40,12 +40,12 @@ def _extract_one(root: Path, path: Path) -> dict[str, Any]:
     relative = path.relative_to(root)
     target = root / OUTPUT_DIR / relative.with_suffix(relative.suffix + ".md")
     image_dir = target.with_name(f"{relative.name}_img")
-    entry: dict[str, Any] = {"file": str(relative), "text": str(target.relative_to(root))}
+    entry: dict[str, Any] = {"file": relative.as_posix(), "text": target.relative_to(root).as_posix()}
     if path.stat().st_size > MAX_FILE_BYTES:
         return {**entry, "error": "file is larger than 50 MB"}
     if target.exists() and target.stat().st_mtime >= path.stat().st_mtime:
         pictures = sorted(image_dir.iterdir()) if image_dir.is_dir() else []
-        return {**entry, "images": [str(p.relative_to(root)) for p in pictures], "cached": True}
+        return {**entry, "images": [p.relative_to(root).as_posix() for p in pictures], "cached": True}
     prefix = f"{relative.name}_img/"
     try:
         result = extract(path.read_bytes(), path.name, prefix, ocr=True)
@@ -57,7 +57,7 @@ def _extract_one(root: Path, path: Path) -> dict[str, Any]:
     target.write_text(text, encoding="utf-8")
     saved = save_images(result, image_dir)
     return {**entry, "chars": len(text), "pages": result.pages, "scanned": result.scanned,
-            "images": [str(p.relative_to(root)) for p in saved]}
+            "images": [p.relative_to(root).as_posix() for p in saved]}
 
 
 def _extract_files_sync(root: Path, start: Path) -> dict[str, Any]:

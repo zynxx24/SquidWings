@@ -101,6 +101,10 @@ def quality_text() -> str:
 def global_codex_text(current: str) -> str:
     """The owner's own text above the marker, the rules (written out) below it."""
     head = current.split(GLOBAL_MARKER, 1)[0].rstrip() if current else "# Global Codex instructions"
+    # Lines other tools add for themselves (rtk's "@~/.codex/RTK.md") may land below the marker: keep them above it.
+    for line in (current or "").splitlines():
+        if re.fullmatch(r"@\S*RTK\.md\s*", line.strip()) and line.strip() not in head:
+            head = f"{head}\n\n{line.strip()}"
     rules = "\n\n".join(p.read_text(encoding="utf-8").strip() for p in rule_files())
     return f"{head}\n\n{GLOBAL_MARKER}\n\n{SUMMARY.sub('', rules).strip()}\n"
 

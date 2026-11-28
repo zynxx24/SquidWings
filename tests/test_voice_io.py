@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,8 @@ import pytest
 import main
 from brain.config import credentials
 from brain.utils import voice_io
+
+posix_only = pytest.mark.skipif(os.name == "nt", reason="the stand-in recorders here are sh scripts")
 
 
 def test_speakable_drops_code_links_and_markdown() -> None:
@@ -50,10 +53,11 @@ def test_stt_prefers_the_local_engine(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_record_without_a_recorder_says_what_to_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(voice_io, "_recorder", lambda: None)
-    with pytest.raises(voice_io.VoiceIOError, match="alsa-utils"):
+    with pytest.raises(voice_io.VoiceIOError, match="mikrofon di halaman web" if os.name == "nt" else "alsa-utils"):
         voice_io.record(tmp_path / "a.wav", lambda: None)
 
 
+@posix_only
 def test_a_recorder_that_dies_at_once_does_not_wait_for_enter(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(voice_io, "_recorder", lambda: "arecord")
     monkeypatch.setattr(voice_io, "_record_command", lambda r, p: ["sh", "-c", "echo 'no such device' >&2; exit 1"])
@@ -63,6 +67,7 @@ def test_a_recorder_that_dies_at_once_does_not_wait_for_enter(monkeypatch: pytes
     assert waited == []
 
 
+@posix_only
 def test_record_stops_the_recorder_when_enter_is_pressed(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     dest = tmp_path / "a.wav"
     # A stand-in recorder: writes some bytes, then sleeps until the SIGINT that stops a real arecord.
@@ -72,6 +77,7 @@ def test_record_stops_the_recorder_when_enter_is_pressed(monkeypatch: pytest.Mon
     assert voice_io.record(dest, lambda: None) == dest
 
 
+@posix_only
 def test_an_empty_recording_is_reported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(voice_io, "_recorder", lambda: "arecord")
     monkeypatch.setattr(voice_io, "_record_command", lambda r, p: ["sleep", "30"])

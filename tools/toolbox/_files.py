@@ -40,4 +40,5 @@ def destination(path: str, workspace_path: str | None) -> Path:
 
 def relative(path: Path, workspace_path: str | None) -> str:
     root = workspace(workspace_path)
-    return str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
+    # Forward slashes on every system: the path goes into links, chat answers and other tools' arguments.
+    return path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)

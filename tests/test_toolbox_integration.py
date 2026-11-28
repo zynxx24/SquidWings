@@ -275,11 +275,16 @@ def test_load_skill_does_not_reveal_dormant_skills(session):
 
 def test_every_tool_a_skill_names_exists():
     import skills
+    from tools.code_intel.quality_tools import has_aislop
 
     registry = register_all_tools()
+    # Registered only when its program is installed on this machine.
+    from tools.code_intel.quality_tools import has_graphify
+
+    optional = (set() if has_aislop() else {"aislop_scan"}) | (set() if has_graphify() else {"code_graph"})
     for skill in skills.load_all().values():
         for tool in skill.tools:
-            assert registry.has_tool(tool), f"{skill.name} names missing tool {tool}"
+            assert registry.has_tool(tool) or tool in optional, f"{skill.name} names missing tool {tool}"
 
 
 def test_registry_singleton_survives_repeat_registration():

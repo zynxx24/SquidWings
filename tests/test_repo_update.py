@@ -8,9 +8,10 @@ from pathlib import Path
 import pytest
 
 from brain.utils import repo_update
+from tests._platform import has_git
 
-pytestmark = pytest.mark.skipif(subprocess.run(["git", "--version"], capture_output=True).returncode != 0,
-                                reason="git not installed")
+# shutil.which, not running git: without git, running it raises instead of returning a code.
+pytestmark = pytest.mark.skipif(not has_git(), reason="git not installed")
 
 
 def git(cwd: Path, *args: str) -> str:

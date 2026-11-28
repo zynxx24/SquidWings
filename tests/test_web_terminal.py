@@ -7,6 +7,9 @@ from pathlib import Path
 import pytest
 
 from brain.utils import web_terminal as wt
+from tests._platform import under_wine
+
+pytestmark = pytest.mark.skipif(under_wine(), reason="the terminal needs a real ConPTY; Wine has none")
 
 
 def test_forbidden_commands_are_refused_and_ordinary_ones_pass() -> None:

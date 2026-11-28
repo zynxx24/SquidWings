@@ -73,7 +73,8 @@ def _ok(**payload: Any) -> dict[str, Any]:
 
 def _atomic_write_text(path: Path, text: str) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    # newline="": the text exactly as given. Translating "\n" on Windows turned a CRLF file into "\r\r\n".
+    tmp.write_text(text, encoding="utf-8", newline="")
     tmp.replace(path)
 
 
@@ -134,7 +135,7 @@ def _file_search_sync(
                     if compiled.search(line):
                         hits.append(
                             {
-                                "file": str(path.relative_to(workspace)),
+                                "file": path.relative_to(workspace).as_posix(),
                                 "line": lineno,
                                 "text": line.rstrip("\n")[:400],
                             }
@@ -202,7 +203,7 @@ def _file_write_sync(
     backup_path: str | None = None
     if target.exists() and create_backup:
         bp = backup_file(workspace, target)
-        backup_path = str(bp.relative_to(workspace)) if bp else None
+        backup_path = bp.relative_to(workspace).as_posix() if bp else None
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -211,7 +212,7 @@ def _file_write_sync(
         return _error(f"write failed: {exc}")
 
     return _ok(
-        path=str(target.relative_to(workspace)),
+        path=target.relative_to(workspace).as_posix(),
         bytes_written=len(content.encode("utf-8")),
         backup=backup_path,
     )
@@ -304,7 +305,7 @@ def _file_patch_sync(
         if relocated is None:
             return _error(
                 "search block not found. It must match the file exactly; read the file again and copy it.",
-                path=str(target.relative_to(workspace)),
+                path=target.relative_to(workspace).as_posix(),
                 closest_lines=_closest_lines(original, search),
             )
         search, replace = relocated
@@ -312,7 +313,7 @@ def _file_patch_sync(
         fuzzy = True
 
     bp = backup_file(workspace, target)
-    backup_path = str(bp.relative_to(workspace)) if bp else None
+    backup_path = bp.relative_to(workspace).as_posix() if bp else None
 
     if count <= 0:
         patched = original.replace(search, replace)
@@ -327,7 +328,7 @@ def _file_patch_sync(
         return _error(f"write failed: {exc}")
 
     return _ok(
-        path=str(target.relative_to(workspace)),
+        path=target.relative_to(workspace).as_posix(),
         occurrences=occurrences,
         replaced=replaced,
         backup=backup_path,
@@ -364,10 +365,10 @@ def _file_move_sync(workspace: Path, src: str, dst: str) -> dict[str, Any]:
         return refused
 
     if target.exists():
-        return _error("destination already exists", destination=str(target.relative_to(workspace)))
+        return _error("destination already exists", destination=target.relative_to(workspace).as_posix())
 
     bp = backup_file(workspace, source)
-    backup_path = str(bp.relative_to(workspace)) if bp else None
+    backup_path = bp.relative_to(workspace).as_posix() if bp else None
 
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -376,8 +377,8 @@ def _file_move_sync(workspace: Path, src: str, dst: str) -> dict[str, Any]:
         return _error(f"move failed: {exc}")
 
     return _ok(
-        source=str(source.relative_to(workspace)),
-        destination=str(target.relative_to(workspace)),
+        source=source.relative_to(workspace).as_posix(),
+        destination=target.relative_to(workspace).as_posix(),
         backup=backup_path,
     )
 
@@ -409,14 +410,14 @@ def _file_delete_sync(workspace: Path, path: str) -> dict[str, Any]:
         return _error("refusing to delete a directory; use execute_command for that")
 
     bp = backup_file(workspace, target)
-    backup_path = str(bp.relative_to(workspace)) if bp else None
+    backup_path = bp.relative_to(workspace).as_posix() if bp else None
 
     try:
         target.unlink()
     except OSError as exc:
         return _error(f"delete failed: {exc}")
 
-    return _ok(path=str(target.relative_to(workspace)), backup=backup_path)
+    return _ok(path=target.relative_to(workspace).as_posix(), backup=backup_path)
 
 
 async def file_delete(path: str, workspace_path: str | None = None) -> dict[str, Any]:
@@ -443,7 +444,7 @@ def _dir_create_sync(workspace: Path, path: str) -> dict[str, Any]:
         target.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         return _error(f"mkdir failed: {exc}")
-    return _ok(path=str(target.relative_to(workspace)))
+    return _ok(path=target.relative_to(workspace).as_posix())
 
 
 async def dir_create(path: str, workspace_path: str | None = None) -> dict[str, Any]:
@@ -469,7 +470,7 @@ def _file_stat_sync(workspace: Path, path: str, compute_hash: bool) -> dict[str,
         return _error(f"stat failed: {exc}")
 
     payload: dict[str, Any] = {
-        "path": str(target.relative_to(workspace)),
+        "path": target.relative_to(workspace).as_posix(),
         "is_file": target.is_file(),
         "is_dir": target.is_dir(),
         "size_bytes": st.st_size,
@@ -527,7 +528,7 @@ def _count_lines_sync(workspace: Path, path: str) -> dict[str, Any]:
         return _error(f"read failed: {exc}")
 
     return _ok(
-        path=str(target.relative_to(workspace)),
+        path=target.relative_to(workspace).as_posix(),
         lines=lines,
         words=words,
         chars=chars,
@@ -611,7 +612,7 @@ async def git_diff(
             target = resolve_inside(workspace, path, must_exist=False)
         except PathGuardError as exc:
             return _error(str(exc))
-        args.extend(["--", str(target.relative_to(workspace))])
+        args.extend(["--", target.relative_to(workspace).as_posix()])
 
     result = await asyncio.to_thread(_run_git, workspace, args)
     if not result.get("ok"):

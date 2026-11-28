@@ -77,7 +77,8 @@ def secret_paths(home: Path | None = None) -> list[Path]:
 
 
 def _expand(token: str, home: Path) -> str:
-    token = re.sub(r"\$\{HOME\}|\$HOME", str(home), token)
+    # A function, not a string: a Windows home (C:\\Users\\...) would be read as regex escapes.
+    token = re.sub(r"\$\{HOME\}|\$HOME", lambda _match: str(home), token)
     if token == "~" or token.startswith("~/"):
         token = str(home) + token[1:]
     return token
@@ -202,7 +203,8 @@ def _touches_secret(text: str, home: Path) -> str:
     expanded = _expand(text, home)
     for token in re.findall(r"[^\s'\"<>|;&()=]+", expanded):
         token = _expand(token, home)
-        if not token.startswith("/"):
+        # Any absolute path of this system: on Windows "~/.ssh" becomes C:\\Users\\x/.ssh, which has no leading "/".
+        if not (token.startswith("/") or os.path.isabs(token)):
             continue
         path = Path(os.path.normpath(token))
         ssh = home / ".ssh"

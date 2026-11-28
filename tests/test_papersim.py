@@ -247,6 +247,7 @@ def test_a_scalping_run_cannot_take_a_week_but_an_intraday_one_can():
 
 
 def test_the_api_starts_the_intraday_style_and_refuses_settings_it_does_not_know(monkeypatch):
+    pytest.importorskip("torch", reason="the trading add-on's model needs torch")
     from addons.trading.web import quant_api
     from web.server import app
 

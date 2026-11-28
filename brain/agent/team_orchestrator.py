@@ -680,7 +680,9 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
                      "visual yang memakai ruang, bukan kartu kecil di tengah latar kosong), dan ilustrasi digambar dengan "
                      "SVG atau CSS sesuai arah visual. Tiap adegan punya gerak masuk sesuai kolom gerak naskah lewat "
                      "timeline GSAP yang didaftarkan di window.__timelines (jangan data-no-timeline). Jangan membungkam "
-                     "pemeriksaan dengan data-layout-ignore atau data-layout-allow-*: perbaiki tata letaknya. Elemen root "
+                     "pemeriksaan dengan data-layout-ignore atau data-layout-allow-*: perbaiki tata letaknya. Semua adegan "
+                     "ditulis di satu index.html (Video Editor dan pemeriksa tata letak membacanya); jangan memecahnya "
+                     "ke file sub-komposisi. Elemen root "
                      "HyperFrames wajib punya data-duration sama dengan durasi total naskah, dan baris penutup tampil "
                      "paling sedikit 2 detik. Teks di dalam ikon atau kotak kecil harus muat di kotaknya. Jalankan "
                      "video_check dan perbaiki setiap error serta setiap peringatan layout, contrast, craft, dan root, "
@@ -1945,6 +1947,12 @@ class TeamOrchestrator:
             if team.mode == "codevideo" and not self._has_video(fresh):
                 # The project rendered but nobody shared it: hand over the newest render of this run.
                 rendered = shared_files.find_new_videos(stack.workspace, run.started_at or 0.0)
+                if not rendered:
+                    # The agents ran out of steps before the render. Rendering is deterministic: do it here.
+                    run.status = "rendering"
+                    self._checkpoint(run, "render_started")
+                    video, render_note = await self._render_code_video(Path(stack.workspace), run.started_at or 0.0)
+                    rendered = [video] if video else []
                 if rendered:
                     shared_files.add(stack.workspace, rendered[0])
                     handed.append(rendered[0])
@@ -1972,8 +1980,8 @@ class TeamOrchestrator:
             run.status = "completed"
             if team.mode == "codevideo" and not self._has_video(run.files):
                 run.status = "failed"
-                run.error = ("Belum ada video yang dirender. Proyeknya tetap ada: buka Video Editor lewat tombol di "
-                             "hasil ini lalu tekan Render, atau jalankan tim lagi.")
+                run.error = ("Belum ada video yang dirender" + (f" ({render_note})" if render_note else "") + ". Proyeknya "
+                             "tetap ada: buka Video Editor lewat tombol di hasil ini lalu tekan Render, atau jalankan tim lagi.")
             if team.mode == "video" and not self._has_video(run.files):
                 # Agents can finish with a report and no file. That is not a finished video.
                 run.status = "failed"
@@ -2049,6 +2057,27 @@ class TeamOrchestrator:
                 f"{free // 2**20} MB. Kosongkan ruang disk lalu jalankan tim lagi.")
 
     @staticmethod
+    async def _render_code_video(workspace: Path, since: float) -> tuple[str | None, str]:
+        """Render the HyperFrames project this run made or changed most recently. Returns (video, what happened)."""
+        from tools.toolbox import media_tools
+
+        projects = [p.parent for p in workspace.glob("**/hyperframes.json")
+                    if "node_modules" not in p.parts and (p.parent / "index.html").is_file()]
+        fresh = [p for p in projects if max((f.stat().st_mtime for f in p.rglob("*.html")), default=0) >= since - 1]
+        if not fresh:
+            return None, "tidak ada proyek HyperFrames yang dibuat atau diubah di run ini, jadi tidak ada yang dirender."
+        project = max(fresh, key=lambda p: max((f.stat().st_mtime for f in p.rglob("*.html")), default=0))
+        relative = project.relative_to(workspace).as_posix()
+        try:
+            result = await media_tools.video_render(relative, share=False, workspace_path=str(workspace))
+        except (media_tools.MediaError, OSError, ValueError) as exc:
+            return None, f"render {relative} gagal: {exc}"
+        if not result.get("ok") or not result.get("saved"):
+            return None, f"render {relative} gagal: {result.get('error') or 'tanpa keterangan'}"
+        logger.info("[teams] Rendered %s, which no agent had rendered", relative)
+        return str(result["saved"]), ""
+
+    @staticmethod
     def _render_leftover(workspace: Path, run_id: str) -> tuple[str | None, str]:
         """Build and render the newest piece in the run folder. Returns (video path, what happened)."""
         from brain.security import sandbox
@@ -2069,7 +2098,7 @@ class TeamOrchestrator:
                           "videonya akan salah subjek.")
         piece = max(written, key=lambda folder: max((f.stat().st_mtime for f in (folder / "src").iterdir()), default=0))
         tools = kit.relative_to(workspace) / "tools"
-        target = str(piece.relative_to(workspace))
+        target = piece.relative_to(workspace).as_posix()
         short = TeamOrchestrator._disk_short(piece)
         if short:
             return None, short
@@ -2087,7 +2116,7 @@ class TeamOrchestrator:
         if not video.is_file():
             return None, f"export.mjs selesai tanpa {target}/renders/share.mp4."
         logger.info("[teams] Run %s: rendered %s after the agents stopped", run_id, video)
-        return str(video.relative_to(workspace)), ""
+        return video.relative_to(workspace).as_posix(), ""
 
     @staticmethod
     def _studio_buttons(workspace: Path, run: TeamRun) -> str:

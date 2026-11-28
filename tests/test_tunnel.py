@@ -14,11 +14,17 @@ from brain.utils.tunnel import (
 )
 
 
-def test_find_cloudflared_binary():
-    """Verify cloudflared binary finder finds the existing executable."""
+def test_find_cloudflared_binary(tmp_path, monkeypatch):
+    """The finder takes cloudflared from PATH (cloudflared.exe on Windows), whatever this machine has installed."""
+    import os
+
+    exe = tmp_path / ("cloudflared.exe" if os.name == "nt" else "cloudflared")
+    exe.write_bytes(b"")
+    exe.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path))
     bin_path = find_cloudflared_binary()
     assert bin_path is not None
-    assert bin_path.exists()
+    assert bin_path.exists() and bin_path.name == exe.name
 
 
 def test_tunnel_initial_state():
@@ -31,8 +37,11 @@ def test_tunnel_initial_state():
     assert tunnel.process is None
 
 
-def test_tunnel_start_and_stop_mocked(tmp_path):
+def test_tunnel_start_and_stop_mocked(tmp_path, monkeypatch):
     """Test start and stop lifecycle with mocked subprocess."""
+    from brain.utils import tunnel as tunnel_module
+
+    monkeypatch.setattr(tunnel_module, "find_cloudflared_binary", lambda: tmp_path / "cloudflared")
     tunnel = CloudflareTunnel(port=8888)
     tunnel._log_file = tmp_path / "tunnel.log"
     tunnel._log_file.write_text(

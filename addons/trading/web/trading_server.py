@@ -39,7 +39,7 @@ from brain.config.paths import log_file
 from brain.config.settings import get_settings
 from brain.security.headers import LOOPBACK_FRAMES, SecurityHeadersMiddleware, embeddable_headers
 from brain.security.web_access import WebSecurityMiddleware, is_loopback_host, set_public_mode
-from brain.utils.platform_compat import IS_LINUX, find_port_hint, stop_hint
+from brain.utils.platform_compat import IS_LINUX, IS_WINDOWS, find_port_hint, stop_hint
 
 DEFAULT_PORT = 80
 RATE_LIMIT_RPM = 6000
@@ -109,10 +109,17 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 def port_problem(host: str, port: int) -> str | None:
     """Why this address cannot be used, in words a user can act on. None when it is free."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        if not IS_WINDOWS:   # on Windows it would let this probe bind a port another program holds
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((host, port))
         except PermissionError:
+            if IS_WINDOWS:
+                # Windows needs no administrator for any port: refused means another program holds it for itself,
+                # or Windows reserved it (Hyper-V, WSL).
+                return (f"Port {port} dipakai program lain atau dicadangkan Windows. Cek dengan: netstat -ano | "
+                        f"findstr :{port} dan netsh interface ipv4 show excludedportrange protocol=tcp. "
+                        f"Atau pakai --port lain dan ubah BridgeUrl EA.")
             if not IS_LINUX:
                 return (f"Port {port} butuh izin administrator di sistem ini. Jalankan terminal sebagai "
                         f"Administrator/root, atau pakai --port lain dan ubah BridgeUrl EA.")

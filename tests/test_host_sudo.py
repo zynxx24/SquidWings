@@ -6,6 +6,8 @@ import asyncio
 import os
 import stat
 
+import pytest
+
 from brain.utils import host_sudo
 
 FAKE_SUDO = """#!/bin/bash
@@ -26,6 +28,7 @@ def _fake(tmp_path, monkeypatch):
     monkeypatch.setattr(host_sudo, "password", lambda: "s3cret-pw")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="sudo exists on Linux and macOS only")
 def test_sudo_gets_the_password_and_the_command_cannot_read_it(tmp_path, monkeypatch):
     _fake(tmp_path, monkeypatch)
     out = asyncio.run(host_sudo.run("sudo echo halo && cat <&3; echo s3cret-pw", cwd=str(tmp_path), timeout=20))

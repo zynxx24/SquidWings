@@ -20,8 +20,8 @@ def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, 
     sessions = tmp_path / "sessions"
     folder = sessions / "[web] Toko Kopi"
     (folder / "src").mkdir(parents=True)
-    (folder / "index.html").write_text("<h1>Kopi</h1>\n<script src='src/app.js'></script>\n", encoding="utf-8")
-    (folder / "src" / "app.js").write_text("const harga = 15000;\n", encoding="utf-8")
+    (folder / "index.html").write_text("<h1>Kopi</h1>\n<script src='src/app.js'></script>\n", encoding="utf-8", newline="\n")
+    (folder / "src" / "app.js").write_text("const harga = 15000;\n", encoding="utf-8", newline="\n")
     (folder / ".session-id").write_text("sess-abc", encoding="utf-8")
     (tmp_path / "secret.txt").write_text("rahasia", encoding="utf-8")
     monkeypatch.setattr(ide_api, "ROOTS", {"s": sessions, "p": tmp_path / "projects"})
@@ -90,7 +90,7 @@ def test_changes_diff_and_restore(setup: Any) -> None:
     client, folder = setup
     history = FileHistory(folder)
     started = history.begin()
-    (folder / "src/app.js").write_text("const harga = 20000;\nconst diskon = 0.1;\n", encoding="utf-8")
+    (folder / "src/app.js").write_text("const harga = 20000;\nconst diskon = 0.1;\n", encoding="utf-8", newline="\n")
     turn = history.end(started, "naikkan harga", "sess-abc")
     assert turn is not None
     [listed] = client.get(f"{P}/turns").json()["turns"]

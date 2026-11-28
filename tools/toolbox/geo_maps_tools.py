@@ -508,9 +508,9 @@ async def gmaps_scrape(queries: list[str], depth: int = 1, language: str = "id",
     if not results.exists() or results.stat().st_size == 0:
         return {"ok": False, "error": "the scraper produced no results", "exit_code": process.returncode,
                 "log_tail": (output or b"").decode("utf-8", "replace")[-1200:]}
-    imported = await gmaps_import_tool(path=str(results.relative_to(root)), query=" + ".join(qs),
+    imported = await gmaps_import_tool(path=results.relative_to(root).as_posix(), query=" + ".join(qs),
                                        keep_contacts=keep_contacts, workspace_path=str(root))
-    return {**imported, "results_file": str(results.relative_to(root)), "stopped_at_time_limit": timed_out}
+    return {**imported, "results_file": results.relative_to(root).as_posix(), "stopped_at_time_limit": timed_out}
 
 
 # ── OpenStreetMap (live) ──────────────────────────────────────────────────────

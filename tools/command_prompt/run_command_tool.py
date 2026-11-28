@@ -17,6 +17,7 @@ Mendukung:
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any
 
@@ -97,17 +98,24 @@ async def execute_command(
     # A render or encode (ffmpeg, hyperframes/remotion render, the animate export) waits for the machine's render
     # slot and runs at low priority, so it never stacks on another render or makes the laptop stutter.
     render = render_hub.is_render_command(command)
+    compressed = False
     try:
         if render:
             async with render_hub.render_slot(f"command {command[:40]}"):
                 result = await executor.execute(command=render_hub.lower_priority(check.sanitized_command),
                                                 cwd=cwd, timeout=timeout)
         else:
+            # rtk (brain/utils/rtk.py): the same command, its output compressed for the model (failures kept,
+            # exit code unchanged). The safety checks above judged the command as the model wrote it.
+            from brain.utils import rtk
+
+            ran = await asyncio.to_thread(rtk.rewrite, check.sanitized_command)
             result = await executor.execute(
-                command=check.sanitized_command,
+                command=ran,
                 cwd=cwd,
                 timeout=timeout,
             )
+            compressed = ran != check.sanitized_command
 
         logger.info(
             f"[run_cmd] Done: rc={result.return_code}, "
@@ -115,7 +123,10 @@ async def execute_command(
             f"stdout={len(result.stdout)} chars"
         )
 
+        rtk_note = ({"rtk": True, "note": "Output compressed by rtk. For the full output run the same command as "
+                                          f"'rtk bypass {command[:200]}'."} if not render and compressed else {})
         return {
+            **rtk_note,
             "success": result.success,
             "command": command,
             "stdout": result.stdout,

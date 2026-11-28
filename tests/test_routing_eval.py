@@ -66,8 +66,9 @@ def test_hidden_toolbox_never_rides_along(text: str) -> None:
     """A request that does not ask for a toolbox tool must not get one."""
     task = IntentClassifier().classify(text).task_type
     offered = {s["function"]["name"] for s in select_tools(register_all_tools().get_all_schemas(), task, text, _capped("x-flash"))}
-    # The design tools come with the built-in aislop gate on purpose.
-    assert not offered & (toolbox.deferred_names() - {"style_pick", "contrast_check"}), offered & toolbox.deferred_names()
+    # The design tools come with the built-in aislop gate and with any request to build a screen, on purpose.
+    design = {"style_pick", "contrast_check", "design_explore"}
+    assert not offered & (toolbox.deferred_names() - design), offered & toolbox.deferred_names()
 
 
 @pytest.mark.parametrize("text", ["halo", "perbaiki bug login di auth.py", "buat presentasi pptx tentang AI"])

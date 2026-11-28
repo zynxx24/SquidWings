@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +178,7 @@ def test_installing_without_any_installer_gives_the_manual_command(monkeypatch: 
     assert "install.sh" in toolkit.install("homebrew")["manual"]      # never run for the user: it asks for sudo
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Homebrew is for Linux and macOS")
 def test_homebrew_is_found_without_brew_shellenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A server started from a shell that never ran `brew shellenv` still finds what brew installed."""
     brew = tmp_path / "linuxbrew" / "bin" / "brew"

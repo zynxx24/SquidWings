@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -37,7 +38,8 @@ def test_the_chat_keeps_the_last_turns_and_survives_a_restart(tmp_path: Path) ->
     assert log.render("t", "1", 1) == "Pelanggan: ada kaos?\nToko: ada, M dan L"      # one exchange is two lines
     assert log.render("t", "1", 0) == "" and log.render("t", "9", 3) == ""
     assert ChatLog(path).render("t", "2", 3) == "Pelanggan: halo"                      # a fresh object reads the file
-    assert path.stat().st_mode & 0o777 == 0o600                                         # customers' words stay private
+    if os.name != "nt":                                                                 # Windows: ACLs, not mode bits
+        assert path.stat().st_mode & 0o777 == 0o600                                     # customers' words stay private
 
 
 def test_long_texts_and_old_turns_are_cut(tmp_path: Path) -> None:

@@ -11,6 +11,9 @@ import pytest
 
 import skills
 from skills import adapters, sources
+from tests._platform import has_git
+
+pytestmark = pytest.mark.skipif(not has_git(), reason="these tests make real git repos; git is not installed")
 
 
 def _git(cwd: Path, *args: str) -> None:

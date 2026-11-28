@@ -14,6 +14,8 @@ Panduan kerja untuk AI. Skill yang cocok dengan permintaan dimasukkan ke prompt 
 | `runtime.py` | Catatan peta tool untuk skill GitHub, instal file skill ke folder chat |
 | `sources.py` | Clone, pull harian, aktif atau tersimpan, link ke Claude Code, pencarian BM25 |
 | `adapters.py` | Menggabungkan adapter dengan skill aslinya |
+| `mcp_server.py` | Semua skill untuk AI lain di mesin ini lewat MCP (stdio, tanpa paket tambahan): `skills_search`, `skill_read` (panduan panjang per bagian, file di folder skill), `skills_list` |
+| `connect.py` | Mendaftarkan server itu ke setiap AI yang terpasang (Claude Code, Codex, Antigravity, Gemini CLI, Cursor, Kilo, OpenCode): `python main.py skills connect`, juga saat sinkron harian. `SKILLS_MCP_CONNECT=0` mematikannya |
 | `__init__.py` | API publik (`skills.select`, `skills.load_all`, ...) |
 
 ## Scope

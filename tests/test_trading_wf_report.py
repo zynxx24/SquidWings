@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from addons.trading.quant import daily, forecast, wf_report
+from tests._platform import has_git
 from tests.test_trading_daily import walk
 
 pytestmark = pytest.mark.enterprise
@@ -138,5 +139,7 @@ def test_the_report_goes_to_an_ignored_folder(monkeypatch):
     assert folder.is_relative_to(paths.ROOT / "data")
     # data/ now usually links to the user's data folder; then the link itself is what git must ignore.
     target = "data" if (paths.ROOT / "data").is_symlink() else str(folder / "x.md")
+    if not has_git():
+        pytest.skip("git is not installed")
     out = subprocess.run(["git", "check-ignore", "--no-index", target], cwd=paths.ROOT, capture_output=True, text=True)
     assert out.returncode == 0, "report files must never be committed"

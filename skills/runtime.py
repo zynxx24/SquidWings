@@ -44,7 +44,7 @@ def runnable(skill: Skill, text: str | None = None, workspace: str | Path | None
     if workspace and _has_code(skill.root):
         try:
             target = install(skill, Path(workspace), session_id)
-            installed_at = str(target.relative_to(workspace))
+            installed_at = target.relative_to(workspace).as_posix()
             body = body.replace(str(skill.root), installed_at)
             files = (f" Its files are installed in {installed_at} (inside the project), and the paths below "
                      "already point there: run its scripts from that folder.")

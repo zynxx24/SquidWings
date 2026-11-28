@@ -10,6 +10,7 @@ import pytest
 from brain.security import sandbox
 from brain.security.sandbox import SandboxError, SandboxPolicy
 from brain.utils.workspace_context import set_active_workspace
+from tests._platform import shell_works
 
 
 @pytest.fixture
@@ -112,6 +113,10 @@ def test_without_a_workspace_the_agents_own_source_is_read_only(bwrap_available:
 
 def test_docker_is_locked_down(workspace: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sandbox._probe_results, sandbox.BACKEND_DOCKER, (True, "ok"))
+    if sandbox.IS_WINDOWS:
+        with pytest.raises(sandbox.SandboxError, match="Windows"):
+            sandbox.prepare("true", policy=SandboxPolicy(mode="docker"))
+        return
     (workspace / ".env").write_text("X=1")
     prepared = sandbox.prepare("true", policy=SandboxPolicy(mode="docker"))
     joined = " ".join(prepared.argv)
@@ -135,6 +140,8 @@ async def test_refused_command_reports_why(workspace: Path, monkeypatch: pytest.
 
 
 async def test_commands_run_and_children_die_on_timeout(workspace: Path) -> None:
+    if not shell_works():
+        pytest.skip("no working command shell here (Wine's PowerShell is a stub)")
     from tools.command_prompt.run_command_tool import execute_command
 
     done = await execute_command("echo halo", cwd=str(workspace))

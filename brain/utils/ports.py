@@ -11,6 +11,7 @@ import errno
 import os
 import signal
 import socket
+import subprocess
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -35,8 +36,11 @@ class Holder:
 def port_free(host: str, port: int) -> bool:
     """True when a server could bind ``host:port`` now."""
     with socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM) as probe:
-        # The same option uvicorn uses, so a port in TIME_WAIT counts as free, as it does for uvicorn.
-        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # The same option uvicorn uses, so a port in TIME_WAIT counts as free, as it does for uvicorn. Not on
+        # Windows: there SO_REUSEADDR lets a socket bind a port another program is listening on, so a busy port
+        # would look free (and Windows has no TIME_WAIT problem to work around).
+        if os.name != "nt":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             probe.bind((host, port))
         except OSError as exc:
@@ -66,8 +70,36 @@ def _listening_inodes(port: int) -> set[str]:
     return inodes
 
 
+def _windows_pid_for(port: int) -> int | None:
+    """The PID listening on ``port`` on Windows, from ``netstat -ano`` (LISTENING lines). None when unknown."""
+    try:
+        done = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in done.stdout.splitlines():
+        parts = line.split()
+        # Proto  Local Address  Foreign Address  State  PID
+        if (len(parts) >= 5 and parts[0].upper() == "TCP" and parts[3].upper() == "LISTENING" and parts[4].isdigit()
+                and parts[1].rsplit(":", 1)[-1] == str(port)):
+            return int(parts[4])
+    return None
+
+
+def _windows_command(pid: int) -> str:
+    """The program name of ``pid`` on Windows (tasklist), or ''."""
+    try:
+        done = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True,
+                              timeout=10, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    first = done.stdout.strip().splitlines()[0] if done.stdout.strip() else ""
+    return first.split('","')[0].strip('"') if first.startswith('"') else ""
+
+
 def _pid_for(port: int) -> int | None:
-    """The PID listening on ``port`` (Linux, own processes only). None when unknown."""
+    """The PID listening on ``port`` (Linux: own processes only, from /proc; Windows: netstat). None when unknown."""
+    if os.name == "nt":
+        return _windows_pid_for(port)
     inodes = _listening_inodes(port)
     if not inodes:
         return None
@@ -86,6 +118,8 @@ def _pid_for(port: int) -> int | None:
 def _command(pid: int | None) -> str:
     if not pid:
         return ""
+    if os.name == "nt":
+        return _windows_command(pid)
     try:
         return Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace").strip()
     except OSError:

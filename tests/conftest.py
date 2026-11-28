@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio.base_events as _asyncio_base
 import os
 import socket
 from typing import Any
@@ -68,10 +69,6 @@ def fresh_caches() -> None:
     cache.clear()
 
 
-_REAL_CREATE_CONNECTION = socket.create_connection
-_REAL_CONNECT = socket.socket.connect
-_LOOPBACK = {"127.0.0.1", "localhost", "::1"}
-
 
 @pytest.fixture
 def loopback_only(block_all_network: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -93,6 +90,26 @@ def loopback_only(block_all_network: None, monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(socket, "create_connection", create_connection)
     monkeypatch.setattr(socket.socket, "connect", connect)
+    _block_asyncio_connections(monkeypatch, loopback=True)
+
+
+_REAL_CREATE_CONNECTION = socket.create_connection
+_REAL_CONNECT = socket.socket.connect
+_REAL_ASYNC_CREATE = _asyncio_base.BaseEventLoop.create_connection
+_REAL_ASYNC_SOCK_CONNECT = _asyncio_base.BaseEventLoop.sock_connect
+_LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+def _inside_socketpair() -> bool:
+    """On Windows, socket.socketpair() is made from two loopback sockets (socket._fallback_socketpair), and every
+    asyncio event loop makes one for itself. That is not network access; nothing else is let through."""
+    import sys
+
+    frame = sys._getframe(2)
+    while frame is not None:
+        if frame.f_code.co_name == "_fallback_socketpair" and frame.f_code.co_filename.endswith("socket.py"):
+            return True
+        frame = frame.f_back
+    return False
 
 
 @pytest.fixture(autouse=True)
@@ -102,9 +119,45 @@ def block_all_network(monkeypatch: pytest.MonkeyPatch) -> None:
     def blocked(*args: Any, **kwargs: Any) -> None:
         raise AssertionError("Network access is forbidden in the offline test suite")
 
+    def connect(self: socket.socket, address: Any) -> Any:
+        if _inside_socketpair():
+            return _REAL_CONNECT(self, address)
+        raise AssertionError("Network access is forbidden in the offline test suite")
+
     monkeypatch.setattr(socket, "create_connection", blocked)
-    monkeypatch.setattr(socket.socket, "connect", blocked)
+    monkeypatch.setattr(socket.socket, "connect", connect)
     monkeypatch.setattr(socket.socket, "connect_ex", blocked)
+    # On Windows asyncio connects through the proactor (ConnectEx), never through socket.connect: block it there
+    # too, or an httpx call in a test reaches the network.
+    _block_asyncio_connections(monkeypatch, loopback=False)
+
+
+def _block_asyncio_connections(monkeypatch: pytest.MonkeyPatch, *, loopback: bool) -> None:
+    base_events = _asyncio_base
+    real_create = _REAL_ASYNC_CREATE
+    real_sock_connect = _REAL_ASYNC_SOCK_CONNECT
+
+    def allowed(host: Any) -> bool:
+        return loopback and str(host or "") in _LOOPBACK
+
+    async def create_connection(self: Any, protocol_factory: Any, host: Any = None, port: Any = None, *args: Any, **kwargs: Any) -> Any:
+        if kwargs.get("sock") is None and not allowed(host):
+            raise AssertionError("Network access is forbidden in the offline test suite")
+        return await real_create(self, protocol_factory, host, port, *args, **kwargs)
+
+    async def sock_connect(self: Any, sock: socket.socket, address: Any) -> Any:
+        if not allowed(address[0] if isinstance(address, tuple) and address else ""):
+            raise AssertionError("Network access is forbidden in the offline test suite")
+        return await real_sock_connect(self, sock, address)
+
+    monkeypatch.setattr(base_events.BaseEventLoop, "create_connection", create_connection)
+    monkeypatch.setattr(base_events.BaseEventLoop, "sock_connect", sock_connect)
+
+
+@pytest.fixture(autouse=True)
+def no_agent_config_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The skill sync registers the skills server with Claude Code, Codex...: never with the real ones from a test."""
+    monkeypatch.setenv("SKILLS_MCP_CONNECT", "0")
 
 
 @pytest.fixture(autouse=True)

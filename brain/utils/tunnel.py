@@ -29,13 +29,14 @@ def find_cloudflared_binary() -> Path | None:
     if found:
         return Path(found)
 
-    # 2. Known standard paths
+    # 2. Known standard paths (cloudflared.exe on Windows, where download_cloudflared puts it)
+    name = "cloudflared.exe" if os.name == "nt" else "cloudflared"
     candidates = [
-        Path.home() / ".local" / "bin" / "cloudflared",
+        Path.home() / ".local" / "bin" / name,
         Path("/usr/local/bin/cloudflared"),
         Path("/usr/bin/cloudflared"),
-        Path.home() / "bin" / "cloudflared",
-        Path.cwd() / "cloudflared",
+        Path.home() / "bin" / name,
+        Path.cwd() / name,
     ]
     for c in candidates:
         if c.exists() and os.access(c, os.X_OK):
@@ -51,8 +52,9 @@ def download_cloudflared() -> Path | None:
 
     machine = platform.machine().lower()
     system = platform.system().lower()
-    if system != "linux":
-        logger.warning(f"[tunnel] Auto-download only supports Linux, current OS is {system}")
+    if system not in {"linux", "windows"}:
+        logger.warning(f"[tunnel] Auto-download supports Linux and Windows; on {system} install cloudflared yourself "
+                       "(macOS: brew install cloudflared)")
         return None
 
     if machine in ("x86_64", "amd64"):
@@ -67,9 +69,13 @@ def download_cloudflared() -> Path | None:
 
     target_dir = Path.home() / ".local" / "bin"
     target_dir.mkdir(parents=True, exist_ok=True)
-    target_file = target_dir / "cloudflared"
-
-    url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{arch}"
+    windows = system == "windows"
+    if windows and arch not in {"amd64", "arm64"}:
+        logger.warning(f"[tunnel] No Windows build of cloudflared for {machine}")
+        return None
+    target_file = target_dir / ("cloudflared.exe" if windows else "cloudflared")
+    asset = f"cloudflared-windows-{arch}.exe" if windows else f"cloudflared-linux-{arch}"
+    url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/{asset}"
     logger.info(f"[tunnel] Downloading cloudflared from {url}...")
     try:
         urllib.request.urlretrieve(url, target_file)

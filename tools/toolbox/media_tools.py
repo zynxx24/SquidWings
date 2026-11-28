@@ -427,6 +427,9 @@ async def _remotion_compositions(project: Path) -> list[str]:
 
 
 _CHECK_SECTIONS = ("lint", "runtime", "layout", "contrast", "craft")
+# Lint's advice on how to organise the files (split scenes into sub-composition files), not a flaw anyone sees in
+# the video. Reported as warnings it sent an agent into a refactor that used up its steps before the render.
+_ADVICE_CODES = frozenset({"timeline_track_too_dense", "nested_structure_needs_subcomposition"})
 _ROOT_TAG = re.compile(r"<[^<>]*\bdata-composition-id\s*=[^<>]*>", re.IGNORECASE | re.DOTALL)
 _DURATION_ATTR = re.compile(r"\bdata-duration\s*=\s*[\"']?\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
 _FFMPEG_DURATION = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
@@ -450,7 +453,7 @@ def _check_findings(report: dict[str, Any]) -> list[dict[str, Any]]:
     found = []
     for section in _CHECK_SECTIONS:
         for item in (report.get(section) or {}).get("findings") or []:
-            if item.get("severity") not in {"error", "warning"}:
+            if item.get("severity") not in {"error", "warning"} or item.get("code") in _ADVICE_CODES:
                 continue
             found.append({"section": section, "severity": item["severity"], "code": item.get("code", ""),
                           "message": str(item.get("message", ""))[:400], "text": str(item.get("text") or "")[:80],

@@ -313,3 +313,36 @@ def test_the_builder_must_declare_the_length_and_the_checker_measure_it() -> Non
     _planner, builder, checker = template["members"]
     assert "data-duration" in builder["instructions"] and "duration_note" in builder["instructions"]
     assert "duration_s" in checker["instructions"] and "tanpa angka" in checker["instructions"]
+
+
+async def test_a_code_video_left_unrendered_is_rendered_by_the_harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from brain.agent.team_orchestrator import TeamOrchestrator
+    from tools.toolbox import media_tools
+
+    old = tmp_path / "video" / "lama"
+    new = tmp_path / "video" / "baru"
+    for folder in (old, new):
+        folder.mkdir(parents=True)
+        (folder / "hyperframes.json").write_text("{}")
+        (folder / "index.html").write_text('<div data-composition-id="root" data-duration="5"></div>')
+    os.utime(old / "index.html", (time.time() - 7200, time.time() - 7200))
+    rendered: list[str] = []
+
+    async def fake_render(project: str, share: bool = True, workspace_path: str | None = None, **_: Any) -> dict[str, Any]:
+        rendered.append(project)
+        return {"ok": True, "saved": f"renders/{Path(project).name}.mp4"}
+
+    monkeypatch.setattr(media_tools, "video_render", fake_render)
+    video, note = await TeamOrchestrator._render_code_video(tmp_path, time.time() - 600)
+    assert rendered == ["video/baru"] and video == "renders/baru.mp4" and note == ""
+    assert (await TeamOrchestrator._render_code_video(tmp_path, time.time() + 600))[0] is None
+
+
+def test_lint_advice_on_file_structure_is_not_a_warning() -> None:
+    from tools.toolbox import media_tools
+
+    report = {"lint": {"findings": [
+        {"severity": "warning", "code": "nested_structure_needs_subcomposition", "message": "split it"},
+        {"severity": "warning", "code": "timeline_track_too_dense", "message": "5 timed elements"},
+        {"severity": "warning", "code": "missing_alt", "message": "real"}]}}
+    assert [f["code"] for f in media_tools._check_findings(report)] == ["missing_alt"]

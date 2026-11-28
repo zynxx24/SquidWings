@@ -2186,6 +2186,31 @@ def _addon_cmd(action: str, names: list[str]) -> int:
     return code
 
 
+def _rtk_cmd(action: str) -> int:
+    """rtk: install it (checked against the release's SHA-256), plug it into the agents here, show what it saved."""
+    from brain.utils import rtk
+
+    try:
+        if action == "install":
+            done = rtk.install()
+            console.print(f"  rtk {done['version']} ({done['edition']}) terpasang di {done['path']}, sha256 {done['sha256'][:16]}... cocok")
+            action = "connect"
+        if action == "connect":
+            for item in rtk.connect():
+                console.print(f"  {item['agent']}: {item['action']}  [dim]{item.get('command', item.get('detail', ''))}[/dim]")
+            return 0
+        if action == "gain":
+            print(rtk.gain() or "rtk belum terpasang: python main.py rtk install")
+            return 0
+    except rtk.RtkError as exc:
+        console.print(f"  [red]{exc}[/red]")
+        return 1
+    found = rtk.version()
+    console.print(f"  rtk: {found or 'belum terpasang (python main.py rtk install)'}")
+    console.print(f"  Agent ini memakai rtk: {'ya' if found and rtk.enabled() else 'tidak'} (RTK=off untuk mematikan)")
+    return 0
+
+
 def _skills_cmd(action: str, query: str = "") -> int:
     """GitHub skill sources: show them, clone what is missing, pull the newest, relink Claude Code, or search."""
     from skills import sources as skill_sources
@@ -2198,6 +2223,15 @@ def _skills_cmd(action: str, query: str = "") -> int:
         if not found:
             print(f"No skill matches '{query}'." if query.strip() else "Usage: python main.py skills search <what you need>")
         return 0 if found else 1
+
+    if action == "connect":
+        # Every AI on this machine gets the skills, through one MCP server (skills/mcp_server.py).
+        from skills import connect as skill_connect
+
+        results = skill_connect.connect()
+        for item in results:
+            console.print(f"  {item['agent']}: {item['action']}  [dim]{item.get('detail', '')}[/dim]")
+        return 0 if all(i["action"] != "failed" for i in results) else 1
 
     if action == "pending":
         waiting = skill_sources.pending()
@@ -2330,9 +2364,14 @@ Examples:
     skills_parser = subparsers.add_parser(
         "skills", help="Skills from GitHub: status, clone missing (sync), pull newest (update), link into Claude Code",
     )
-    skills_parser.add_argument("action", nargs="?", choices=["status", "sync", "update", "link", "search", "pending", "approve", "history"],
+    skills_parser.add_argument("action", nargs="?", choices=["status", "sync", "update", "link", "search", "pending", "approve", "history",
+                                                             "connect"],
                                default="status")
     skills_parser.add_argument("query", nargs="*", help="For search: what you need. For approve: a repo or 'all'.")
+
+    # rtk: shorter command output for every AI here (brain/utils/rtk.py)
+    rtk_parser = subparsers.add_parser("rtk", help="rtk: compress command output for Claude Code, Codex and this agent")
+    rtk_parser.add_argument("action", nargs="?", choices=["status", "install", "connect", "gain"], default="status")
 
     # addon command: optional parts (trading, video Studio), off until installed
     addon_parser = subparsers.add_parser(
@@ -2439,6 +2478,8 @@ Examples:
         sys.exit(_tools_cmd(args.action, args.names))
     elif args.command == "skills":
         sys.exit(_skills_cmd(args.action, " ".join(args.query)))
+    elif args.command == "rtk":
+        sys.exit(_rtk_cmd(args.action))
     elif args.command == "addon":
         sys.exit(_addon_cmd(args.action, args.names))
     elif args.command == "reach":

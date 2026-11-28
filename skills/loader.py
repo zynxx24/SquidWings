@@ -67,7 +67,7 @@ class Skill:
 
 def _guides(root: Path) -> tuple[str, ...]:
     return tuple(sorted(
-        str(path.relative_to(root)) for path in root.rglob("*.md")
+        path.relative_to(root).as_posix() for path in root.rglob("*.md")
         if path.name != "SKILL.md" and not any(part.startswith(".") for part in path.relative_to(root).parts)
     ))
 

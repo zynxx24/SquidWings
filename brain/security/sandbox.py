@@ -47,7 +47,7 @@ _SYSTEM_FILES = (
     "/etc/passwd", "/etc/group", "/etc/alternatives", "/etc/ld.so.cache", "/etc/localtime",
 )
 # Tools installed outside the system folders (nvm, uv, ...) stay usable.
-_USER_TOOLS = ("node", "npm", "npx", "pnpm", "yarn", "uv", "go", "cargo", "rustc", "aislop", "graphify", "motlab")
+_USER_TOOLS = ("node", "npm", "npx", "pnpm", "yarn", "uv", "go", "cargo", "rustc", "aislop", "graphify", "motlab", "rtk")
 # Where uv keeps the Python that uv-installed tools such as graphify run on.
 _USER_TOOL_DIRS = ("~/.local/share/uv/tools", "~/.local/share/uv/python")
 # Browsers Playwright downloaded. HOME is /tmp/home inside, so the path is passed explicitly.
@@ -375,6 +375,11 @@ def _build_bwrap(policy: SandboxPolicy, scope: Scope, command: list[str]) -> tup
 
 
 def _build_docker(policy: SandboxPolicy, scope: Scope, command: list[str], name: str) -> list[str]:
+    if IS_WINDOWS:
+        # The folder is mounted at its own path inside a Linux container: a C:\\ path cannot be one there, and
+        # Windows has no uid to run as. Say so instead of failing halfway.
+        raise SandboxError("SANDBOX_MODE=docker belum bisa dipakai di Windows (folder kerja Windows tidak bisa "
+                           "dipasang di path yang sama di dalam container Linux). Pakai SANDBOX_MODE=auto atau off.")
     memory = policy.memory_mb or _DOCKER_DEFAULT_MEMORY_MB
     argv = [
         "docker", "run", "--rm", "-i", "--name", name, "--read-only", "--tmpfs", "/tmp",

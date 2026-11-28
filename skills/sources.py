@@ -344,7 +344,15 @@ def run_startup(now: float | None = None) -> dict[str, Any]:
     global _linked_once
     linked = link_claude_code()
     _linked_once = True
-    return {"results": results, "linked": linked}
+    # Every AI installed here (also one added since yesterday) gets the skills through the MCP server.
+    try:
+        from skills import connect
+
+        connected = connect.connect()
+    except Exception as exc:  # noqa: BLE001 - another tool's config must never stop the skill sync
+        logger.warning(f"[skills] Could not register the skills server with the agents here: {exc}")
+        connected = []
+    return {"results": results, "linked": linked, "connected": connected}
 
 
 def _missing() -> bool:

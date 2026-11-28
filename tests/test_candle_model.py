@@ -6,10 +6,11 @@ from typing import Any
 
 import numpy as np
 import pytest
-import torch
 
-from addons.trading.quant import candle_lm, candle_view, papersim
-from addons.trading.quant.papersim import CANDLE, PaperSim
+torch = pytest.importorskip("torch", reason="the trading add-on's model needs torch")
+
+from addons.trading.quant import candle_lm, candle_view, papersim  # noqa: E402 - after the torch check
+from addons.trading.quant.papersim import CANDLE, PaperSim  # noqa: E402 - after the torch check
 
 
 class Clock:

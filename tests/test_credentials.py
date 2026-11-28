@@ -49,7 +49,8 @@ def test_values_are_checked_saved_owner_only_and_read_back_after_a_restart(tmp_p
         store.update({"API_KEY": "x"})
     store.update({"telegram_bot_token": "123456789:AAbbccddeeffgghhiijjkkllmmnn", "searxng_url": "http://127.0.0.1:8888"})
     path = Path(os.environ["CREDENTIALS_FILE"])
-    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    if os.name != "nt":                      # Windows keeps a profile private with ACLs, not mode bits
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
     again = CredentialStore(path)
     assert again.web_value("searxng_url") == "http://127.0.0.1:8888"
 
@@ -78,13 +79,18 @@ async def test_telegram_and_search_read_the_page_values():
 
 
 def test_credentials_api(monkeypatch):
+    from brain.config.settings import get_settings
     from web.server import app
+
+    if not get_settings().teams_enabled:
+        pytest.skip("the team API is not mounted here (APP_ENV=development without WEB_TEAMS_ENABLED)")
 
     # A search source set in this machine's .env would make the "nothing set" check below go online.
     from_env = credentials._env_value
     monkeypatch.setattr(credentials, "_env_value", lambda spec: "" if spec.group == "search" else from_env(spec))
 
-    client = TestClient(app, client=("127.0.0.1", 50000))
+    # The Host a local browser sends: "testserver" passes only where this machine's .env allows it.
+    client = TestClient(app, client=("127.0.0.1", 50000), base_url="http://127.0.0.1")
     listed = client.get("/api/teams/credentials").json()
     assert len(listed["fields"]) == len(credentials.FIELDS)
     saved = client.put("/api/teams/credentials", json={"values": {"brave_search_api_key": "BSA1234567890abc"}}).json()

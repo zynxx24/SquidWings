@@ -67,4 +67,8 @@ def test_port_problem_gives_the_command_when_permission_is_denied(monkeypatch):
             raise PermissionError
 
     monkeypatch.setattr(trading_server.socket, "socket", Refused)
-    assert "ip_unprivileged_port_start=80" in trading_server.port_problem("127.0.0.1", 80)
+    answer = trading_server.port_problem("127.0.0.1", 80)
+    if trading_server.IS_WINDOWS:   # Windows needs no administrator for a port: refused means taken or reserved
+        assert "dicadangkan Windows" in answer and "excludedportrange" in answer
+    elif trading_server.IS_LINUX:
+        assert "ip_unprivileged_port_start=80" in answer

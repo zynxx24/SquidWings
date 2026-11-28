@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+import sys
 
 import pytest
 
@@ -30,6 +31,8 @@ def test_holder_finds_this_process(busy):
     import os
 
     h = ports.holder("127.0.0.1", busy)
+    if os.name == "nt" and h.pid is None:
+        pytest.skip("netstat here lists no listening ports (Wine); the parsing is tested below")
     assert h.pid == os.getpid()
     assert not h.squidwings
     assert str(os.getpid()) in h.describe()
@@ -145,11 +148,12 @@ def test_trading_replaces_its_own_older_copy_but_not_another_program(monkeypatch
     assert trading_server.prepare_port("127.0.0.1", 80, say=lambda text: None) is None and stopped == [4242]
     monkeypatch.setattr(ports, "holder", lambda host, port: ports.Holder(77, "/usr/sbin/nginx -g daemon off;", False))
     problem = trading_server.prepare_port("127.0.0.1", 80, say=lambda text: None)
-    assert problem and "nginx" in problem and "kill 77" in problem and stopped == [4242]
+    assert problem and "nginx" in problem and ("kill 77" in problem or "taskkill /PID 77" in problem) and stopped == [4242]
     assert not trading_server.is_our_trading_server("python main.py web")
 
 
 @pytest.mark.enterprise
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="the sysctl that opens port 80 is Linux's")
 def test_a_forbidden_port_80_is_opened_once_with_sudo_in_the_terminal(monkeypatch):
     import subprocess
 
@@ -172,3 +176,28 @@ def test_a_forbidden_port_80_is_opened_once_with_sudo_in_the_terminal(monkeypatc
     assert trading_server.prepare_port("127.0.0.1", 80, say=lambda text: None, interactive=True) is None
     assert allowed[0][:3] == ["sudo", "sh", "-c"] and "ip_unprivileged_port_start=80" in allowed[0][3]
     assert trading_server.SYSCTL_FILE in allowed[0][3], "kept after a reboot too"
+
+
+NETSTAT = """
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1012
+  TCP    127.0.0.1:8080         0.0.0.0:0              LISTENING       4242
+  TCP    127.0.0.1:8080         127.0.0.1:51000        ESTABLISHED     4242
+  TCP    [::]:8888              [::]:0                 LISTENING       77
+"""
+
+
+def test_windows_netstat_and_tasklist_are_read(monkeypatch):
+    from types import SimpleNamespace
+
+    def run(argv, **kwargs):
+        if argv[0] == "netstat":
+            return SimpleNamespace(stdout=NETSTAT, returncode=0)
+        return SimpleNamespace(stdout='"nginx.exe","77","Console","1","12,345 K"\n', returncode=0)
+
+    monkeypatch.setattr(ports.subprocess, "run", run)
+    assert ports._windows_pid_for(8080) == 4242 and ports._windows_pid_for(8888) == 77
+    assert ports._windows_pid_for(9999) is None
+    assert ports._windows_command(77) == "nginx.exe"

@@ -759,7 +759,7 @@ def _own_modules() -> dict[str, float]:
         if not path.is_absolute() or ".venv" in path.parts or _ROOT not in path.parents:
             continue
         try:
-            out[str(path.relative_to(_ROOT))] = path.stat().st_mtime
+            out[path.relative_to(_ROOT).as_posix()] = path.stat().st_mtime
         except (OSError, ValueError):
             continue
     return out

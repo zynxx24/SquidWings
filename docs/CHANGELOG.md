@@ -1,5 +1,20 @@
 # Catatan perubahan
 
+## 2026-11-28: rtk untuk hemat token, dan skill SquidWings untuk semua AI
+
+- **rtk** (github.com/rtk-ai/rtk, edisi Apache-2.0): keluaran perintah dipadatkan sebelum dibaca model. Tes cuma menampilkan yang gagal, `git status` jadi beberapa baris, `ls` jadi pohon ringkas. Contoh di repo ini: `git status` 667 jadi 254 karakter. Exit code tidak berubah dan kegagalan tidak pernah disembunyikan; `rtk bypass <perintah>` untuk keluaran penuh.
+  - `python main.py rtk install` memasang binary resmi dari GitHub dan menolaknya kalau SHA-256 tidak cocok dengan `checksums.txt` rilis, lalu menyambungkannya ke Claude Code, Codex, dan Antigravity (hook rtk sendiri). `rtk gain` menunjukkan yang dihemat.
+  - Perintah agent SquidWings (`execute_command`) ikut lewat rtk setelah pemeriksaan keamanan; hasilnya diberi tanda `rtk` dan cara melihat keluaran penuh. `RTK=off` mematikannya.
+- **Skill SquidWings untuk semua AI.** Server MCP `squidwings-skills` (tanpa paket tambahan) memberi setiap AI tiga tool: cari skill, baca skill (panduan panjang per bagian), dan daftar skill, untuk semua skill: bawaan, GitHub, add-on, dan unggahanmu. `python main.py skills connect` mendaftarkannya ke Claude Code, Codex, Antigravity, Kilo, dan juga Gemini CLI, Cursor, OpenCode kalau terpasang; sinkron skill harian mengulanginya untuk AI yang baru dipasang. Konfigurasi dibackup dulu, dan file dengan komentar tidak ditimpa.
+- Tim "Video lengkap": saran lint tentang memecah file ke sub-komposisi tidak lagi dihitung sebagai peringatan (agent sempat kehabisan langkah karenanya), dan kalau run selesai tanpa video tapi proyek HyperFrames-nya ada, harness merendernya sendiri.
+- **Perbaikan untuk Windows** (diuji dengan Python Windows: seluruh suite lolos atau dilewati dengan alasannya):
+  - Pemeriksa keamanan perintah error untuk setiap perintah (path `C:\\Users\\...` dibaca sebagai escape regex), dan perintah yang membaca kunci SSH atau kredensial tidak tertahan. Keduanya diperbaiki.
+  - Mengganti teks di file ber-CRLF tidak lagi menghasilkan baris kosong ganda.
+  - Port yang sedang dipakai tidak lagi terbaca bebas, pesan "port dicadangkan Windows" menggantikan "butuh administrator", dan program pemegang port ditemukan lewat `netstat`.
+  - Tunnel mengunduh `cloudflared.exe` sendiri; mode sandbox Docker menjelaskan bahwa ia belum didukung di Windows; rekam suara di terminal mengarahkan ke tombol mikrofon di web.
+  - Path di hasil tool, link file, dan daftar panduan skill memakai `/` di semua sistem.
+  - Tes: pengaman jaringan menutup jalur koneksi asyncio Windows dan membolehkan socketpair Windows; tes yang butuh Git, torch, atau shell sungguhan dilewati dengan alasan kalau tidak ada; tes tidak lagi bergantung pada `.env` mesin pengembang.
+
 ## 2026-11-28: video tim yang lebih rapi dan lebih kaya, template langsung tampil
 
 - **`video_check` mengukur tata letak sendiri** (`brain/utils/video_probe.py`), melengkapi `hyperframes check`. Di tengah setiap adegan videonya diputar di Chrome, lalu diukur: teks yang keluar dari kotaknya (termasuk teks di dalam ilustrasi SVG, seperti "NOMOR 042" yang meluber dari layar tiket di uji coba), teks di luar frame, frame yang hampir kosong tanpa judul besar, dan semua adegan yang memakai kotak yang sama di tempat yang sama. Jeda sesaat antar adegan tidak dihitung kosong.

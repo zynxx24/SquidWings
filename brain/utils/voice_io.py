@@ -106,6 +106,8 @@ def record(path: Path, wait_for_stop: Callable[[], object], max_seconds: int = M
     """
     recorder = _recorder()
     if recorder is None:
+        if os.name == "nt":
+            raise VoiceIOError("Merekam suara dari terminal belum bisa di Windows. Pakai tombol mikrofon di halaman web.")
         raise VoiceIOError("Tidak ada perekam suara. Pasang alsa-utils (arecord) atau pulseaudio-utils (parecord).")
     try:
         proc = subprocess.Popen(_record_command(recorder, path), stdin=subprocess.DEVNULL,
