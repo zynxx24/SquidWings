@@ -49,6 +49,10 @@ async def terminal_run(command: str = "", timeout: int = _DEFAULT_TIMEOUT, inter
         reason = web_terminal.forbidden(command)
         if reason:
             return {"ok": False, "blocked": True, "error": f"Refused: {reason}. The user can type it themselves if they really mean it."}
+        from brain.utils import render_hub
+
+        if render_hub.is_render_command(command):
+            command = render_hub.lower_priority(command)   # a render in the panel still leaves the laptop responsive
     term = await web_terminal.open_terminal(session, Path(workspace))
     if answer:
         # A question from the running command ("Continue? [Y/n]", a config wizard). Never a password:

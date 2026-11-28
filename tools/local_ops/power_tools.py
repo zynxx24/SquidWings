@@ -722,9 +722,12 @@ async def archive(
 # --------------------------------------------------------------------------- #
 def _ffmpeg_args(
     preset: str, source: Path, output: Path, fps: int | None, width: int | None,
-    start: float | None, duration: float | None, at_second: float, overwrite: bool,
+    start: float | None, duration: float | None, at_second: float, overwrite: bool, enc: Any = None,
 ) -> list[str]:
+    """``enc``: the H.264 encoder from brain/utils/render_hub.py for the mp4 preset (a GPU one when it works)."""
     args = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y" if overwrite else "-n"]
+    if preset == "mp4" and enc is not None:
+        args += enc.pre
     if preset == "poster":
         args += ["-ss", f"{at_second:g}", "-i", str(source), "-frames:v", "1", "-update", "1"]
         if width:
@@ -740,11 +743,14 @@ def _ffmpeg_args(
     if preset in {"mp4", "webm"}:
         # H.264 in yuv420p needs even dimensions.
         scale = f"scale={width}:-2" if width else "scale=trunc(iw/2)*2:trunc(ih/2)*2"
-        args += ["-vf", rate + scale]
         if preset == "mp4":
-            args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
-                     "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"]
+            from brain.utils import render_hub
+
+            enc = enc or render_hub.cpu_encoder("normal", preset="veryfast")
+            _, video = enc.argv(rate + scale)
+            args += [*video, "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"]
         else:
+            args += ["-vf", rate + scale]
             args += ["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "33", "-row-mt", "1", "-deadline", "good",
                      "-cpu-used", "4", "-pix_fmt", "yuv420p", "-c:a", "libopus", "-b:a", "96k"]
         return [*args, str(output)]
@@ -796,21 +802,35 @@ def _media_convert_sync(
     if any(v is not None and float(v) < 0 for v in (start, duration, at_second)):
         return _error("times must not be negative")
 
-    args = _ffmpeg_args(
-        preset, src, out, int(fps) if fps else None, int(width) if width else None,
-        float(start) if start else None, float(duration) if duration else None,
-        float(at_second or 0), overwrite,
-    )
-    args[0] = ffmpeg
+    from brain.utils import render_hub
+
+    # Video goes through the render hub: the GPU encoder when one passed its test, low priority, one at a time.
+    enc = render_hub.encoder(quality="normal") if preset == "mp4" else None
+
+    def build(encoder: Any) -> list[str]:
+        built = _ffmpeg_args(
+            preset, src, out, int(fps) if fps else None, int(width) if width else None,
+            float(start) if start else None, float(duration) if duration else None,
+            float(at_second or 0), overwrite, encoder,
+        )
+        built[0] = ffmpeg
+        return built
+
     out.parent.mkdir(parents=True, exist_ok=True)
     began = time.monotonic()
     try:
-        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
-                              check=False, stdin=subprocess.DEVNULL)
+        with render_hub.slot_sync(f"convert {src.name}"):
+            proc = subprocess.run(build(enc), capture_output=True, text=True, timeout=timeout,
+                                  check=False, stdin=subprocess.DEVNULL, **render_hub.low_priority())
+            if enc is not None and enc.gpu and proc.returncode != 0:
+                out.unlink(missing_ok=True)
+                enc = render_hub.cpu_encoder("normal", preset="veryfast")
+                proc = subprocess.run(build(enc), capture_output=True, text=True, timeout=timeout,
+                                      check=False, stdin=subprocess.DEVNULL, **render_hub.low_priority())
     except subprocess.TimeoutExpired:
         out.unlink(missing_ok=True)
         return _error(f"ffmpeg took longer than {timeout}s and was stopped")
-    except OSError as exc:
+    except (OSError, render_hub.RenderHubError) as exc:
         return _error(f"ffmpeg failed to start: {exc}")
     if proc.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
         out.unlink(missing_ok=True)
@@ -821,6 +841,7 @@ def _media_convert_sync(
         output=_rel(workspace, out),
         size=out.stat().st_size,
         seconds=round(time.monotonic() - began, 2),
+        encoder=enc.name if enc is not None else "",
         hint="Call share_file with this output to show it to the user.",
     )
 

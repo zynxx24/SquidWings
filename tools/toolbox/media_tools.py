@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from brain.utils import toolkit, whisper_stt
+from brain.utils import render_hub, toolkit, whisper_stt
 from brain.utils.platform_compat import kill_tree
 from tools.local_ops.path_guard import resolve_inside
 
@@ -97,11 +97,14 @@ class MediaError(RuntimeError):
 
 # ── running programs ─────────────────────────────────────────────────────────
 
-async def _run(argv: list[str], cwd: Path, timeout_s: float, env: dict[str, str] | None = None) -> tuple[int, str, bool]:
-    """(exit code, last part of the output, stopped at the time limit). The whole process group is stopped."""
+async def _run(argv: list[str], cwd: Path, timeout_s: float, env: dict[str, str] | None = None,
+               low_priority: bool = False) -> tuple[int, str, bool]:
+    """(exit code, last part of the output, stopped at the time limit). The whole process group is stopped.
+    ``low_priority``: a render, run below normal priority so the machine stays responsive (render_hub)."""
+    extra = render_hub.low_priority() if low_priority else {}
     process = await asyncio.create_subprocess_exec(
         *argv, cwd=str(cwd), stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT, start_new_session=True, env={**os.environ, **(env or {})},
+        stderr=asyncio.subprocess.STDOUT, start_new_session=True, env={**os.environ, **(env or {})}, **extra,
     )
     try:
         output, _ = await asyncio.wait_for(process.communicate(), timeout=timeout_s)
@@ -470,30 +473,41 @@ async def video_render(project: str, output: str = "", composition: str = "", sh
     if dest.suffix.lower() not in {".mp4", ".webm", ".mov"}:
         raise MediaError("output harus .mp4, .webm, atau .mov")
     limit = max(1, min(int(max_minutes), 120)) * 60
-    if engine == "hyperframes":
-        argv = [*_hyperframes(), "render", "-o", str(dest)]
-        if composition:
-            argv += ["-c", str(resolve_inside(folder, composition, must_exist=True))]
-        code, log, timed_out = await _run(argv, folder, limit, _HF_ENV)
-    else:
-        target = composition
-        if not target:
-            ids = await _remotion_compositions(folder)
-            if not ids:
-                raise MediaError("proyek Remotion ini tidak punya komposisi")
-            if len(ids) > 1:
-                return {"ok": False, "engine": engine, "compositions": ids,
-                        "error": "proyek ini punya beberapa komposisi; panggil lagi dengan composition=<salah satu id>"}
-            target = ids[0]
-        argv = ["npx", "--yes", "remotion", "render", target, str(dest), "--codec=h264", "--crf=18"]
-        concurrency = os.getenv("VIDEO_RENDER_CONCURRENCY", "").strip()
-        argv.append(f"--concurrency={concurrency}" if concurrency else f"--concurrency={max(2, (os.cpu_count() or 4) - 2)}")
-        code, log, timed_out = await _run(argv, folder, limit)
+    # Every render asks the hub: one at a time on this machine, below normal priority, workers sized to the
+    # machine, and the GPU encoder when one passed its test (brain/utils/render_hub.py).
+    used: dict[str, Any] = {}
+    async with render_hub.render_slot(f"{engine} {folder.name}"):
+        if engine == "hyperframes":
+            argv = [*_hyperframes(), "render", "-o", str(dest), "--workers", str(render_hub.chrome_workers())]
+            if composition:
+                argv += ["-c", str(resolve_inside(folder, composition, must_exist=True))]
+            gpu = await asyncio.to_thread(render_hub.gpu_ready)
+            code, log, timed_out = await _run([*argv, *(["--gpu"] if gpu else [])], folder, limit, _HF_ENV, low_priority=True)
+            if gpu and code != 0 and not timed_out:
+                # The tool may pick another hardware encoder than the one that passed here: the CPU still delivers.
+                code, log, timed_out = await _run(argv, folder, limit, _HF_ENV, low_priority=True)
+                gpu = False
+            used = {"workers": render_hub.chrome_workers(), "gpu_encode": gpu}
+        else:
+            target = composition
+            if not target:
+                ids = await _remotion_compositions(folder)
+                if not ids:
+                    raise MediaError("proyek Remotion ini tidak punya komposisi")
+                if len(ids) > 1:
+                    return {"ok": False, "engine": engine, "compositions": ids,
+                            "error": "proyek ini punya beberapa komposisi; panggil lagi dengan composition=<salah satu id>"}
+                target = ids[0]
+            concurrency = render_hub.remotion_concurrency()
+            argv = ["npx", "--yes", "remotion", "render", target, str(dest), "--codec=h264", "--crf=18",
+                    f"--concurrency={concurrency}"]
+            code, log, timed_out = await _run(argv, folder, limit, low_priority=True)
+            used = {"concurrency": concurrency, "gpu_encode": False}
     if code != 0 or timed_out or not dest.is_file():
         return {"ok": False, "engine": engine, "error": "render berhenti karena waktu habis" if timed_out else "render gagal",
                 "log_tail": _tail(log)}
     root = _files.workspace(workspace_path)
-    return {**deliver(dest, str(root), share, dest.stem), "engine": engine}
+    return {**deliver(dest, str(root), share, dest.stem), "engine": engine, "render": used}
 
 
 @spec("video_docs", "The official HyperFrames reference for one topic, from the installed CLI (always the version "

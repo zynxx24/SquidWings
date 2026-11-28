@@ -26,6 +26,18 @@ import { pathToFileURL } from 'node:url';
 import { GPU_ARGS, gpuReport } from './gpu.mjs';
 
 const require = createRequire(import.meta.url);
+
+// The H.264 encoder from SquidWings' render hub (brain/utils/render_hub.py): a GPU encoder when one passed its
+// test on this machine, else libx264. Without the hub (the skill used outside SquidWings) it is libx264 as before.
+function hubEncoder(quality, fallback) {
+  const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../..');
+  const py = ['.venv/bin/python', '.venv/Scripts/python.exe'].map((p) => path.join(root, p)).find((p) => fs.existsSync(p));
+  if (!py) return { pre: [], vf: '', args: fallback };
+  const r = spawnSync(py, ['-m', 'brain.utils.render_hub', 'encoder', '--quality', quality], { cwd: root, encoding: 'utf8' });
+  try { const enc = JSON.parse((r.stdout || '').trim().split('\n').pop()); return enc.gpu ? enc : { pre: [], vf: '', args: fallback }; }
+  catch { return { pre: [], vf: '', args: fallback }; }
+}
+const withVf = (enc, vf) => { const f = [vf, enc.vf].filter(Boolean).join(','); return f ? ['-vf', f] : []; };
 function loadPlaywright() {
   try { return require('playwright'); } catch {
     const root = execSync('npm root -g').toString().trim();
@@ -171,11 +183,13 @@ await browser.close();
 const full = from === 0 && to === meta.frames - 1;
 if (!flag('no-mux') && !onlyAudio && full) {
   const out = path.join(RENDERS, opt('out', `final${SUFFIX}.mp4`));
-  const args = ['-y', '-hide_banner', '-loglevel', 'error',
+  const enc = hubEncoder('high', ['-c:v', 'libx264', '-preset', 'slow', '-crf', '14', '-pix_fmt', 'yuv420p']);
+  const args = ['-y', '-hide_banner', '-loglevel', 'error', ...enc.pre,
     '-framerate', String(meta.fps), '-i', path.join(FR, 'f%04d.png'),
     ...(fs.existsSync(wavPath) && !flag('no-audio') ? ['-i', wavPath, '-map', '0:v:0', '-map', '1:a:0', '-c:a', 'aac', '-b:a', '192k'] : ['-map', '0:v:0']),
-    '-c:v', 'libx264', '-preset', 'slow', '-crf', '14', '-pix_fmt', 'yuv420p', '-r', String(meta.fps),
+    ...withVf(enc, ''), ...enc.args, '-r', String(meta.fps),
     '-frames:v', String(meta.frames), '-movflags', '+faststart', out];
+  if (enc.name) console.log(`encoder: ${enc.name} (render hub)`);
   const r = spawnSync('ffmpeg', args, { stdio: 'inherit' });
   if (r.status !== 0) { console.error('ffmpeg failed'); process.exit(1); }
   console.log('wrote', out);
@@ -207,8 +221,9 @@ if (onlyAudio && !flag('no-mux') && fs.existsSync(path.join(RENDERS, `final${SUF
 // --share: a smaller encode for sending to a phone (CRF 24)
 if (flag('share') && fs.existsSync(path.join(RENDERS, `final${SUFFIX}.mp4`))) {
   const out = path.join(RENDERS, `share${SUFFIX}.mp4`);
-  const r = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', '-i', path.join(RENDERS, `final${SUFFIX}.mp4`), '-c:v', 'libx264', '-crf', '24', '-preset', 'slow',
-    '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out], { stdio: 'inherit' });
+  const enc = hubEncoder('small', ['-c:v', 'libx264', '-crf', '24', '-preset', 'slow', '-pix_fmt', 'yuv420p']);
+  const r = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error', ...enc.pre, '-i', path.join(RENDERS, `final${SUFFIX}.mp4`),
+    ...withVf(enc, ''), ...enc.args, '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', out], { stdio: 'inherit' });
   if (r.status !== 0) { console.error('share encode failed'); process.exit(1); }
   console.log('wrote', out);
 }

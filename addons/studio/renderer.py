@@ -19,13 +19,12 @@ Pieces:
   editor plays and scrubs instead of the original, so editing on a phone stays smooth. Exports and
   stills always read the original.
 
-Resource control: ``STUDIO_THREADS`` (default: all cores but one), ``STUDIO_MEM_MB`` (default 2048),
-``STUDIO_NICE`` (default on: the render runs below normal priority so the machine stays responsive).
+Resource control lives in ``brain/utils/render_hub.py``, shared by every render in the harness: threads,
+memory cap, low priority, the GPU encoder, and one render at a time (``RENDER_*``; the old ``STUDIO_*`` still work).
 """
 
 from __future__ import annotations
 
-import json
 import os
 import platform
 import re
@@ -42,9 +41,9 @@ from pathlib import Path
 from typing import Any
 
 from addons.studio import fonts, studio_doc
-from brain.config.settings import get_settings
+from brain.utils import cache, render_hub
 from brain.utils.logger import get_logger
-from brain.utils.platform_compat import IS_MAC, IS_WINDOWS, kill_tree, low_priority_kwargs
+from brain.utils.platform_compat import IS_WINDOWS, kill_tree
 
 logger = get_logger(__name__)
 
@@ -59,35 +58,21 @@ class RenderError(RuntimeError):
     pass
 
 
-# ── settings ─────────────────────────────────────────────────────────────────
+# ── settings: one hub for every render (brain/utils/render_hub.py) ─────────────
 
-def threads() -> int:
-    try:
-        value = int(os.getenv("STUDIO_THREADS", "0"))
-    except ValueError:
-        value = 0
-    return value if value > 0 else max(1, (os.cpu_count() or 2) - 1)
-
-
-def mem_mb() -> int:
-    try:
-        return max(64, int(os.getenv("STUDIO_MEM_MB", "2048")))
-    except ValueError:
-        return 2048
+threads = render_hub.threads
+mem_mb = render_hub.mem_mb
 
 
 def _popen_kwargs() -> dict[str, Any]:
-    nice = os.getenv("STUDIO_NICE", "1").strip().lower() not in {"0", "off", "false", "no"}
-    return low_priority_kwargs(10) if nice else {}
+    return render_hub.low_priority()
 
 
 def ffmpeg() -> str:
-    from brain.utils import toolkit
-
-    exe = toolkit.ffmpeg_exe()
-    if not exe:
-        raise RenderError("ffmpeg tidak ditemukan. Pasang dengan: python main.py addon install studio")
-    return exe
+    try:
+        return render_hub.ffmpeg()
+    except render_hub.RenderHubError as exc:
+        raise RenderError(str(exc)) from None
 
 
 def command_line(argv: list[str]) -> str:
@@ -166,14 +151,15 @@ class Media:
     audio: bool = False
 
 
-_probe_cache: dict[tuple[str, float], Media] = {}
+_probe_cache = cache.cache("studio_probe", max_entries=256)
 
 
 def probe(path: Path) -> Media:
     """Duration, size and whether there is sound, read from ffmpeg's own report."""
     key = (str(path), path.stat().st_mtime if path.exists() else 0)
-    if key in _probe_cache:
-        return _probe_cache[key]
+    found = _probe_cache.get(key)
+    if isinstance(found, Media):
+        return found
     done = subprocess.run([ffmpeg(), "-hide_banner", "-nostdin", "-i", str(path)], capture_output=True, text=True,
                           timeout=60, check=False)
     text = done.stderr
@@ -183,100 +169,16 @@ def probe(path: Path) -> Media:
     if m := re.search(r"Video:.*?,\s*(\d{2,5})x(\d{2,5})", text):
         media.width, media.height = int(m.group(1)), int(m.group(2))
     media.audio = "Audio:" in text
-    _probe_cache[key] = media
+    _probe_cache.set(key, media)
     return media
 
 
-# ── encoders ─────────────────────────────────────────────────────────────────
+# ── encoders: tested once per machine by the hub ───────────────────────────────
 
-@dataclass
-class Encoder:
-    name: str
-    gpu: bool
-    pre: list[str] = field(default_factory=list)     # before the inputs (device setup)
-    vf: str = ""                                    # video filter before encoding
-    args: list[str] = field(default_factory=list)    # codec and quality
-
-
-_QUALITY = {"high": (18, 20), "normal": (23, 24), "small": (28, 30)}   # (crf for x264, qp for GPU encoders)
-
-
-def _vaapi_device() -> str:
-    found = sorted(Path("/dev/dri").glob("renderD*")) if Path("/dev/dri").is_dir() else []
-    return str(found[0]) if found else ""
-
-
-def _candidates(quality: str, width: int, height: int, fps: float) -> list[Encoder]:
-    crf, qp = _QUALITY.get(quality, _QUALITY["high"])
-    bitrate = f"{max(1, int(width * height * fps * 0.12 / 1000))}k"
-    gpus: list[Encoder] = [Encoder("nvenc", True, args=["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr", "-cq", str(qp), "-pix_fmt", "yuv420p"])]
-    if IS_MAC:
-        gpus.append(Encoder("videotoolbox", True, args=["-c:v", "h264_videotoolbox", "-b:v", bitrate, "-pix_fmt", "yuv420p"]))
-    if IS_WINDOWS:
-        gpus.append(Encoder("amf", True, args=["-c:v", "h264_amf", "-rc", "cqp", "-qp_i", str(qp), "-qp_p", str(qp), "-pix_fmt", "yuv420p"]))
-    gpus.append(Encoder("qsv", True, args=["-c:v", "h264_qsv", "-global_quality", str(qp + 2), "-pix_fmt", "nv12"]))
-    device = _vaapi_device()
-    if device:
-        gpus.append(Encoder("vaapi", True, pre=["-vaapi_device", device], vf="format=nv12,hwupload",
-                            args=["-c:v", "h264_vaapi", "-qp", str(qp)]))
-    return gpus
-
-
-def cpu_encoder(quality: str = "high") -> Encoder:
-    crf, _ = _QUALITY.get(quality, _QUALITY["high"])
-    return Encoder("cpu", False, args=["-c:v", "libx264", "-preset", "medium", "-crf", str(crf), "-pix_fmt", "yuv420p",
-                                       "-threads", str(threads())])
-
-
-def _works(enc: Encoder) -> bool:
-    argv = [ffmpeg(), "-hide_banner", "-loglevel", "error", "-nostdin", *enc.pre, "-f", "lavfi", "-i",
-            "color=c=gray:s=320x240:d=0.3", "-frames:v", "5", *(["-vf", enc.vf] if enc.vf else []), *enc.args, "-f", "null", "-"]
-    try:
-        return subprocess.run(argv, capture_output=True, timeout=30, check=False).returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
-def _gpu_cache_file() -> Path:
-    return get_settings().project_root / ".agent_memory" / "studio_gpu.json"
-
-
-def detected_gpus() -> list[str]:
-    """GPU encoders that passed a real test on this machine (cached until ffmpeg changes)."""
-    exe = ffmpeg()
-    stamp = f"{exe}:{Path(exe).stat().st_mtime if Path(exe).exists() else 0}"
-    cache = _gpu_cache_file()
-    try:
-        data = json.loads(cache.read_text(encoding="utf-8"))
-        if data.get("ffmpeg") == stamp:
-            return list(data.get("working", []))
-    except (OSError, ValueError):
-        pass
-    working = [enc.name for enc in _candidates("high", 1920, 1080, 30) if _works(enc)]
-    try:
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps({"ffmpeg": stamp, "working": working}), encoding="utf-8")
-    except OSError:
-        pass
-    return working
-
-
-def encoder(gpu: str = "", quality: str = "high", width: int = 1920, height: int = 1080, fps: float = 30) -> Encoder:
-    """The encoder for this export. gpu: auto (default), off, or an encoder name (nvenc, qsv, vaapi, ...)."""
-    choice = (gpu or os.getenv("STUDIO_GPU", "auto")).strip().lower()
-    if choice in {"off", "cpu", "0", "false", "no"}:
-        return cpu_encoder(quality)
-    options = {enc.name: enc for enc in _candidates(quality, width, height, fps)}
-    working = detected_gpus()
-    if choice != "auto":
-        if choice in options and choice in working:
-            return options[choice]
-        logger.warning(f"[studio] GPU encoder {choice} not usable here; using the CPU")
-        return cpu_encoder(quality)
-    for name in working:
-        if name in options:
-            return options[name]
-    return cpu_encoder(quality)
+Encoder = render_hub.Encoder
+cpu_encoder = render_hub.cpu_encoder
+detected_gpus = render_hub.detected_gpus
+encoder = render_hub.encoder
 
 
 # ── scene ────────────────────────────────────────────────────────────────────
@@ -554,6 +456,16 @@ def export(workspace: Path, name: str, *, scale: float = 1.0, quality: str = "hi
             progress(fraction, text)
 
     engine = build()
+    say(0.0, "Menunggu giliran render")
+    try:
+        with render_hub.slot_sync(f"studio {name}", job.cancel if job else None):
+            return _export(engine, workspace, name, scale=scale, quality=quality, gpu=gpu, job=job, say=say)
+    except render_hub.RenderHubError as exc:
+        raise RenderError(str(exc)) from None
+
+
+def _export(engine: Path, workspace: Path, name: str, *, scale: float, quality: str, gpu: str, job: Job | None,
+            say: Progress) -> Path:
     doc, _ = studio_doc.load(workspace, name)
     project = studio_doc.folder(workspace, name)
     out_dir = project / "out"

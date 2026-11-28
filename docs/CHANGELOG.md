@@ -1,5 +1,13 @@
 # Catatan perubahan
 
+## 2026-11-28: satu pengatur render untuk semua video
+
+- Aturan render yang dulu hanya dipakai mesin C Studio (`sqengine.c`) sekarang ada di `brain/utils/render_hub.py` dan dipakai semua render: Studio, `video_render` (HyperFrames dan Remotion), konversi `media_convert`, ekspor skill `animate`, dan perintah render yang dijalankan agent lewat terminal (ffmpeg, `hyperframes render`, `remotion render`).
+- **Tidak memberatkan laptop:** render jalan di prioritas rendah (CPU dan disk), jumlah worker Chrome disesuaikan dengan inti CPU dan RAM kosong (paling banyak 4), dan hanya satu render berat yang jalan sekaligus di seluruh mesin (terminal, web, dan Telegram antre bergiliran).
+- **GPU kalau ada:** encoder H.264 dipilih lewat uji encode sungguhan (NVENC, Quick Sync, VAAPI, VideoToolbox, AMF). Kalau encoder GPU gagal, render diulang di CPU, jadi video tetap jadi. Hasil uji diulang saat akses ke GPU berubah.
+- Kalau GPU ada tapi tidak bisa dibuka user (Linux: belum masuk grup `render`), `python -m brain.utils.render_hub plan` dan hasil render menyebut cara memperbaikinya.
+- Pengaturan: `RENDER_WORKERS`, `RENDER_THREADS`, `RENDER_MEM_MB`, `RENDER_GPU` (auto/off/nama), `RENDER_NICE=off`; nama lama `STUDIO_*` tetap berlaku.
+
 ## 2026-11-28: Telegram tersambung ke harness sejak start, upload sama di semua tempat, HTML jadi aplikasi
 
 - **Telegram langsung tersambung.** Saat terminal (`python main.py`) atau web start dan bot serta Chat ID sudah diisi di Kredensial, alur "Harness lewat Telegram" dibuat sekali dan jadi chat default: pesan tanpa kata pemicu dikerjakan harness lengkap (alat, skill, file). Matikan atau nyalakan di halaman Tim agent; pilihanmu tidak diubah lagi saat start, dan alur lain tetap menerima pesan dengan kata pemicunya. Terminal dan web bisa jalan bersamaan: hanya satu yang membaca pesan bot. `TELEGRAM_CONNECTOR=off` mematikannya sama sekali.

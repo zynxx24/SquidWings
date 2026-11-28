@@ -58,12 +58,14 @@ def test_audio_mix_covers_music_and_the_sound_of_video_clips(tmp_path: Path, mon
 
 
 def test_encoder_choice_follows_the_setting(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(renderer, "detected_gpus", lambda: ["qsv"])
-    monkeypatch.setattr(renderer, "ffmpeg", lambda: "ffmpeg")
+    from brain.utils import render_hub
+
+    monkeypatch.setattr(render_hub, "detected_gpus", lambda: ["qsv"])
+    monkeypatch.setattr(render_hub, "ffmpeg", lambda: "ffmpeg")
     assert renderer.encoder("auto").name == "qsv"
     assert renderer.encoder("off").name == "cpu"
     assert renderer.encoder("nvenc").name == "cpu", "a GPU that failed its test is never forced"
-    monkeypatch.setattr(renderer, "detected_gpus", lambda: [])
+    monkeypatch.setattr(render_hub, "detected_gpus", lambda: [])
     assert renderer.encoder("auto").name == "cpu"
 
 

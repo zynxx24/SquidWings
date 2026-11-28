@@ -92,12 +92,22 @@ async def execute_command(
     # 2. Execute
     executor = CommandExecutor(default_timeout=timeout)
 
+    from brain.utils import render_hub
+
+    # A render or encode (ffmpeg, hyperframes/remotion render, the animate export) waits for the machine's render
+    # slot and runs at low priority, so it never stacks on another render or makes the laptop stutter.
+    render = render_hub.is_render_command(command)
     try:
-        result = await executor.execute(
-            command=check.sanitized_command,
-            cwd=cwd,
-            timeout=timeout,
-        )
+        if render:
+            async with render_hub.render_slot(f"command {command[:40]}"):
+                result = await executor.execute(command=render_hub.lower_priority(check.sanitized_command),
+                                                cwd=cwd, timeout=timeout)
+        else:
+            result = await executor.execute(
+                command=check.sanitized_command,
+                cwd=cwd,
+                timeout=timeout,
+            )
 
         logger.info(
             f"[run_cmd] Done: rc={result.return_code}, "
