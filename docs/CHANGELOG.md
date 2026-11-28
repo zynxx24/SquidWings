@@ -1,5 +1,12 @@
 # Catatan perubahan
 
+## 2026-11-28: rencana dulu, naskah dulu, bar kualitas enam aspek, dan folder `.claude` + `.codex`
+
+- **Rencana menyeluruh sebelum eksekusi.** Prompt dasar dan protokol harness sekarang meminta model memetakan kondisi dulu, lalu menulis rencana dari segala segi (tujuan, pemakai, desain, enam aspek kualitas, risiko, langkah, verifikasi, cara mundur), baru dieksekusi.
+- **Video: naskah final dulu.** Teks di layar dan narasi dibangun dari satu `naskah.md`, jadi tidak pernah beda. Ada di skill `video-audio` dan `voice-over` (bagian 0, plus pelajaran dari video sebelumnya), dan di playbook vault yang otomatis muncul untuk request video serupa.
+- **Bar kualitas enam aspek.** Skill baru `bar-kualitas` ikut setiap kali membangun web, backend, fitur, Laravel, atau memperbaiki bug: keamanan, kualitas kode, keandalan, performa, maintainability, dan usability, masing-masing dilaporkan PASS atau FAIL dengan bukti. Prompt kode juga mewajibkan keenamnya.
+- **`.claude/` dan `.codex/` di repo.** Aturan ditulis sekali di `.claude/rules/` dan diimpor `CLAUDE.md`. Isinya: pengaturan bersama Claude Code (izin untuk perintah cek, blokir baca `.env`, kredensial, dan key router), skill `super-plan`, `quality-gate`, `video-script`, dan subagent `quality-reviewer`. Untuk Codex: `.codex/config.toml`, plus `AGENTS.md` dan `.codex/skills/` yang dibangun oleh `scripts/sync_agent_config.py`. Tes gagal kalau salinan Codex tertinggal.
+
 ## 2026-11-27: routing Gemini TTS lintas key dan model
 
 - Kredensial > Gemini API key sekarang bisa diisi beberapa key, dipisah koma atau baris baru.

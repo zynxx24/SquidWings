@@ -11,6 +11,21 @@ tools: voice_track, video_add_voice, voice_speak, voice_list, transcribe, video_
 
 Video promosi, explainer, dan konten sosial **selalu diberi suara**, kecuali pengguna minta musik saja. Video yang sudah jadi tanpa suara tapi punya naskah (misalnya `mic.txt`) diberi suara dengan langkah di bawah, tanpa membangun ulang videonya.
 
+## 0. Naskah final dulu (satu sumber untuk video dan suara)
+
+1. Tulis `naskah.md` **sebelum** membangun video. Isinya tabel per adegan: `Detik | Teks di layar | Narasi`. Narasi membacakan teks di layar, atau teks di layar memuat potongan kata demi kata dari narasi.
+2. Cek muat: narasi sekitar 2,5 kata per detik, teks di layar maksimal sekitar 3 kata per detik. Yang tidak muat diperbaiki di naskah.
+3. `mic.txt` diturunkan dari kolom Narasi. Komposisi video membaca teks dan detiknya dari naskah yang sama, bukan dari salinan manual.
+4. Naskah berubah, berarti suara dan video dibangun ulang dari naskah.
+
+**Pelajaran dari video sebelumnya:**
+- Narasi yang ditulis setelah video jadi selalu beda dengan teks di layar.
+- Model TTS membacakan semua teks prompt. Arahan gaya hanya boleh di `## Director's notes`.
+- Model kadang mengucapkan satu baris dua kali. Cek setiap baris dengan whisper (`check=true`).
+- Lyria (musik Gemini) tertutup di paket gratis, dan katalog musik HeyGen perlu login. Tentukan sumber musik di naskah sejak awal.
+- Tanpa backsound, jeda antar-kalimat terasa kosong. Video bernarasi selalu diberi musik yang mengecil saat narasi bicara.
+- Render dan batch suara dijalankan di background. Jangan menunggu kuota harian habis dengan tidur.
+
 ## 1. Naskah: format `mic.txt`
 
 Satu file teks di folder proyek. Kepala berisi gaya; tiap baris naskah punya rentang detik yang sama dengan adegan dan teks di layarnya.

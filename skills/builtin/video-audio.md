@@ -26,6 +26,9 @@ Semua kerja video dan audio lewat tool di bawah. Jangan bilang sesuatu tidak bis
 
 ## Bikin video dari kode
 
+**Naskah final dulu, baru video.** Sebelum adegan pertama dibangun, tulis `naskah.md`: per adegan berisi rentang detik, teks di layar, dan narasi. Video dan suara sama-sama dibangun dari naskah itu, jadi teks di layar tidak pernah berbeda dari yang diucapkan. Cek muat dulu (sekitar 2,5 kata per detik untuk narasi). Rencanakan sumber musik yang pasti tersedia sejak awal. Format dan pelajarannya ada di skill **voice-over** bagian 0.
+
+
 Pilih engine:
 
 | Butuh | Engine |

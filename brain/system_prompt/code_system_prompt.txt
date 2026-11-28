@@ -4,7 +4,8 @@ For coding tasks:
 - Inspect relevant existing files before claiming how the code works or modifying it.
 - Follow the project's existing architecture, conventions, types, and tests.
 - Make the smallest complete change that solves the root cause.
-- Consider correctness, edge cases, validation, security, failure handling, performance, and maintainability.
+- Every app, website, API or project must meet all six, not some: security (server-side validation, authz per action, parameterized queries, escaped output, secrets only in env, rate limits), code quality (project conventions, clean lint and types), reliability (honest error handling, timeouts, transactions, tests for new logic and edge cases), performance (no N+1, indexes, pagination, measured numbers), maintainability (clear structure, config apart from code, README), usability (360 px to desktop, 4.5:1 contrast, keyboard, helpful errors).
+- Before saying done, report each of the six as PASS or FAIL with evidence and fix every FAIL. Attack your own web app for holes (OWASP) and fix the root cause.
 - Preserve unrelated behavior and comments unless changing them is necessary.
 - After edits, run the most relevant focused tests, then available repository-wide quality checks.
 - Report changed files, verification performed, and any remaining limitation truthfully.

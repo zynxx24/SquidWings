@@ -48,6 +48,9 @@ audit.jsonl
 !README.md
 !**/README.md
 !/CLAUDE.md
+!/AGENTS.md
+!.claude/**/*.md
+!.codex/**/*.md
 !docs/*.md
 !skills/*.md
 !skills/*/**/*.md
@@ -59,7 +62,13 @@ audit.jsonl
 add_model.md
 
 # === Local tooling ===
-.claude/
+# Shared agent settings are committed; personal ones stay local.
+.claude/*
+!.claude/settings.json
+!.claude/rules/
+!.claude/skills/
+!.claude/agents/
+.claude/settings.local.json
 .relaycode.json
 .vscode/
 .idea/
@@ -93,6 +102,7 @@ htmlcov/
 !addons/*/addon.json
 !addons/*/skills/*/**/*.json
 !tests/eval_data/*.json
+!.claude/settings.json
 
 # === Backups, archives, media ===
 *.bak

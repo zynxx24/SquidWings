@@ -2,6 +2,29 @@
 
 SquidWings is an AI agent harness (terminal + web) in **one language, Python 3.12+**, that runs on Windows, macOS and Linux. The UI, prompts and docs are in **Indonesian**; keep new user-facing text in Indonesian, code and comments in English.
 
+## How to work (always)
+
+@.claude/rules/plan-first.md
+
+@.claude/rules/quality-bar.md
+
+@.claude/rules/video-script-first.md
+
+@.claude/rules/lessons.md
+
+## Agent settings: `.claude/` and `.codex/`
+
+| Path | For | What |
+|---|---|---|
+| `CLAUDE.md` + `.claude/rules/*.md` | both | The rules. Edit these; they are the one source. |
+| `.claude/settings.json` | Claude Code | Shared permissions: the check commands are allowed, reading `.env`, credentials and router keys is denied. Personal overrides go in `.claude/settings.local.json` (git-ignored). |
+| `.claude/skills/` | Claude Code | `super-plan`, `quality-gate`, `video-script` |
+| `.claude/agents/` | Claude Code | `quality-reviewer`: independent six-aspect review of a diff |
+| `.codex/config.toml` | Codex | Reasoning effort and room for `AGENTS.md` |
+| `AGENTS.md`, `.codex/skills/` | Codex | **Generated**: run `.venv/bin/python scripts/sync_agent_config.py` after editing the rules or skills. A test fails when they drift. |
+
+The harness has the same rules for the models it runs: `brain/system_prompt/` (plan first, six-aspect bar) and the built-in skills `bar-kualitas`, `video-audio` and `voice-over`.
+
 ## Run it
 
 ```bash

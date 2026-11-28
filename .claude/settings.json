@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(bash scripts/check_all.sh)",
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(.venv/bin/ruff check:*)",
+      "Bash(.venv/bin/mypy:*)",
+      "Bash(.venv/bin/python scripts/sync_agent_config.py:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./web/data/credentials.json)",
+      "Read(./web/data/router/**)",
+      "Read(./vault/**/secrets/**)"
+    ]
+  }
+}
