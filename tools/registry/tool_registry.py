@@ -361,11 +361,14 @@ class ToolRegistry:
         guard = self._get_guard()
         try:
             if guard is None:
-                # Security layer unavailable -> fail open, but say so loudly.
-                logger.warning(
-                    "[tool_registry] security guard unavailable; "
-                    f"executing {tool_name} unguarded"
-                )
+                # Security layer unavailable: only read-only tools may run; anything that changes or runs fails closed.
+                if not is_read_only(tool_name):
+                    raise ToolError(
+                        message=f"Tool '{tool_name}' refused: the security guard could not start, so nothing that "
+                                "changes files or runs commands is allowed. Check the server log.",
+                        tool_name=tool_name,
+                    )
+                logger.warning(f"[tool_registry] security guard unavailable; running read-only {tool_name}")
                 if entry.is_async:
                     return await entry.executor(**arguments)
                 return await asyncio.to_thread(entry.executor, **arguments)

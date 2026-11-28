@@ -72,12 +72,14 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-# The owner's rule (2026-11-22): the harness sets no limit of its own on what a model sees; only the
-# provider's context window does. 1M tokens is about 3.6M characters. A cheap model needs more
-# information to understand a task, not less, so every tier gets every tool, whole files and tool
-# results, and the full skill guides. AGENT_CONTEXT_CHARS / AGENT_TOOL_RESULT_CHARS change the ceiling.
+# Limits on cost, not on capability (the owner's rule, 2026-11-28; it replaces "no limits at all"):
+# the history may use the provider's whole window (1M tokens, about 3.6M characters), but one tool result
+# is clipped to 120k characters (about 30k tokens; head and tail kept, the model re-reads a narrower range),
+# because a single `cat` of a big log used to cost a quarter of a million tokens. A turn also has a token
+# budget (turn_token_budget). AGENT_CONTEXT_CHARS / AGENT_TOOL_RESULT_CHARS / AGENT_TURN_TOKEN_BUDGET change them.
 PROVIDER_CONTEXT_CHARS = _env_int("AGENT_CONTEXT_CHARS", 3_600_000)
-TOOL_RESULT_CHARS = _env_int("AGENT_TOOL_RESULT_CHARS", PROVIDER_CONTEXT_CHARS // 4)
+TOOL_RESULT_CHARS = _env_int("AGENT_TOOL_RESULT_CHARS", 120_000)
+DEFAULT_TURN_TOKEN_BUDGET = 3_000_000
 BRIEFING_CHARS = 40_000
 SKILL_CHARS = 400_000
 
@@ -118,6 +120,20 @@ def tier_for(model_id: str) -> Tier:
 
 # What AGENT_MAX_ROUNDS=0 means: no practical cap on tool rounds in one turn.
 UNLIMITED_ROUNDS = 1_000_000
+
+
+def turn_token_budget() -> int:
+    """Tokens one user turn may spend in all its model calls together (AGENT_TURN_TOKEN_BUDGET; 0/off = none).
+
+    Every round resends the whole conversation, so an unlimited loop can burn millions of tokens on one
+    message. When the budget runs out the agent writes what it finished and what is left; "lanjut" continues."""
+    raw = os.getenv("AGENT_TURN_TOKEN_BUDGET", "").strip().lower()
+    if raw in {"0", "off", "none", "unlimited", "tanpa batas"}:
+        return 0
+    try:
+        return max(10_000, int(raw.replace("_", ""))) if raw else DEFAULT_TURN_TOKEN_BUDGET
+    except ValueError:
+        return DEFAULT_TURN_TOKEN_BUDGET
 
 
 def rounds_override() -> int | None:

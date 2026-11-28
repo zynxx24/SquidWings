@@ -39,12 +39,13 @@ from brain.harness.guards import (
     repair_json_arguments,
     tool_failed,
 )
-from brain.harness.tiers import rounds_override
+from brain.harness.tiers import rounds_override, turn_token_budget
 from brain.harness.verifier import verify_turn
 from brain.model.connection.api_client import APIClient
 from brain.model.connection.response_handler import ParsedResponse, ResponseHandler
 from brain.model.parser.tool_call_parser import ToolCallParser
 from brain.model.stream.stream_handler import StreamAggregator
+from brain.security.policy_engine import SHELL_TOOLS
 from brain.utils.exceptions import ReasoningBudgetError, ToolError
 from brain.utils.logger import get_logger
 from tools.registry.tool_registry import WORKSPACE_TOOLS, ToolRegistry, is_read_only
@@ -165,6 +166,7 @@ class AgentLoop:
         """
         result = LoopResult(model=model_id)
         current_messages = list(messages)
+        self._start_turn(current_messages)
         iteration = 0
         # A reasoning model often emits thinking before it has read anything.
         # Forcing a final answer on the first thinking-only turn makes it
@@ -220,6 +222,21 @@ class AgentLoop:
                         f"Anggaranmu tinggal sedikit (sekitar {left} langkah). Berhenti membaca dan riset. "
                         "Tulis sekarang file atau hasil yang menjadi tugasmu, walau belum sempurna, lalu pakai "
                         "sisa langkah untuk memeriksa dan merapikannya."
+                    ),
+                })
+
+            budget = turn_token_budget()
+            if budget and not force_final and result.total_tokens >= budget:
+                force_final = True
+                verify_rounds_left = 0
+                if harness:
+                    harness.emit(type="status", note=True, text="Anggaran token giliran ini habis, menulis hasilnya")
+                current_messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Anggaran token untuk giliran ini ({budget:,} token) sudah habis. Jangan panggil tool lagi. "
+                        "Tulis sekarang apa yang sudah selesai, apa yang belum, dan langkah berikutnya. "
+                        "Pengguna bisa bilang 'lanjut' untuk meneruskan."
                     ),
                 })
 
@@ -892,6 +909,19 @@ class AgentLoop:
             if _ws:
                 arguments[workspace_key] = _ws
 
+        # Outside text in this chat: commands that run as root, run fetched installers or push need the user's yes.
+        resolved = self._tool_registry.resolve_name(tool_name)
+        if resolved in SHELL_TOOLS and isinstance(arguments, dict):
+            command = str(arguments.get("command") or arguments.get("answer") or "")
+            if command.strip():
+                from brain.security import command_risk, taint
+                from brain.utils.workspace_context import get_active_session
+
+                risk = command_risk.assess(command, cwd=arguments.get("cwd"))
+                ask = taint.needs_yes(get_active_session(), command, root=risk.root, fetches=risk.fetches)
+                if ask:
+                    return {"success": False, "error": ask, "tool_name": tool_name, "needs_approval": True}
+
         # Execute
         logger.info(f"[agent_loop] Executing tool: {tool_name}")
         start_time = time.time()
@@ -903,6 +933,12 @@ class AgentLoop:
             logger.info(
                 f"[agent_loop] Tool {tool_name} completed in {elapsed:.0f}ms"
             )
+            from brain.security import taint
+
+            if resolved in taint.UNTRUSTED_TOOLS:
+                from brain.utils.workspace_context import get_active_session
+
+                taint.mark(get_active_session(), resolved)
             return {
                 "success": True,
                 "result": tool_result,
@@ -931,6 +967,18 @@ class AgentLoop:
                 "tool_name": tool_name,
                 "latency_ms": elapsed,
             }
+
+    @staticmethod
+    def _start_turn(messages: list[dict[str, Any]]) -> None:
+        """Count down outside-content taint and take the user's yes, once per user message."""
+        from brain.security import taint
+        from brain.utils.workspace_context import get_active_session
+
+        last = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+        content = last.get("content") if last else ""
+        if isinstance(content, list):
+            content = " ".join(str(p.get("text", "")) for p in content if isinstance(p, dict))
+        taint.new_turn(get_active_session(), str(content or ""))
 
     @staticmethod
     def _apply_workspace(tool_name: str, arguments: dict[str, Any], workspace: str) -> None:
@@ -975,6 +1023,10 @@ class AgentLoop:
             text = json.dumps(content, ensure_ascii=False, default=str)
         except (TypeError, ValueError):
             text = str(content)
+        from brain.security import taint
+
+        if tool_result.get("success") and self._tool_registry.resolve_name(str(tool_result.get("tool_name"))) in taint.UNTRUSTED_TOOLS:
+            text = taint.label(str(tool_result.get("tool_name")), text)
         if self._harness:
             limit = max(self._harness.scaffold.tool_result_chars, min(_RESULT_FLOOR.get(str(tool_result.get("tool_name")), 0), self._harness.scaffold.context_chars // 3))
             return clip_text(text, limit)

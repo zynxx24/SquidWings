@@ -1,3 +1,4 @@
+<!-- prompt: Lessons: TTS reads every word of its prompt, so style direction goes in Director's notes; check each voice line with whisper; long jobs run in the background; quote laws from the official text. -->
 # Pelajaran dari proyek sebelumnya
 
 ## Video "Hikayat Antrean" (2026-11-27)

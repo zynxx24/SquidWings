@@ -44,8 +44,10 @@ def main() -> int:
             else [sys.executable, "-m", "venv", str(VENV)])
     print("==> Memasang requirements.txt")
     py = str(venv_python())
-    run([uv, "pip", "install", "--python", py, "-r", "requirements.txt"] if uv
-        else [py, "-m", "pip", "install", "-r", "requirements.txt"])
+    # requirements.lock holds every package to a tested version, so a new upload upstream cannot slip in.
+    held = ["-c", "requirements.lock"] if (ROOT / "requirements.lock").is_file() else []
+    run([uv, "pip", "install", "--python", py, "-r", "requirements.txt", *held] if uv
+        else [py, "-m", "pip", "install", "-r", "requirements.txt", *held])
     for name in args.addon:
         print(f"==> Add-on {name}")
         run([py, "main.py", "--no-update", "addon", "install", name])

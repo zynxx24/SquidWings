@@ -1,3 +1,4 @@
+<!-- prompt: Video: write the final script first (per scene: seconds, on-screen text, narration) and check it fits (about 2.5 words a second spoken). Build the video and the voice from that one script, so the text on screen never differs from what is said; plan the music source in the script. -->
 # Video: naskah final dulu, baru video
 
 Berlaku untuk semua video, baik dibuat lewat harness maupun alat lain (HyperFrames, Remotion, Studio, animate).

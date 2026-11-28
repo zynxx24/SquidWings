@@ -458,28 +458,32 @@ def _no_fetch(monkeypatch, models=("gpt-x", "gpt-y")):
     monkeypatch.setattr(D, "list_models", fake)
 
 
-def test_tunnel_can_edit_like_the_local_page_until_a_pin_is_set(monkeypatch):
+def test_from_elsewhere_the_router_needs_its_pin_even_after_the_access_pin(monkeypatch):
+    from brain.security import access_gate
     from web.server import app
 
     _no_fetch(monkeypatch)
-    far = TestClient(app, client=("203.0.113.9", 5000))
-    r = far.post("/api/router/providers", json={"name": "Nine", "kind": "openai", "base_url": "http://127.0.0.1:20128/v1",
-                                                 "api_keys": ["sk-local-123456"]})
+    local = TestClient(app, client=("127.0.0.1", 5000))
+    r = local.post("/api/router/providers", json={"name": "Nine", "kind": "openai", "base_url": "http://127.0.0.1:20128/v1",
+                                                   "api_keys": ["sk-local-123456"]})
     assert r.status_code == 200, r.text
     pid = r.json()["provider"]["id"]
     assert r.json()["models"]["count"] == 2, "models are fetched as soon as the provider is added"
-    listing = far.get("/api/router/providers").json()
-    assert listing["can_edit"] is True and listing["has_pin"] is False
-    assert "sk-local-123456" not in json.dumps(listing)
 
-    assert far.post("/api/router/pin", json={"pin": "4321"}).json()["has_pin"] is True
-    assert far.get("/api/router/providers").json()["can_edit"] is False
+    far = TestClient(app, client=("203.0.113.9", 5000))
+    assert far.get("/api/router/providers").status_code == 401, "no access cookie, no router"
+    access_gate.set_pin("246810")
+    far.cookies.set(access_gate.COOKIE, access_gate.issue())
+    listing = far.get("/api/router/providers").json()
+    assert listing["can_edit"] is False and listing["has_pin"] is False, "without a router PIN only this computer edits"
+    assert "sk-local-123456" not in json.dumps(listing)
     assert far.post(f"/api/router/providers/{pid}/accounts", json={"api_key": "sk-evil-000000"}).status_code == 403
+
+    assert local.post("/api/router/pin", json={"pin": "4321"}).json()["has_pin"] is True
     assert far.post(f"/api/router/providers/{pid}/accounts", json={"api_key": "sk-evil-000000"},
                     headers={"X-Router-Pin": "0000"}).status_code == 403
     ok = far.post(f"/api/router/providers/{pid}/accounts", json={"api_key": "sk-mine-999999"}, headers={"X-Router-Pin": "4321"})
     assert ok.status_code == 200 and ok.json()["models"]["ok"] is True
-    local = TestClient(app, client=("127.0.0.1", 5000))
     assert local.get("/api/router/providers").json()["can_edit"] is True, "this computer never needs the PIN"
     assert local.post("/api/router/pin", json={"pin": ""}).json()["has_pin"] is False
     assert far.get("/api/router/usage?period=7d&group=model").status_code == 200

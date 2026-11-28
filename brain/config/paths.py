@@ -1,8 +1,9 @@
 """Where SquidWings keeps what it writes while running, so the project root stays code only.
 
 Everything here is private and out of git: ``data/`` holds the logs, the audit chain, and
-reports. ``SQUIDWINGS_DATA_DIR`` moves it. The chat folders (``workspace/``) and the memory
-vault (``vault/``) keep their place, because saved chats point at them by full path.
+reports. ``SQUIDWINGS_DATA_DIR`` moves it. At start-up ``move_out_of_repo()`` moves every runtime folder
+(``MOVABLE``: data, keys, chats, memory, trading history) to the user's data folder and leaves a link in
+its old place, so saved chats that point at ``workspace/`` by full path keep working.
 
 ``tidy_root()`` runs at start-up and moves what older versions left in the root (``*.log``,
 ``audit.jsonl``, ``logs/``, ``reports/``) into ``data/``. It never overwrites: when the name is
@@ -12,8 +13,10 @@ taken (an older server wrote again before it was restarted), the file gets a num
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -84,3 +87,70 @@ def tidy_root(root: Path | None = None) -> list[str]:
 
 
 __all__ = ["ROOT", "audit_log", "data_dir", "log_dir", "log_file", "report_dir", "tidy_root"]
+
+
+def secret_stores() -> list[Path]:
+    """SquidWings' own secret files and folders: no command the agent runs may read or send them."""
+    from brain.config import credentials
+    from brain.model.router.store import store_dir
+    from brain.utils.datastore.registry import DATA_DIR
+
+    return [ROOT / ".env", credentials.get_store().path, store_dir(), DATA_DIR,
+            ROOT / "addons" / "trading" / "data" / "bridge_secret"]
+
+
+# What the app writes while it runs, relative to the project root. They move to the user's data folder and the
+# old place becomes a link, so a `git clean -xdf`, a fresh clone or a deleted checkout never takes the owner's
+# chats, memory, keys or trading history with it, and commands run inside the repo do not walk into them.
+MOVABLE = ("data", "web/data", "vault", "workspace", "brain/memory/chat_store", "brain/memory/store", ".internal",
+           "addons/trading/data")
+
+
+def user_data_root() -> Path:
+    """Where runtime data lives: SQUIDWINGS_HOME, else the platform's per-user data folder."""
+    custom = os.getenv("SQUIDWINGS_HOME", "").strip()
+    if custom:
+        return Path(custom).expanduser()
+    if sys.platform == "win32":
+        base = Path(os.getenv("LOCALAPPDATA", "").strip() or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = Path(os.getenv("XDG_DATA_HOME", "").strip() or Path.home() / ".local" / "share")
+    return base / "squidwings"
+
+
+def move_out_of_repo(root: Path | None = None, target: Path | None = None) -> list[str]:
+    """Move each runtime folder out of the checkout and leave a link behind. Idempotent; never overwrites.
+
+    A folder already moved (a link) is left alone. A fresh clone gets its links back to data moved earlier.
+    Where links are not allowed (Windows without developer mode), the folder is moved back and kept in place.
+    """
+    root = root or ROOT
+    target = target or user_data_root()
+    report: list[str] = []
+    if os.getenv("SQUIDWINGS_KEEP_DATA_IN_REPO", "").strip().lower() in {"1", "true", "yes"}:
+        return report
+    for rel in MOVABLE:
+        here, there = root / rel, target / rel
+        if here.is_symlink():
+            continue
+        if here.is_dir():
+            if there.exists():
+                report.append(f"{rel}: kept in the repo ({there} already exists; merge them by hand)")
+                continue
+            there.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(here), str(there))
+            try:
+                here.symlink_to(there, target_is_directory=True)
+            except OSError as exc:
+                shutil.move(str(there), str(here))
+                report.append(f"{rel}: kept in the repo (links not allowed here: {exc})")
+                continue
+            report.append(f"{rel}: moved to {there}")
+        elif not here.exists() and there.is_dir():
+            here.parent.mkdir(parents=True, exist_ok=True)
+            with contextlib.suppress(OSError):
+                here.symlink_to(there, target_is_directory=True)
+                report.append(f"{rel}: linked to {there}")
+    return report

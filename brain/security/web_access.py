@@ -1,4 +1,4 @@
-"""Web-edge protection for the GUI. There is no login.
+"""Web-edge protection for the GUI. This machine needs no login; anyone else needs the access PIN.
 
 This ASGI middleware protects the HTTP and WebSocket surface before a request can
 reach the application:
@@ -9,8 +9,9 @@ reach the application:
 * a conservative per-client request rate limit.
 
 Public mode (``--tunnel`` or a non-local ``--host``) drops the Host check, because
-the public hostname is not known in advance. The origin checks stay on. Anyone who
-has the URL can then use the agent, which is why the server warns when it starts.
+the public hostname is not known in advance. The origin checks stay on, and every
+request that does not come from this machine needs the signed access cookie from
+``/access`` (see ``brain.security.access_gate``), the chat socket included.
 """
 
 from __future__ import annotations
@@ -23,8 +24,9 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from http.cookies import SimpleCookie
 from typing import cast
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
+from brain.security import access_gate
 from brain.security.rate_guard import RateGuard, RateLimitExceeded
 
 Scope = dict[str, object]
@@ -223,6 +225,12 @@ class WebSecurityMiddleware:
                 await self._http_error(send, 429, "Too many requests; please retry later.", retry_after=exc.retry_after)
             return
 
+        # Anyone but this machine needs the access cookie (the PIN page and its login call excepted).
+        remote = not self._from_this_machine(scope, headers) and str(scope.get("path") or "") not in access_gate.OPEN_PATHS
+        if remote and not access_gate.valid(self._cookies(headers.get("cookie", "")).get(access_gate.COOKIE)):
+            await self._deny_remote(scope, send, kind, headers)
+            return
+
         # This machine itself (the owner's browser, the Studio's frame renderer) never takes a slot:
         # the limit protects the app from visitors through a tunnel or the network, not from its owner.
         counted = not self._from_this_machine(scope, headers)
@@ -333,6 +341,22 @@ class WebSecurityMiddleware:
         secure = str(scope.get("scheme", "http")) == "https"
         suffix = "; Secure" if secure else ""
         return f"{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000{suffix}".encode("latin-1")
+
+    async def _deny_remote(self, scope: Scope, send: Send, kind: object, headers: Mapping[str, str]) -> None:
+        if kind == "websocket":
+            await send({"type": "websocket.close", "code": 4401, "reason": "Masuk dulu dengan PIN akses (/access)."})
+            return
+        wants_page = str(scope.get("method", "GET")).upper() == "GET" and "text/html" in headers.get("accept", "")
+        if wants_page:
+            target = quote(str(scope.get("path") or "/"), safe="/")
+            await send({"type": "http.response.start", "status": 303,
+                        "headers": [(b"location", f"/access?next={target}".encode("latin-1")),
+                                    (b"cache-control", b"no-store")]})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        detail = ("Masuk dulu dengan PIN akses di /access." if access_gate.has_pin()
+                  else "Akses jarak jauh belum diaktifkan: buka tunnel dari komputer ini untuk membuat PIN akses.")
+        await self._http_error(send, 401, detail)
 
     @staticmethod
     async def _http_error(send: Send, status: int, detail: str, retry_after: float | None = None) -> None:

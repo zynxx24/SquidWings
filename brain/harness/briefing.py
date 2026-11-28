@@ -14,6 +14,7 @@ from brain.config.constants import TaskType
 from brain.utils import session_settings
 from brain.utils.logger import get_logger
 from brain.utils.workspace_context import get_active_session, get_active_workspace
+from skills import sections
 from tools.code_intel import quality_tools
 from tools.local_memory import project_memory_tool, vault_tool
 from tools.local_memory.vault import constants as C
@@ -90,13 +91,15 @@ def skill_guidance(user_input: str, task_type: TaskType, max_chars: int) -> tupl
         selected = sorted(selected, key=lambda skill: not skill.companion)
         workspace = get_active_workspace()
         for skill in selected:
-            if len(skill.body) > room:
-                continue
             # A GitHub skill gets its tool map, and its scripts installed where the sandbox can run them.
             body, _ = skills.runnable(skill, workspace=workspace, session_id=get_active_session())
+            # A long guide comes as its introduction and an outline; the model opens the sections it needs.
+            body = sections.outline(skill.name, body)
+            if len(body) > room:
+                continue
             parts.append(body)
             chosen.append(skill.name)
-            room -= len(skill.body)
+            room -= len(body)
         return "\n\n" + "\n\n".join(parts), chosen
     except Exception as exc:  # noqa: BLE001
         logger.debug(f"[briefing] skills unavailable: {exc}")

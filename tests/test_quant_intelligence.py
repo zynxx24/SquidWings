@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from addons.trading.quant import backtest as B
 from addons.trading.quant import features as F
 from addons.trading.quant import model as M
+from tests._access import logged_in
 
 STATES = {"trend": 0, "range": 1, "highvol": 2}
 TREND = [0.85, 0.1, 0.05]
@@ -190,7 +191,7 @@ def test_manage_endpoint_suggests_and_sends_nothing(monkeypatch):
     backend.connect(1, "", "", None)
     mt5_api._state.update(backend=backend, live=False, view_only="")
     try:
-        r = TestClient(app, client=("203.0.113.9", 50000)).get("/api/quant/manage")
+        r = TestClient(app, client=("203.0.113.9", 50000), cookies=logged_in()).get("/api/quant/manage")
         assert r.status_code == 200
         body = r.json()
         assert "positions" in body and "Suggestions only" in body["note"]

@@ -5,10 +5,10 @@ turned into a checkout of ``UPDATE_REPO`` (``UPDATE_BRANCH``): the commit the ZI
 found by comparing the files, so anything the user changed since counts as their own edit and is
 kept, exactly as in a clone. From then on it updates like a clone, and nobody downloads again.
 
-At start, ``main.py`` fetches the branch's upstream and, when GitHub has newer commits, moves
-to them with a fast-forward only, then restarts itself so the new code runs. While the web
-server or the chat runs, a background thread checks again every 12 hours (``UPDATE_EVERY_HOURS``, or
-``AUTO_UPDATE_EVERY_MIN`` for this one alone) and pulls what is new; that code is used from the next start.
+At start, and every 12 hours while the app runs (``UPDATE_EVERY_HOURS``, or ``AUTO_UPDATE_EVERY_MIN``),
+``main.py`` fetches the branch's upstream and **only reports** newer commits: code that runs an agent with
+access to this machine is not replaced without the owner's say. ``python main.py update`` applies them (a
+fast-forward only). ``AUTO_UPDATE=apply`` brings back the old behaviour of pulling and restarting by itself.
 Offline, nothing is tried: the start does not wait for a fetch, and the check runs once the network is back.
 
 It never loses work:
@@ -18,9 +18,10 @@ It never loses work:
   nothing changes;
 * ignored files (trading, .env, workspace) are never touched.
 
-When ``requirements.txt`` changed, the new packages are installed into the running Python.
+When ``requirements.txt`` changed, ``python main.py update`` installs the packages, held to the versions in
+``requirements.lock``; an automatic pull does so only with ``AUTO_UPDATE_DEPS=true``.
 
-``AUTO_UPDATE=false`` (or ``python main.py --no-update ...``) turns it off. Tests turn it off.
+``AUTO_UPDATE=false`` (or ``python main.py --no-update ...``) turns the check off. Tests turn it off.
 """
 
 from __future__ import annotations
@@ -71,7 +72,12 @@ def _env(name: str, default: str, *, lower: bool = True) -> str:
 
 
 def enabled() -> bool:
-    return _env("AUTO_UPDATE", "true") not in ("false", "0", "off", "no")
+    return _env("AUTO_UPDATE", "notify") not in ("false", "0", "off", "no")
+
+
+def applies_by_itself() -> bool:
+    """Only ``AUTO_UPDATE=apply`` pulls new code without the owner running ``python main.py update``."""
+    return _env("AUTO_UPDATE", "notify") == "apply"
 
 
 def interval_s() -> int:
@@ -89,7 +95,7 @@ def interval_s() -> int:
 
 @dataclass
 class Result:
-    status: str  # updated | current | skipped
+    status: str  # updated | available | current | skipped
     message: str
     old: str = ""
     new: str = ""
@@ -115,6 +121,12 @@ def _first_line(text: str) -> str:
     return "unknown error"
 
 
+def _constraints(root: Path) -> list[str]:
+    """Hold every package to the version in requirements.lock, when there is one."""
+    lock = root / "requirements.lock"
+    return ["-c", str(lock)] if lock.is_file() else []
+
+
 def _install_deps(root: Path) -> str:
     req = root / "requirements.txt"
     if not req.exists() or _env("AUTO_UPDATE_DEPS", "true") in ("false", "0", "off", "no"):
@@ -123,9 +135,9 @@ def _install_deps(root: Path) -> str:
     import importlib.util
 
     if importlib.util.find_spec("pip") is not None:
-        argv = [sys.executable, "-m", "pip", "install", "-q", "-r", str(req)]
+        argv = [sys.executable, "-m", "pip", "install", "-q", "-r", str(req), *_constraints(root)]
     elif shutil.which("uv"):
-        argv = ["uv", "pip", "install", "-q", "--python", sys.executable, "-r", str(req)]
+        argv = ["uv", "pip", "install", "-q", "--python", sys.executable, "-r", str(req), *_constraints(root)]
     else:
         return "; packages not installed (this Python has no pip and uv is not installed)"
     try:
@@ -137,10 +149,10 @@ def _install_deps(root: Path) -> str:
     return "; packages installed"
 
 
-def update(root: Path = ROOT) -> Result:
-    """Fetch and fast-forward to the upstream branch. Never raises."""
+def update(root: Path = ROOT, *, apply: bool = True, deps: bool = True) -> Result:
+    """Fetch; with ``apply`` fast-forward to the upstream branch (``deps``: install changed requirements). Never raises."""
     try:
-        result = _update(root)
+        result = _update(root, apply=apply, deps=deps)
     except (OSError, subprocess.SubprocessError) as exc:
         result = Result("skipped", f"update check failed: {exc}")
     _remember(result)
@@ -248,7 +260,7 @@ class _AdoptError(Exception):
     pass
 
 
-def _update(root: Path) -> Result:
+def _update(root: Path, *, apply: bool = True, deps: bool = True) -> Result:
     if not (root / ".git").exists():
         adopted = _adopt(root)
         if adopted is not None:
@@ -273,13 +285,17 @@ def _update(root: Path) -> Result:
             "skipped",
             f"{up} has {behind} new commit(s) but this checkout has {ahead} unpushed; pull by hand",
         )
+    if not apply:
+        incoming = _git(root, "log", "--oneline", "-n", "5", "HEAD..@{u}").stdout.strip().splitlines()
+        return Result("available", f"{behind} new commit(s) on {up}; review them, then run: python main.py update",
+                      changed=incoming)
     old = _git(root, "rev-parse", "--short", "HEAD").stdout.strip()
     merged = _git(root, "merge", "--ff-only", "--quiet", "@{u}", timeout=120)
     if merged.returncode != 0:
         return Result("skipped", f"{behind} new commit(s) not pulled: {_first_line(merged.stderr or merged.stdout)}")
     new = _git(root, "rev-parse", "--short", "HEAD").stdout.strip()
     changed = [f for f in _git(root, "diff", "--name-only", old, new).stdout.splitlines() if f]
-    note = _install_deps(root) if any(f in _DEP_FILES for f in changed) else ""
+    note = _install_deps(root) if deps and any(f in _DEP_FILES for f in changed) else ""
     return Result("updated", f"updated {old} → {new} ({behind} commit(s), {len(changed)} file(s)){note}",
                   old, new, changed)
 
@@ -294,8 +310,10 @@ def update_at_start(notify: Callable[[str], None], root: Path = ROOT) -> None:
         # Offline: a fetch would only wait for its timeout. The background check pulls once the network is back.
         notify("[dim]Auto-update: offline, dicoba lagi saat online.[/dim]")
         return
-    result = update(root)
+    result = update(root, apply=applies_by_itself(), deps=_env("AUTO_UPDATE_DEPS", "false") in ("true", "1", "yes", "on"))
     logger.info(f"[update] {result.message}")
+    if result.status == "available":
+        notify(f"[yellow]Update tersedia: {result.message}[/yellow]")
     if result.status == "skipped":
         notify(f"[dim]Auto-update: {result.message}[/dim]")
     if not result.updated:
@@ -328,8 +346,11 @@ def start_background(notify: Callable[[str], None], root: Path = ROOT) -> bool:
                 continue
             if not online.is_online():
                 continue   # checked again every few minutes until the network is back
-            result = update(root)
+            result = update(root, apply=applies_by_itself(),
+                            deps=_env("AUTO_UPDATE_DEPS", "false") in ("true", "1", "yes", "on"))
             due = time.time() + every
+            if result.status == "available":
+                notify(f"[yellow]Update tersedia: {result.message}[/yellow]")
             if result.updated:
                 logger.warning(f"[update] {result.message}; restart to use it")
                 notify(f"[bold green]⟳ Update pulled: {result.message}. Restart to use it.[/bold green]")

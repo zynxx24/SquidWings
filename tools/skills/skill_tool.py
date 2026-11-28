@@ -21,7 +21,8 @@ def _search(query: str) -> dict[str, Any]:
             "note": "Load one with load_skill(name=...). Stored skills open the same way."}
 
 
-async def load_skill(name: str = "", file: str = "", install_files: bool = False, search: str = "") -> dict[str, Any]:
+async def load_skill(name: str = "", file: str = "", install_files: bool = False, search: str = "",
+                     section: str = "") -> dict[str, Any]:
     """Return a skill's guide, one of its companion guides, or install its files into the project.
 
     ``search`` lists the skills that fit a need, stored ones included. A name written the way
@@ -77,6 +78,17 @@ async def load_skill(name: str = "", file: str = "", install_files: bool = False
             result["installed_at"] = installed_at
         return result
     guide, installed_at = runnable(skill, None, workspace, get_active_session())
+    if section.strip():
+        from skills import sections
+
+        part = sections.section(guide, section)
+        if part is None:
+            return {"ok": False, "error": f"No section '{section}' in {skill.name}. Sections: "
+                                          + "; ".join(sections.headings(guide))}
+        result.update(section=section.strip(), guide=part)
+        if installed_at:
+            result["installed_at"] = installed_at
+        return result
     result["guide"] = guide
     if installed_at:
         result["installed_at"] = installed_at

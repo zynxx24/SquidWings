@@ -45,7 +45,13 @@ class TestPolicyEngine(unittest.TestCase):
         self.eng = PolicyEngine()
 
     def test_denies_privilege_escalation(self) -> None:
-        r = self.eng.evaluate("execute_command", {"command": PRIV_ESC})
+        # sudo for one command is the owner's rule; a root shell, setuid, or reading /etc/shadow is refused.
+        from brain.security.guard import Guard
+
+        guard = Guard()
+        self.assertFalse(guard.check("execute_command", {"command": PRIV_ESC}).allowed)
+        self.assertFalse(guard.check("terminal_run", {"command": "su" + "do -i"}).allowed)
+        r = self.eng.evaluate("execute_command", {"command": "chmod u+s /bin/bash"})
         self.assertIs(r.decision, Decision.DENY)
         self.assertEqual(r.rule, "block_privilege_escalation")
 
@@ -62,10 +68,11 @@ class TestPolicyEngine(unittest.TestCase):
         )
 
     def test_denies_pipe_to_shell(self) -> None:
-        self.assertIs(
-            self.eng.evaluate("execute_command", {"command": PIPE_TO_SHELL}).decision,
-            Decision.DENY,
-        )
+        from brain.security.guard import Guard
+
+        verdict = Guard().check("execute_command", {"command": PIPE_TO_SHELL})
+        self.assertFalse(verdict.allowed)
+        self.assertEqual(verdict.rule, "command_risk")
 
     def test_denies_secret_file_read(self) -> None:
         for path in (".env", "/app/.env.production", "~/.ssh/id_rsa", "cert.pem"):

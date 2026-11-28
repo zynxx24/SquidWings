@@ -27,6 +27,11 @@ so we only ever touch folders we made.
 A manifest entry may set ``url`` to clone from somewhere other than GitHub, and
 ``ref`` to follow a branch or tag other than the default.
 
+Every source is **pinned** to the ``commit`` in its manifest entry, so what the agents read never changes
+behind the owner's back (a skill is instructions for an agent that can run commands). A source without a pin
+is pinned to what its first clone got. The daily pull only *looks*: newer upstream commits are recorded as
+pending, with the files they change, and nothing moves until ``python main.py skills approve <repo|all>``.
+
 Environment:
     SKILL_SOURCES=0              no cloning, no loading of GitHub skills
     SKILL_SOURCES_UPDATE_HOURS   how often to pull (default 24; 0 = never)
@@ -79,6 +84,7 @@ class Source:
     active: tuple[dict[str, Any], ...]
     ref: str = ""
     remote: str = ""                # optional clone URL; default is the GitHub one
+    commit: str = ""                # the pinned commit; empty until the first clone pins it
 
     @property
     def url(self) -> str:
@@ -123,6 +129,7 @@ def sources(path: Path | None = None) -> list[Source]:
             active=tuple(entry.get("active", [])),
             ref=str(entry.get("ref", "")).strip(),
             remote=str(entry.get("url", "")).strip(),
+            commit=str(entry.get("commit", "")).strip(),
         ))
     return out
 
@@ -155,22 +162,104 @@ def _clone(source: Source) -> str:
         if done.returncode != 0:
             shutil.rmtree(tmp, ignore_errors=True)
             raise RuntimeError(done.stderr.strip() or "sparse-checkout failed")
+    if source.commit:
+        _checkout(tmp, source.commit)
     tmp.rename(source.folder)
+    if not source.commit:
+        pin(source.repo, _git("rev-parse", "HEAD", cwd=source.folder).stdout.strip())
     return "cloned"
 
 
+def _checkout(folder: Path, commit: str) -> None:
+    """Put a clone on exactly ``commit`` (fetched by its id when the shallow clone lacks it)."""
+    if _git("cat-file", "-e", f"{commit}^{{commit}}", cwd=folder).returncode != 0:
+        done = _git("fetch", "--depth", "1", "-q", "origin", commit, cwd=folder)
+        if done.returncode != 0:
+            raise RuntimeError(done.stderr.strip() or f"cannot fetch pinned commit {commit[:12]}")
+    done = _git("reset", "--hard", "-q", commit, cwd=folder)
+    if done.returncode != 0:
+        raise RuntimeError(done.stderr.strip() or f"cannot check out {commit[:12]}")
+
+
+_manifest_lock = threading.Lock()
+
+
+def pin(repo: str, commit: str, path: Path | None = None) -> None:
+    """Record ``commit`` as the pinned version of ``repo`` in sources.json."""
+    path = path or MANIFEST
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError(f"not a commit id: {commit!r}")
+    with _manifest_lock:
+        data = manifest(path)
+        for entry in data.get("sources", []):
+            if str(entry.get("repo", "")).strip().strip("/") == repo:
+                entry["commit"] = commit
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def _pull(source: Source) -> str:
-    """Move a clone to the newest upstream commit. We never edit clones, so a hard reset is safe."""
-    before = _git("rev-parse", "HEAD", cwd=source.folder).stdout.strip()
+    """Look at upstream without moving: newer commits become a pending update the owner approves."""
+    if not source.commit:
+        pin(source.repo, _git("rev-parse", "HEAD", cwd=source.folder).stdout.strip())
+        return "pinned"
     branch = source.ref or "HEAD"
     done = _git("fetch", "--depth", "1", "-q", "origin", branch, cwd=source.folder)
     if done.returncode != 0:
         raise RuntimeError(done.stderr.strip() or "git fetch failed")
-    if source.paths:   # keep the sparse set in step with the manifest
-        _git("sparse-checkout", "set", "--cone", *source.paths, cwd=source.folder)
-    _git("reset", "--hard", "-q", "FETCH_HEAD", cwd=source.folder)
-    after = _git("rev-parse", "HEAD", cwd=source.folder).stdout.strip()
-    return "updated" if after != before else "up to date"
+    latest = _git("rev-parse", "FETCH_HEAD", cwd=source.folder).stdout.strip()
+    _checkout(source.folder, source.commit)
+    if not latest or latest == source.commit:
+        _set_pending(source.repo, None)
+        return "up to date"
+    files = _git("diff", "--name-only", source.commit, latest, cwd=source.folder).stdout.split()
+    _set_pending(source.repo, {"commit": latest, "files": files[:200], "seen_at": time.time()})
+    return f"update available ({len(files)} file(s) changed; approve with: python main.py skills approve {source.repo})"
+
+
+def _read_state() -> dict[str, Any]:
+    state: dict[str, Any] = {}
+    with contextlib.suppress(OSError, ValueError):
+        loaded = json.loads(_state_file().read_text(encoding="utf-8"))
+        state = loaded if isinstance(loaded, dict) else {}
+    return state
+
+
+def _set_pending(repo: str, info: dict[str, Any] | None) -> None:
+    with _manifest_lock:
+        state = _read_state()
+        pending = state.setdefault("pending", {})
+        if info is None:
+            pending.pop(repo, None)
+        else:
+            pending[repo] = info
+        SOURCES_DIR.mkdir(parents=True, exist_ok=True)
+        _state_file().write_text(json.dumps(state, indent=1), encoding="utf-8")
+
+
+def pending() -> dict[str, dict[str, Any]]:
+    """Upstream updates waiting for approval: repo -> {commit, files}."""
+    found = _read_state().get("pending", {})
+    return found if isinstance(found, dict) else {}
+
+
+def approve(which: str = "all") -> list[dict[str, str]]:
+    """Move the named source (or all) to its pending upstream commit and pin it there."""
+    waiting = pending()
+    results = []
+    for source in sources():
+        if which not in {"all", source.repo} or source.repo not in waiting:
+            continue
+        commit = str(waiting[source.repo].get("commit", ""))
+        try:
+            _checkout(source.folder, commit)
+            pin(source.repo, commit)
+            _set_pending(source.repo, None)
+            results.append({"repo": source.repo, "action": f"approved {commit[:12]}"})
+        except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+            results.append({"repo": source.repo, "action": "failed", "detail": str(exc)[:300]})
+    if results:
+        reload()
+    return results
 
 
 def sync(update: bool = False, path: Path | None = None) -> list[dict[str, str]]:
@@ -194,7 +283,7 @@ def sync(update: bool = False, path: Path | None = None) -> list[dict[str, str]]
     for item in results:
         if item["action"] in {"cloned", "updated", "failed"}:
             logger.info(f"[skills] {item['repo']}: {item['action']} {item.get('detail', '')}".rstrip())
-    if any(item["action"] in {"cloned", "updated"} for item in results):
+    if any(item["action"] == "cloned" for item in results):
         reload()
     return results
 
@@ -217,8 +306,10 @@ def run_startup(now: float | None = None) -> dict[str, Any]:
     update = _due_for_update(now)
     results = sync(update=update)
     if update and not any(r["action"] == "failed" for r in results):
-        with contextlib.suppress(OSError):
-            _state_file().write_text(json.dumps({"pulled_at": now, "results": results}, indent=1), encoding="utf-8")
+        with contextlib.suppress(OSError), _manifest_lock:
+            state = _read_state()
+            state.update(pulled_at=now, results=results)
+            _state_file().write_text(json.dumps(state, indent=1), encoding="utf-8")
     global _linked_once
     linked = link_claude_code()
     _linked_once = True

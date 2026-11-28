@@ -2119,6 +2119,27 @@ def _skills_cmd(action: str, query: str = "") -> int:
             print(f"No skill matches '{query}'." if query.strip() else "Usage: python main.py skills search <what you need>")
         return 0 if found else 1
 
+    if action == "pending":
+        waiting = skill_sources.pending()
+        for repo, info in sorted(waiting.items()):
+            files = info.get("files", [])
+            console.print(f"  {repo}: {str(info.get('commit', ''))[:12]}, {len(files)} file(s) changed")
+            for name in files[:30]:
+                console.print(f"      {name}")
+        if not waiting:
+            console.print("  No skill updates are waiting.")
+        console.print("  Read the changes (they are instructions for the agent), then: python main.py skills approve <repo|all>")
+        return 0
+    if action == "approve":
+        target = query.strip() or "all"
+        done = skill_sources.approve(target)
+        for item in done:
+            detail = f" ({item['detail']})" if item.get("detail") else ""
+            console.print(f"  {item['repo']}: {item['action']}{detail}")
+        if not done:
+            console.print(f"  Nothing waiting for {target}.")
+        skill_sources.link_claude_code()
+        return 0 if all(i["action"] != "failed" for i in done) else 1
     if action in ("sync", "update"):
         for item in skill_sources.sync(update=action == "update"):
             detail = f" ({item['detail']})" if item.get("detail") else ""
@@ -2220,8 +2241,9 @@ Examples:
     skills_parser = subparsers.add_parser(
         "skills", help="Skills from GitHub: status, clone missing (sync), pull newest (update), link into Claude Code",
     )
-    skills_parser.add_argument("action", nargs="?", choices=["status", "sync", "update", "link", "search"], default="status")
-    skills_parser.add_argument("query", nargs="*", help="For search: what you need, e.g. gsap plugins")
+    skills_parser.add_argument("action", nargs="?", choices=["status", "sync", "update", "link", "search", "pending", "approve"],
+                               default="status")
+    skills_parser.add_argument("query", nargs="*", help="For search: what you need. For approve: a repo or 'all'.")
 
     # addon command: optional parts (trading, video Studio), off until installed
     addon_parser = subparsers.add_parser(
@@ -2285,6 +2307,11 @@ Examples:
 
         for line in tidy_root():
             console.print(f"[dim]↳ dirapikan: {line}[/dim]")
+        # Runtime data (chats, memory, keys, trading history) lives outside the checkout; a link keeps old paths.
+        from brain.config.paths import move_out_of_repo
+
+        for line in move_out_of_repo():
+            console.print(f"[dim]↳ data: {line}[/dim]")
 
     if args.command in ("chat", "web", None):
         # While the terminal or the web runs, and only when online (brain/utils/online.py), every 12 hours:

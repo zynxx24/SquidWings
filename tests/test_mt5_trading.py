@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from addons.trading import mt5_rules
 from addons.trading.mt5_adapter import SimBackend, TradingError, fingerprint, make_backend
 from addons.trading.web import mt5_api
+from tests._access import logged_in
 from web.server import app
 
 TOKEN = "test-token-123"
@@ -69,7 +70,7 @@ def test_public_access_needs_a_token(monkeypatch):
     from brain.security import web_access
     monkeypatch.delenv("MT5_TRADE_TOKEN")
     monkeypatch.setattr(web_access, "_public_mode", True)
-    c = TestClient(app, client=("127.0.0.1", 50000))   # a tunnel arrives from loopback too
+    c = TestClient(app, client=("127.0.0.1", 50000), cookies=logged_in())   # a tunnel: loopback, past the PIN
     assert c.get("/api/mt5/status").json()["trading_enabled"] is False
     assert c.post("/api/mt5/connect", json={"backend": "sim"}).status_code == 403
     monkeypatch.setenv("MT5_TRADE_TOKEN", TOKEN)
@@ -78,12 +79,12 @@ def test_public_access_needs_a_token(monkeypatch):
 
 def test_remote_client_is_refused_without_a_token(monkeypatch):
     monkeypatch.delenv("MT5_TRADE_TOKEN")
-    c = TestClient(app, client=("203.0.113.9", 50000))
+    c = TestClient(app, client=("203.0.113.9", 50000), cookies=logged_in())
     assert c.post("/api/mt5/connect", json={"backend": "sim"}).status_code == 403
 
 
 def test_wrong_or_missing_token_is_refused_from_outside():
-    c = TestClient(app, client=("203.0.113.9", 50000))
+    c = TestClient(app, client=("203.0.113.9", 50000), cookies=logged_in())
     assert c.post("/api/mt5/connect", json={"backend": "sim"}).status_code == 401
     assert c.post("/api/mt5/connect", json={"backend": "sim"}, headers={"X-MT5-Token": "nope"}).status_code == 401
     assert c.post("/api/mt5/connect", json={"backend": "sim"}, headers=H).status_code == 200
@@ -96,7 +97,7 @@ def test_this_computer_never_needs_the_token_even_when_set(client):
 def test_viewing_from_outside_needs_no_token(client, monkeypatch):
     assert _login(client).status_code == 200
     monkeypatch.delenv("MT5_TRADE_TOKEN")
-    far = TestClient(app, client=("203.0.113.9", 50000))
+    far = TestClient(app, client=("203.0.113.9", 50000), cookies=logged_in())
     for path in ("/api/mt5/account", "/api/mt5/positions", "/api/mt5/orders", "/api/mt5/history",
                  "/api/mt5/symbols", "/api/mt5/symbol?symbol=EURUSD", "/api/mt5/rates?symbol=EURUSD&tf=M5&count=50",
                  "/api/quant/config", "/api/quant/state", "/api/quant/bridge"):
@@ -112,7 +113,7 @@ def test_viewing_from_outside_needs_no_token(client, monkeypatch):
 def test_owner_can_drop_the_token_for_remote_trading(client, monkeypatch):
     monkeypatch.delenv("MT5_TRADE_TOKEN")
     monkeypatch.setenv("TRADING_REMOTE_NO_TOKEN", "1")
-    far = TestClient(app, client=("203.0.113.9", 50000))
+    far = TestClient(app, client=("203.0.113.9", 50000), cookies=logged_in())
     assert far.post("/api/mt5/connect", json={"backend": "sim"}).status_code == 200
     status = far.get("/api/mt5/status").json()
     assert status["trading_enabled"] is True and status["remote_no_token"] is True

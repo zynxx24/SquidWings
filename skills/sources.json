@@ -24,7 +24,8 @@
           "claude_code": true,
           "scope": "contextual"
         }
-      ]
+      ],
+      "commit": "a32f24407364c74c812b43c15926d638bee1e072"
     },
     {
       "repo": "obra/superpowers",
@@ -89,7 +90,8 @@
           "tasks": "code, activity, reason",
           "claude_code": true
         }
-      ]
+      ],
+      "commit": "22f0b463e7a5e579904dd6211a520321035526f7"
     },
     {
       "repo": "anthropics/skills",
@@ -160,7 +162,8 @@
           "tasks": "code, activity",
           "claude_code": false
         }
-      ]
+      ],
+      "commit": "e4bb5d960d87126ff3b3a8af1a104b7db67560ba"
     },
     {
       "repo": "remotion-dev/skills",
@@ -197,7 +200,8 @@
           "tasks": "code, activity",
           "claude_code": true
         }
-      ]
+      ],
+      "commit": "a3f4098a2afd0e13f6a6f8c8760e275f75457ea9"
     },
     {
       "repo": "greensock/gsap-skills",
@@ -242,7 +246,8 @@
           "tasks": "code, activity",
           "claude_code": true
         }
-      ]
+      ],
+      "commit": "aed9cfd3277740755f6bfc1155c7aa645403b760"
     },
     {
       "repo": "nextlevelbuilder/ui-ux-pro-max-skill",
@@ -261,7 +266,8 @@
           "claude_code": true,
           "pool": "design"
         }
-      ]
+      ],
+      "commit": "11ca2b3bdd555649f278ee348c32a9302b24dcf1"
     },
     {
       "repo": "pbakaus/impeccable",
@@ -279,7 +285,8 @@
           "claude_code": true,
           "pool": "design"
         }
-      ]
+      ],
+      "commit": "2fc5e1459efbbf06d92c7306517c286bf12490cf"
     },
     {
       "repo": "addyosmani/web-quality-skills",
@@ -324,14 +331,16 @@
           "tasks": "code, activity",
           "claude_code": true
         }
-      ]
+      ],
+      "commit": "afa8da942115f2961fdbfa80807ea0b232ff6c00"
     },
     {
       "repo": "thedotmack/claude-mem",
       "paths": [
         "plugin/skills"
       ],
-      "active": []
+      "active": [],
+      "commit": "ad682a38da4cdbd2076451f595adc7db512a626c"
     },
     {
       "repo": "DietrichGebert/ponytail",
@@ -357,7 +366,8 @@
           "tasks": "code, activity",
           "claude_code": false
         }
-      ]
+      ],
+      "commit": "ebd8654c2c627f721eb8f9c0d1bd4090a29f9e10"
     },
     {
       "repo": "kepano/obsidian-skills",
@@ -395,7 +405,8 @@
           "tools": "load_skill, read_file, file_write, file_patch, vault_read",
           "claude_code": false
         }
-      ]
+      ],
+      "commit": "9c9560a870fd490b0e1a847f2c8401a50e2d931d"
     },
     {
       "repo": "safishamsi/graphify",
@@ -415,7 +426,8 @@
           "requires": "graphify",
           "claude_code": false
         }
-      ]
+      ],
+      "commit": "0f22ae762e3e3d0b689fc7ad2b8192740628413b"
     },
     {
       "repo": "googlemaps/agent-skills",
@@ -433,7 +445,8 @@
           "tools": "gmaps_import, places_search, places_stats, places_export, osm_nearby, geocode, maps_link, geo_distance, load_skill",
           "claude_code": false
         }
-      ]
+      ],
+      "commit": "e7538f369afc18acbd9bde2cdcb9b7a7be6d7978"
     }
   ]
 }

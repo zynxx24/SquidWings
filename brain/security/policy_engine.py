@@ -204,7 +204,8 @@ class PolicyResult:
 # -- baseline rules ----------------------------------------------------
 # Mirrors brain/security/policy.yaml. Kept in code so the engine is safe by default
 # even when no YAML file is present (frozen builds, tests).
-_SHELL_TOOLS = ("execute_command", "run_command", "shell")
+SHELL_TOOLS = ("execute_command", "run_command", "shell", "terminal_run")
+_SHELL_TOOLS = SHELL_TOOLS
 _FILE_TOOLS = ("read_file", "upload_file", "edit_file", "discard_changes")
 
 
@@ -217,9 +218,10 @@ def baseline_rules() -> list[Rule]:
             tools=_SHELL_TOOLS,
             arg_patterns={
                 "command": (
-                    r"(?i)\b(?:su"
-                    r"do|su\s+-|doas|pkexec|ch"
-                    r"own\s+root|chmod\s+[ugo]*s)\b"
+                    # sudo for one command is allowed (the owner's rule); command_risk refuses root shells.
+                    r"(?i)(?:^|[;&|]\s*)(?:su\s+-|su\s*$|pkexec\b)"
+                    r"|\bch"
+                    r"own\s+(?:-\S+\s+)*root\b|\bchmod\s+(?:-\S+\s+)*[ugo]*\+s\b"
                 ),
             },
             reason="privilege escalation is not permitted",
@@ -255,13 +257,12 @@ def baseline_rules() -> list[Rule]:
             tools=_SHELL_TOOLS,
             arg_patterns={
                 "command": (
+                    # Piping fetched text into a shell is judged by command_risk (known installers pass).
                     r"(?i)(?:cu"
-                    r"rl|wget)\b[^|;]*\|\s*(?:ba)?sh\b"
-                    r"|(?:cu"
-                    r"rl|wget)\b.*(?:--data|-d)\s+.*(?:\.env|id_rsa|\.ssh)"
+                    r"rl|wget)\b.*(?:--data|-d|--upload-file|-T|-F)\s+.*(?:\.env|id_rsa|id_ed25519|\.ssh)"
                 ),
             },
-            reason="piping remote content to shell or uploading secrets",
+            reason="uploading secrets",
             priority=95,
         ),
         Rule(

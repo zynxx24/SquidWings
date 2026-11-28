@@ -1055,6 +1055,7 @@ def register_all_tools(registry: ToolRegistry | None = None) -> ToolRegistry:
                 ToolParameter(name="name", param_type=ParamType.STRING, description="Skill name.", required=False),
                 ToolParameter(name="search", param_type=ParamType.STRING, description="Find skills for a need, e.g. 'gsap plugins' or 'merge pdf'.", required=False),
                 ToolParameter(name="file", param_type=ParamType.STRING, description="A companion guide listed in more_guides, such as craft.md.", required=False),
+                ToolParameter(name="section", param_type=ParamType.STRING, description="Open one section of a long guide, as listed in its GUIDE OUTLINE.", required=False),
                 ToolParameter(name="install_files", param_type=ParamType.BOOLEAN, description="Copy the skill's code into the project.", required=False),
             ],
         ),

@@ -1,3 +1,4 @@
+<!-- prompt: Plan first: before any task with more than one step (build, fix, design, video, document, settings), inspect what exists, then write a plan from every angle (goal and done-criteria, users, design and files, the six quality aspects, risks, ordered steps, verification, rollback), then execute it step by step without waiting unless only the user can decide. A one-step task or a plain question needs no plan. -->
 # Rencana menyeluruh dulu, baru eksekusi
 
 Berlaku untuk setiap tugas yang lebih dari satu langkah: membangun, memperbaiki, mendesain, membuat video atau dokumen, mengubah pengaturan.

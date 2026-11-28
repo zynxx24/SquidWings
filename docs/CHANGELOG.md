@@ -1,5 +1,15 @@
 # Catatan perubahan
 
+## 2026-11-28: pengerasan keamanan dan efisiensi setelah review
+
+- **Akses jarak jauh butuh PIN.** Siapa pun yang membuka lewat tunnel atau jaringan harus masuk di `/access` dengan PIN akses, termasuk untuk socket chat. PIN dibuat otomatis dan tampil sekali di konsol saat tunnel dibuka, disimpan sebagai hash, dan cookie-nya batal saat PIN diganti (`PUT /api/access/pin` dari komputer ini). Dari komputer ini tetap tanpa login. Router dan kredensial dari luar juga butuh PIN router.
+- **Penjaga perintah membaca isi perintah, bukan pola teks.** `rm -r -f /`, `rm -rf ~`, kode Python yang menghapus home, mengirim kunci SSH, `base64 -d | sh`, `bash <(curl …)`, dan shell root (`sudo -i`) ditolak. `sudo` untuk satu perintah, installer resmi (nvm, bun, composer), dan kerja biasa di folder proyek tetap jalan. `terminal_run` sekarang dijaga sama seperti `execute_command`, dan kalau penjaga gagal dimuat, yang boleh jalan hanya tool baca.
+- **Konten dari luar tidak bisa memerintah.** Hasil web, scrape, dan unduhan ditandai tidak tepercaya. Setelah itu, perintah `sudo`, installer dari internet, atau `git push` menunggu jawaban "ya" dari pengguna sendiri.
+- **Supply chain.** Skill GitHub dipin ke satu commit. Update upstream menunggu di `python main.py skills pending` sampai `skills approve`. Repo hanya memberi tahu ada commit baru (`python main.py update` untuk menerapkan, atau `AUTO_UPDATE=apply`), dan paket dipasang mengikuti `requirements.lock`.
+- **Batas biaya, bukan batas kemampuan.** Satu hasil tool dipotong di 120 ribu karakter (awal dan akhir, sisanya bisa dibaca per bagian), dan satu giliran punya anggaran token (`AGENT_TURN_TOKEN_BUDGET`, bawaan 3 juta; bilang "lanjut" untuk meneruskan). Panduan di atas 12 ribu karakter dikirim sebagai daftar isi dan dibuka per bagian dengan `load_skill(..., section=...)`.
+- **Data di luar folder repo.** Chat, memori, vault, kredensial, key router, dan data trading pindah ke `~/.local/share/squidwings` (Windows: `%LOCALAPPDATA%`), dengan link di tempat lama, jadi `git clean` atau clone ulang tidak menghapusnya.
+- **Satu sumber aturan.** Aturan ditulis sekali di `.claude/rules/`. Prompt harness (`_rules.txt`), skill `bar-kualitas`, `AGENTS.md`, dan `~/.codex/AGENTS.md` dibangun dari sana oleh `scripts/sync_agent_config.py`.
+
 ## 2026-11-28: rencana dulu, naskah dulu, bar kualitas enam aspek, dan folder `.claude` + `.codex`
 
 - **Rencana menyeluruh sebelum eksekusi.** Prompt dasar dan protokol harness sekarang meminta model memetakan kondisi dulu, lalu menulis rencana dari segala segi (tujuan, pemakai, desain, enam aspek kualitas, risiko, langkah, verifikasi, cara mundur), baru dieksekusi.

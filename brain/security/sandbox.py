@@ -244,7 +244,10 @@ def _private_paths(scope: Scope) -> tuple[list[Path], list[Path]]:
     project = Path(get_settings().project_root).resolve()
     if scope.root != project:
         return [], []
-    folders = [project / name for name in _PRIVATE_IN_PROJECT if (project / name).is_dir()]
+    # A folder moved out of the repo is a link here; its target lives in the home folder, which the sandbox never
+    # mounts, so there is nothing to hide (and a tmpfs cannot be mounted on a dangling link).
+    folders = [project / name for name in _PRIVATE_IN_PROJECT
+               if (project / name).is_dir() and not (project / name).is_symlink()]
     files = [project / name for name in _PRIVATE_FILES_IN_PROJECT if (project / name).is_file()]
     return folders, files
 

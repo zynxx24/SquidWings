@@ -38,6 +38,8 @@ os.environ["ROUTER_IMPORT_ENV"] = "0"      # the server's start-up must not copy
 os.environ.setdefault("ADDON_TRADING", "1")
 os.environ.setdefault("ADDON_STUDIO", "1")
 
+from collections.abc import Iterator
+
 import pytest
 
 from brain.config.edition import trading_enabled
@@ -106,3 +108,29 @@ def _owner_limits_do_not_leak_into_tests(monkeypatch):
     values sit in os.environ. Tests count rounds and must never run sudo, so each starts without them."""
     for name in ("AGENT_MAX_ROUNDS", "SUDO_PASSWORD", "AGENT_CONTEXT_CHARS", "AGENT_TOOL_RESULT_CHARS"):
         monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _test_client_is_this_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Web tests act as the owner's browser on this machine (loopback), as they were written.
+
+    Remote access needs the access PIN (brain/security/access_gate.py); tests for that pass ``client=`` themselves.
+    """
+    from starlette import testclient
+
+    original = testclient.TestClient.__init__
+
+    def init(self: testclient.TestClient, *args: object, client: tuple[str, int] = ("127.0.0.1", 50000),
+             **kwargs: object) -> None:
+        original(self, *args, client=client, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(testclient.TestClient, "__init__", init)
+
+
+@pytest.fixture(autouse=True)
+def _no_access_pin_between_tests() -> Iterator[None]:
+    """An access PIN one test sets never carries over to the next."""
+    yield
+    from brain.config import paths
+
+    (paths.data_dir() / "web_access.json").unlink(missing_ok=True)

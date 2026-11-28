@@ -30,7 +30,7 @@ from typing import Any
 
 from brain.security.audit_chain import AuditChain, get_chain
 from brain.security.path_jail import PathJail, PathJailError
-from brain.security.policy_engine import Decision, PolicyEngine, PolicyResult
+from brain.security.policy_engine import SHELL_TOOLS, Decision, PolicyEngine, PolicyResult
 from brain.security.prompt_shield import PromptShield
 from brain.security.redactor import Redactor
 
@@ -159,6 +159,11 @@ class Guard:
             self._record(tool_name, args, verdict, context)
             return verdict
 
+        risk_verdict = self._check_command(tool_name, args)
+        if risk_verdict is not None:
+            self._record(tool_name, args, risk_verdict, context)
+            return risk_verdict
+
         jail_verdict = self._check_paths(tool_name, args)
         if jail_verdict is not None:
             self._record(tool_name, args, jail_verdict, context)
@@ -177,6 +182,23 @@ class Guard:
         )
         self._record(tool_name, args, verdict, context)
         return verdict
+
+    def _check_command(self, tool_name: str, args: Mapping[str, Any]) -> GuardVerdict | None:
+        """Refuse a shell command that wipes the home or system folders, runs fetched text, or touches secrets."""
+        if tool_name not in SHELL_TOOLS:
+            return None
+        from brain.security import command_risk
+        from brain.utils.workspace_context import get_active_workspace
+
+        workspace = get_active_workspace() or None
+        for key in ("command", "answer"):
+            raw = args.get(key)
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            risk = command_risk.assess(raw, cwd=args.get("cwd") or workspace, workspace=workspace)
+            if risk.blocked:
+                return GuardVerdict(allowed=False, decision=Decision.DENY, rule="command_risk", reason=risk.reason)
+        return None
 
     def _check_paths(self, tool_name: str, args: Mapping[str, Any]) -> GuardVerdict | None:
         """Reject path arguments that escape the jail."""

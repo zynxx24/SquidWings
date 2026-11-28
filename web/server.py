@@ -19,6 +19,7 @@ import inspect
 import io
 import json
 import os
+import secrets
 import shutil
 import time
 from collections.abc import AsyncGenerator
@@ -28,7 +29,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -39,8 +40,10 @@ from brain.classifier.continuation import is_continuation_input
 from brain.config.settings import get_settings
 from brain.model.router.groups import group_of, provider_labels
 from brain.model.settings.model_picker import is_chat_model
-from brain.security import sandbox
+from brain.security import access_gate, sandbox
 from brain.security.headers import LOOPBACK_FRAMES, csp_with, embeddable_headers, shell_headers
+from brain.security.rate_guard import Limit as RateLimit
+from brain.security.rate_guard import RateGuard, RateLimitExceeded
 from brain.security.web_access import (
     WebSecurityMiddleware,
     is_local_request,
@@ -254,20 +257,82 @@ except Exception as _sec_exc:  # pragma: no cover - defensive
 
 
 def open_to_public() -> None:
-    """Prepare for access from other machines. There is no login.
+    """Prepare for access from other machines: they need the access PIN (made now if there is none).
 
-    With no working sandbox, commands would run on this machine for anyone who has
-    the URL, so the tools that run commands are switched off for public use.
+    With no working sandbox, commands would run on this machine itself, so the tools that run commands are
+    switched off for public use as a second line behind the PIN.
     """
     set_public_mode(True)
+    fresh = access_gate.ensure_pin()
+    if fresh:
+        print(f"\n  PIN akses jarak jauh: {fresh}  (simpan; ganti dari komputer ini lewat PUT /api/access/pin)\n",
+              flush=True)
+    logger.info("[web] Remote access needs the access PIN (/access)")
     try:
         backend = sandbox.active_backend()
     except sandbox.SandboxError:
         backend = sandbox.BACKEND_NONE
     if backend == sandbox.BACKEND_NONE:
         disabled = {name for name in os.getenv("AGENT_DISABLED_TOOLS", "").split(",") if name}
-        os.environ["AGENT_DISABLED_TOOLS"] = ",".join(disabled | {"execute_command", "run_checks"})
+        os.environ["AGENT_DISABLED_TOOLS"] = ",".join(disabled | {"execute_command", "run_checks", "terminal_run"})
         logger.warning("[web] Public access without a sandbox: command tools are disabled")
+
+
+_login_guard = RateGuard(requests=RateLimit(capacity=5, window=60.0), max_principals=4096)
+
+
+class AccessLogin(BaseModel):
+    pin: str = Field(default="", max_length=128)
+
+
+class AccessPin(BaseModel):
+    pin: str = Field(default="", max_length=128)
+
+
+@app.get("/access", include_in_schema=False)
+async def access_page() -> HTMLResponse:
+    return HTMLResponse(access_gate.LOGIN_PAGE, headers=_NO_CACHE)
+
+
+@app.post("/api/access/login")
+async def access_login(payload: AccessLogin, request: Request) -> JSONResponse:
+    client = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "unknown")
+    try:
+        _login_guard.check(f"login:{client}")
+    except RateLimitExceeded as exc:
+        raise HTTPException(429, "Terlalu banyak percobaan. Tunggu sebentar.",
+                            headers={"Retry-After": str(max(1, int(exc.retry_after)))}) from None
+    if not access_gate.has_pin():
+        raise HTTPException(403, "Akses jarak jauh belum diaktifkan di komputer ini.")
+    if not access_gate.check_pin(payload.pin):
+        raise HTTPException(401, "PIN salah.")
+    secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "") == "https"
+    response = JSONResponse({"ok": True})
+    response.set_cookie(access_gate.COOKIE, access_gate.issue(), max_age=access_gate.MAX_AGE_S, httponly=True,
+                        secure=secure, samesite="lax", path="/")
+    return response
+
+
+@app.post("/api/access/logout")
+async def access_logout() -> JSONResponse:
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(access_gate.COOKIE, path="/")
+    return response
+
+
+@app.put("/api/access/pin")
+async def access_set_pin(payload: AccessPin, request: Request) -> dict[str, Any]:
+    """This machine only: set the access PIN, or leave it empty for a new random one (shown once)."""
+    if not is_local_request(request):
+        raise HTTPException(403, "PIN akses hanya bisa diganti dari komputer ini.")
+    try:
+        if payload.pin.strip():
+            access_gate.set_pin(payload.pin)
+            return {"ok": True, "pin": None}
+        access_gate.set_pin(fresh := f"{secrets.randbelow(10**8):08d}")
+        return {"ok": True, "pin": fresh}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 def get_orchestrator() -> Orchestrator:

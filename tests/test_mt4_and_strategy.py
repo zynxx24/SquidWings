@@ -19,6 +19,7 @@ from addons.trading import advisor, journal, strategy
 from addons.trading.mt4_backend import Mt4BridgeBackend
 from addons.trading.mt5_adapter import TradingError
 from addons.trading.web import mt4_bridge
+from tests._access import logged_in
 from web.server import app
 
 SECRET = "bridge-secret-xyz"
@@ -424,10 +425,11 @@ def clean_panel(monkeypatch):
     mt5_api._state.update(backend=None, live=False, view_only="")
 
 
-def test_a_phone_sees_the_streaming_ea_without_logging_in(client, clean_panel, monkeypatch):
+def test_a_phone_past_the_access_pin_sees_the_streaming_ea_without_a_trade_token(client, clean_panel, monkeypatch):
     monkeypatch.delenv("MT5_TRADE_TOKEN", raising=False)
     assert client.post("/api/mt4/ingest", json=[_account(False)], headers=S).status_code == 200
-    phone = TestClient(app, client=("203.0.113.9", 50000))
+    assert TestClient(app, client=("203.0.113.9", 50000)).get("/api/mt5/status").status_code == 401
+    phone = TestClient(app, client=("203.0.113.9", 50000), cookies=logged_in())
     status = phone.get("/api/mt5/status").json()
     assert status["connected"] is True and status["backend"] == "mt4" and status["view_only"] == ""
     assert phone.get("/api/mt5/account").json()["login"] == 777

@@ -21,6 +21,7 @@ from addons.trading.quant import features as F
 from addons.trading.quant import model as M
 from addons.trading.quant import risk as R
 from addons.trading.quant.hmm import GaussianHMM, label_states
+from tests._access import logged_in
 
 
 def _walk(n: int, seed: int = 1, drift_period: int = 400, vol: float = 0.0006) -> list[dict[str, float]]:
@@ -399,7 +400,7 @@ def test_engine_blocks_on_a_news_event_near_the_bar(monkeypatch):
 def test_quant_api_reads_without_a_token_but_needs_a_connection(monkeypatch):
     from web.server import app
     monkeypatch.setenv("MT5_TRADE_TOKEN", "t-quant")
-    c = TestClient(app, client=("203.0.113.9", 50000))
+    c = TestClient(app, client=("203.0.113.9", 50000), cookies=logged_in())
     r = c.get("/api/quant/config")
     assert r.status_code == 200 and "max_risk_per_trade_pct" in r.json()
     assert c.post("/api/quant/reset").status_code == 401           # changing state still needs it

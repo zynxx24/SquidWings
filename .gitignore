@@ -134,3 +134,13 @@ skills/.sources/
 
 # IDE add-on editor build (npm install in addons/ide/build)
 addons/ide/build/node_modules/
+
+# === Runtime data lives in the user's data folder (brain/config/paths.py MOVABLE); these are links to it ===
+/data
+/web/data
+/vault
+/workspace
+/brain/memory/chat_store
+/brain/memory/store
+/.internal
+/addons/trading/data

@@ -6,6 +6,7 @@ SquidWings is an AI agent harness (terminal + web) in **one language, Python 3.1
 
 ## How to work (always)
 
+<!-- prompt: Plan first: before any task with more than one step (build, fix, design, video, document, settings), inspect what exists, then write a plan from every angle (goal and done-criteria, users, design and files, the six quality aspects, risks, ordered steps, verification, rollback), then execute it step by step without waiting unless only the user can decide. A one-step task or a plain question needs no plan. -->
 # Rencana menyeluruh dulu, baru eksekusi
 
 Berlaku untuk setiap tugas yang lebih dari satu langkah: membangun, memperbaiki, mendesain, membuat video atau dokumen, mengubah pengaturan.
@@ -23,6 +24,7 @@ Berlaku untuk setiap tugas yang lebih dari satu langkah: membangun, memperbaiki,
 
 Pertanyaan sederhana yang tidak butuh tool tetap dijawab langsung, tanpa rencana. Skill `super-plan` berisi templatnya.
 
+<!-- prompt: Every app, website, API or project must meet all six: security (server-side validation, authz per action, parameterized queries, escaped output, secrets only in env, rate limits; attack your own web app and fix root causes), code quality (project conventions, clean lint and types), reliability (honest error handling, timeouts, transactions, tests for new logic and edge cases), performance (no N+1, indexes, pagination, measured numbers), maintainability (clear structure, config apart from code, README), usability (360 px to desktop, 4.5:1 contrast, keyboard, helpful errors). Report each as PASS or FAIL with evidence and fix every FAIL before saying done. -->
 # Bar kualitas aplikasi, web, dan proyek
 
 Keenam aspek wajib terpenuhi, bukan dipilih salah satu. Kode yang jalan tapi bercelah, lambat, atau sulit dirawat belum selesai.
@@ -38,6 +40,7 @@ Keenam aspek wajib terpenuhi, bukan dipilih salah satu. Kode yang jalan tapi ber
 
 Laporkan keenamnya sebagai PASS atau FAIL beserta buktinya. FAIL diperbaiki sebelum bilang selesai. Yang tidak bisa dicek, sebut terus terang. Skill `quality-gate` berisi langkah pemeriksaannya.
 
+<!-- prompt: Video: write the final script first (per scene: seconds, on-screen text, narration) and check it fits (about 2.5 words a second spoken). Build the video and the voice from that one script, so the text on screen never differs from what is said; plan the music source in the script. -->
 # Video: naskah final dulu, baru video
 
 Berlaku untuk semua video, baik dibuat lewat harness maupun alat lain (HyperFrames, Remotion, Studio, animate).
@@ -51,6 +54,7 @@ Berlaku untuk semua video, baik dibuat lewat harness maupun alat lain (HyperFram
 
 Skill `video-script` berisi format naskahnya. Pelajaran dari proyek sebelumnya ada di `lessons.md`.
 
+<!-- prompt: Lessons: TTS reads every word of its prompt, so style direction goes in Director's notes; check each voice line with whisper; long jobs run in the background; quote laws from the official text. -->
 # Pelajaran dari proyek sebelumnya
 
 ## Video "Hikayat Antrean" (2026-11-27)
@@ -105,10 +109,13 @@ Pass `--no-update` to `main.py` while developing, or it fast-forwards from GitHu
 ## Rules that keep it working
 
 - **Model modes.** A model the user picks (`model_locked=True`) is used as it is; when it fails, `brain/harness/model_errors.py` explains why and the turn ends. Never add a fallback, advisor or recovery model for a locked pick. **Auto** goes through `brain/harness/autopilot.py` (`ROUTING_QUALITY=smart`): cheapest reliable model for the tier, one tier up after a bad turn.
-- **No artificial limits.** The owner's rule: the harness puts no cap on what a model sees; only the provider's window (1M tokens, `DEFAULT_CONTEXT_WINDOW` for unreported models) limits history and context. Do not add caps on history, tools, tool results or skills.
+- **Limits on cost, not capability** (2026-11-28, replaces "no limits"). History may fill the provider's window (1M tokens, `DEFAULT_CONTEXT_WINDOW` for unreported models). One tool result is clipped to 120k characters (head and tail; the model re-reads a range), a turn has a token budget (`AGENT_TURN_TOKEN_BUDGET`, default 3M; `off` lifts it), and guides over 12k characters arrive as an outline (`load_skill(name, section=...)`). Do not cap what the agent can do.
 - **Scale.** Skills and tools will keep growing. Rank with `brain/harness/relevance.py` (IDF-weighted triggers, BM25) so the most relevant come first; hidden toolbox tools stay on demand (`find_tools`).
 - **Caches** go through `brain/utils/cache.py` (named, bounded, TTL, `clear_session` on chat delete, stats at `/api/cache`). Anything built from files uses `FileWatch` so edits apply without a restart. No new unbounded module-level dicts.
 - **Per-chat isolation.** State, caches and installed kits are keyed by the session (`get_active_session()`); a chat never sees another chat's data.
+- **Security is not optional.** Shell commands go through `brain/security/command_risk.py` (parsed, not regex: recursive deletes outside the work folder, piping fetched text into a shell, key material, root shells are refused; `sudo <one command>` is allowed). `terminal_run` is guarded like `execute_command`; the guard fails closed. Remote web access needs the access PIN (`brain/security/access_gate.py`); this machine never does. Outside content taints the chat (`brain/security/taint.py`): sudo, fetched installers and `git push` then wait for the user's yes.
+- **Supply chain.** GitHub skills are pinned to a commit in `skills/sources.json`; new upstream commits wait in `python main.py skills pending` until `skills approve`. The repo only reports new commits (`AUTO_UPDATE=apply` pulls by itself); packages are held to `requirements.lock`.
+- **Runtime data lives outside the checkout** (`brain/config/paths.py` `MOVABLE` → `~/.local/share/squidwings`, links left behind). New runtime folders join `MOVABLE` and `.gitignore`.
 - **Cross-platform.** POSIX-only calls (`termios`, `pty`, `os.killpg`, `preexec_fn`, `os.nice`) go through `brain/utils/platform_compat.py`. Runtime files go through `brain/config/paths.py`, never the repo root.
 - **GitHub skills stay original.** Adjust one with `skills/adapters/<name>.md`, not by editing `skills/.sources/`.
 - **Add-ons** register their tools, skills and pages only when switched on (`brain/config/edition.py`). New optional features become an `addons/<name>/` with an `addon.json`.

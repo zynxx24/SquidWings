@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from addons.trading import news
 from addons.trading.news import NewsDesk
+from tests._access import logged_in
 
 RSS = b"""<?xml version="1.0"?>
 <rss version="2.0"><channel>
@@ -163,6 +164,6 @@ def test_news_api(monkeypatch, tmp_path):
     assert r["calendar"]["next_high"]["currency"] == "USD" and r["condition"]["state"] == "normal"
     assert client.get("/api/quant/news?symbol=bad%20symbol").status_code == 422
     monkeypatch.setenv("MT5_TRADE_TOKEN", "rahasia")
-    remote = TestClient(app, client=("203.0.113.5", 50000))
+    remote = TestClient(app, client=("203.0.113.5", 50000), cookies=logged_in())
     assert remote.get("/api/quant/news?symbol=EURUSD").status_code == 200, "reading is open, as on the rest of the panel"
     assert remote.get("/api/quant/news?symbol=EURUSD&refresh=true").status_code in (401, 403)

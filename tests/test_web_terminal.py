@@ -73,10 +73,13 @@ def test_the_panel_opens_only_on_this_computer(monkeypatch: pytest.MonkeyPatch) 
     from fastapi.testclient import TestClient
     from starlette.websockets import WebSocketDisconnect
 
+    from brain.security import access_gate
     from web.server import app
 
     monkeypatch.setenv("WEB_TERMINAL_PUBLIC", "false")
-    with TestClient(app) as client:
+    access_gate.set_pin("246810")
+    with TestClient(app, client=("203.0.113.9", 5000)) as client:
+        client.cookies.set(access_gate.COOKIE, access_gate.issue())     # past the access PIN, still not this computer
         assert client.get("/api/terminal/status").json()["allowed"] is False
         with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect("/ws/terminal?session=sess-abcdef123456") as ws:
             ws.receive_json()

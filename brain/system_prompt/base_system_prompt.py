@@ -96,7 +96,8 @@ class SystemPromptManager:
         if key in self._cache:
             return self._cache[key]
 
-        base_prompt = self._load_file("_base.txt")
+        # The working rules (plan first, the six-aspect bar, script-first video) come from .claude/rules/.
+        base_prompt = "\n\n".join(part for part in (self._load_file("_base.txt"), self._load_file("_rules.txt")) if part)
         task_prompt = self._load_file(filename)
         extra = self._ponytail(pony) if pony and task_type in _ponytail_tasks() else ""
         prompt = "\n\n".join(part for part in (base_prompt, task_prompt, extra) if part)

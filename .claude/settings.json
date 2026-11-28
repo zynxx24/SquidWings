@@ -16,7 +16,11 @@
       "Read(./.env.*)",
       "Read(./web/data/credentials.json)",
       "Read(./web/data/router/**)",
-      "Read(./vault/**/secrets/**)"
+      "Read(~/.local/share/squidwings/web/data/credentials.json)",
+      "Read(~/.local/share/squidwings/web/data/router/**)",
+      "Read(~/.local/share/squidwings/data/web_access.json)",
+      "Read(~/.ssh/id_*)",
+      "Read(~/.codex/auth.json)"
     ]
   }
 }

@@ -28,9 +28,10 @@ router = APIRouter(prefix="/api/router", tags=["router"])
 
 
 def can_edit(request: Request, pin: str | None = None) -> bool:
-    if is_local_request(request) or not get_store().has_pin():
+    if is_local_request(request):
         return True
-    return get_store().check_pin(pin)
+    # From elsewhere (already past the access PIN) the router PIN is still required; without one, only here.
+    return get_store().has_pin() and get_store().check_pin(pin)
 
 
 def admin(request: Request, x_router_pin: str | None = Header(default=None)) -> None:

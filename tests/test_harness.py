@@ -746,3 +746,38 @@ def test_loop_guard_spots_a_cycle_of_two_calls() -> None:
     assert any(n and "berputar" in n for n in nudges)
     assert sum(1 for n in nudges if n) == 1, "said once"
     assert guard.needs_help and not guard.give_up
+
+
+# --- cost budget ---------------------------------------------------------
+
+
+async def test_a_turn_stops_calling_tools_when_its_token_budget_is_spent(registry, tmp_path, monkeypatch) -> None:
+    """Limits on cost, not capability: a loop that keeps calling tools ends with a written summary."""
+    monkeypatch.setenv("AGENT_TURN_TOKEN_BUDGET", "10000")
+
+    def heavy(content: str = "", calls: list[tuple[str, Any]] | None = None) -> dict[str, Any]:
+        response = reply(content, calls)
+        response["usage"] = {"prompt_tokens": 6000, "completion_tokens": 10, "total_tokens": 6010}
+        return response
+
+    client = FakeClient(
+        heavy("", [("file_write", {"path": "a.txt", "content": "1"})]),
+        heavy("", [("file_write", {"path": "b.txt", "content": "2"})]),
+        heavy("Selesai: a.txt dan b.txt. Belum: c.txt."),
+    )
+    result = await run(client, registry, make_harness(registry, tmp_path))
+    assert result.content.startswith("Selesai")
+    nudges = [m["content"] for m in client.requests[-1]["messages"] if m.get("role") == "user"]
+    assert any("Anggaran token untuk giliran ini" in n for n in nudges)
+    assert "tools" not in client.requests[-1] or not client.requests[-1].get("tools")
+
+
+def test_the_turn_budget_can_be_switched_off_or_moved(monkeypatch) -> None:
+    from brain.harness.tiers import DEFAULT_TURN_TOKEN_BUDGET, turn_token_budget
+
+    monkeypatch.delenv("AGENT_TURN_TOKEN_BUDGET", raising=False)
+    assert turn_token_budget() == DEFAULT_TURN_TOKEN_BUDGET
+    monkeypatch.setenv("AGENT_TURN_TOKEN_BUDGET", "off")
+    assert turn_token_budget() == 0
+    monkeypatch.setenv("AGENT_TURN_TOKEN_BUDGET", "500_000")
+    assert turn_token_budget() == 500_000

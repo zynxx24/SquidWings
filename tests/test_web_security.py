@@ -181,12 +181,60 @@ def test_there_is_no_login() -> None:
 
 
 def test_public_mode_accepts_any_host_but_still_blocks_other_sites() -> None:
+    from brain.security import access_gate
+
     web_access.set_public_mode(True)
     try:
         client = make_client()
-        host = {"Host": "abc.trycloudflare.com"}
+        host = {"Host": "abc.trycloudflare.com", "X-Forwarded-For": "203.0.113.9"}
+        access_gate.set_pin("246810")
+        client.cookies.set(access_gate.COOKIE, access_gate.issue())
         assert client.get("/", headers=host).status_code == 200
         assert client.post("/api/thing", headers={**host, "Origin": "https://abc.trycloudflare.com"}).status_code == 200
         assert client.post("/api/thing", headers={**host, "Origin": "https://evil.example"}).status_code == 403
     finally:
         web_access.set_public_mode(False)
+
+
+def test_remote_visitors_need_the_access_pin_and_this_machine_never_does() -> None:
+    from brain.security import access_gate
+
+    web_access.set_public_mode(True)
+    try:
+        far = {"Host": "abc.trycloudflare.com", "X-Forwarded-For": "203.0.113.9"}
+        client = make_client()
+        # no PIN yet: remote access is simply off
+        assert client.get("/api/thing", headers=far).status_code == 401
+        access_gate.set_pin("246810")
+        page = client.get("/", headers={**far, "Accept": "text/html"})
+        assert page.status_code == 303 and page.headers["location"].startswith("/access")
+        assert client.post("/api/thing", headers={**far, "Origin": "https://abc.trycloudflare.com"}).status_code == 401
+        with pytest.raises(WebSocketDisconnect) as refused, client.websocket_connect(
+                "/ws/chat", headers={**far, "Origin": "https://abc.trycloudflare.com"}):
+            pass
+        assert refused.value.code == 4401
+        # a forged or expired cookie is no better than none
+        client.cookies.set(access_gate.COOKIE, "9999999999.deadbeef")
+        assert client.get("/", headers=far).status_code == 401
+        client.cookies.set(access_gate.COOKIE, access_gate.issue())
+        assert client.get("/", headers=far).status_code == 200
+        with client.websocket_connect("/ws/chat", headers={**far, "Origin": "https://abc.trycloudflare.com"}):
+            pass
+        # a new PIN logs every browser out
+        access_gate.set_pin("135790")
+        assert client.get("/", headers=far).status_code == 401
+        # this machine: no cookie, no PIN
+        assert make_client().get("/", headers={"Host": "localhost:8080"}).status_code == 200
+    finally:
+        web_access.set_public_mode(False)
+
+
+def test_the_pin_is_stored_as_a_hash_and_checked_in_constant_time(tmp_path) -> None:
+    from brain.security import access_gate
+
+    access_gate.set_pin("864200")
+    stored = access_gate._file().read_text()
+    assert "864200" not in stored and access_gate.check_pin("864200") and not access_gate.check_pin("000000")
+    with pytest.raises(ValueError):
+        access_gate.set_pin("123")
+    assert access_gate.ensure_pin() == ""

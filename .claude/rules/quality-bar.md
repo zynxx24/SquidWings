@@ -1,3 +1,4 @@
+<!-- prompt: Every app, website, API or project must meet all six: security (server-side validation, authz per action, parameterized queries, escaped output, secrets only in env, rate limits; attack your own web app and fix root causes), code quality (project conventions, clean lint and types), reliability (honest error handling, timeouts, transactions, tests for new logic and edge cases), performance (no N+1, indexes, pagination, measured numbers), maintainability (clear structure, config apart from code, README), usability (360 px to desktop, 4.5:1 contrast, keyboard, helpful errors). Report each as PASS or FAIL with evidence and fix every FAIL before saying done. -->
 # Bar kualitas aplikasi, web, dan proyek
 
 Keenam aspek wajib terpenuhi, bukan dipilih salah satu. Kode yang jalan tapi bercelah, lambat, atau sulit dirawat belum selesai.

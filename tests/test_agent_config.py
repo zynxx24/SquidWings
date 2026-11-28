@@ -49,3 +49,29 @@ def test_expand_refuses_a_missing_import(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit, match="not found"):
         sync.expand("@.claude/rules/does-not-exist.md", ROOT)
+
+
+def test_the_harness_prompt_carries_every_rule_once() -> None:
+    from brain.config.constants import TaskType
+    from brain.system_prompt.base_system_prompt import SystemPromptManager
+
+    prompt = SystemPromptManager().get_system_prompt(TaskType.CODE)
+    for marker in ("Plan first:", "must meet all six", "Video: write the final script first", "Lessons:"):
+        assert prompt.count(marker) == 1, marker
+
+
+def test_the_harness_quality_skill_is_the_quality_gate_text() -> None:
+    harness = (ROOT / "skills" / "builtin" / "bar-kualitas.md").read_text(encoding="utf-8")
+    gate = (ROOT / ".claude" / "skills" / "quality-gate" / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[2]
+    assert gate.strip() in harness and "name: bar-kualitas" in harness
+
+
+def test_long_guides_arrive_as_an_outline_and_open_by_section() -> None:
+    from skills import sections
+
+    body = "Intro line.\n\n## Setup\nInstall it.\n\n## Usage\nRun it.\n" + "x" * 20_000
+    outline = sections.outline("big", body)
+    assert len(outline) < 2_000 and 'load_skill(name="big", section="Usage")' in outline
+    assert sections.section(body, "usage").startswith("## Usage")
+    assert sections.section(body, "missing") is None
+    assert sections.outline("small", "## A\nshort") == "## A\nshort"

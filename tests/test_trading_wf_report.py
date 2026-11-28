@@ -136,5 +136,7 @@ def test_the_report_goes_to_an_ignored_folder(monkeypatch):
     monkeypatch.delenv("SQUIDWINGS_DATA_DIR", raising=False)   # the default place, inside the repo
     folder = paths.report_dir("trading")
     assert folder.is_relative_to(paths.ROOT / "data")
-    out = subprocess.run(["git", "check-ignore", str(folder / "x.md")], cwd=paths.ROOT, capture_output=True, text=True)
+    # data/ now usually links to the user's data folder; then the link itself is what git must ignore.
+    target = "data" if (paths.ROOT / "data").is_symlink() else str(folder / "x.md")
+    out = subprocess.run(["git", "check-ignore", "--no-index", target], cwd=paths.ROOT, capture_output=True, text=True)
     assert out.returncode == 0, "report files must never be committed"
