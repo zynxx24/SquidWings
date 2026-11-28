@@ -729,6 +729,8 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); }
   padding: 14px; text-align: left; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-lg);
   box-shadow: var(--shadow-lg); animation: rise 0.18s var(--ease);
 }
+.quick-panel.opens-down { bottom: auto; top: calc(100% + 10px); }
+.composer.qm-open { z-index: 40; }   /* the composer animates (its own layer): lift it over what follows */
 .qm-head { display: flex; align-items: center; gap: 8px; }
 .qm-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
 .qm-head .qm-close { margin-left: auto; }

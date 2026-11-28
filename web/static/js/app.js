@@ -1245,15 +1245,31 @@
     try { await quickCatalog(); } catch (err) { toast(`Menu cepat tidak bisa dibuka: ${err.message}`); return; }
     const panel = $('quick-panel');
     panel.hidden = false;
+    $('composer').classList.add('qm-open');
+    $('quick-suggest').innerHTML = '';   // the panel shows the same choices
     $('quick-btn').setAttribute('aria-expanded', 'true');
     const action = QM.actions.find(a => a.id === actionId);
     if (action) quickForm(action, preset); else quickList();
+    quickPlace();
+  }
+
+  // Open towards the side with room: down while the composer sits high (an empty chat), up above it otherwise.
+  function quickPlace() {
+    const panel = $('quick-panel');
+    if (!panel || panel.hidden) return;
+    const box = $('composer').getBoundingClientRect();
+    const above = box.top - 16;
+    const below = innerHeight - box.bottom - 16;
+    const down = above < 360 && below > above;
+    panel.classList.toggle('opens-down', down);
+    panel.style.maxHeight = `${Math.round(Math.max(220, Math.min(560, down ? below : above)))}px`;
   }
 
   function quickClose() {
     const panel = $('quick-panel');
     if (!panel || panel.hidden) { quickSuggestSoon(); return; }
     panel.hidden = true;
+    $('composer').classList.remove('qm-open');
     QM.action = null;
     $('quick-btn').setAttribute('aria-expanded', 'false');
     quickSuggestSoon();
@@ -1466,6 +1482,7 @@
   }
 
   $('quick-btn').onclick = () => ($('quick-panel').hidden ? quickOpen() : quickClose());
+  window.addEventListener('resize', quickPlace);
   $('input').addEventListener('input', quickSuggestSoon);
   $('quick-panel').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); quickClose(); $('quick-btn').focus(); } });
 
