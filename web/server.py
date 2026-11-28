@@ -56,6 +56,7 @@ from brain.utils import (
     file_history,
     local_ocr,
     preview,
+    quick_actions,
     shared_files,
     web_terminal,
 )
@@ -161,6 +162,11 @@ app.state.team_orchestrator = None
 
 # The team canvas is a development-optional feature: it is not mounted at all
 # when disabled, so the endpoints 404 instead of leaking a half-wired surface.
+# Menu cepat: the action list and the auto menu of the chat (web/quick_api.py).
+from web.quick_api import router as quick_router  # noqa: E402 - next to the other routers it joins
+
+app.include_router(quick_router)
+
 _TEAMS_ENABLED = get_settings().teams_enabled
 if _TEAMS_ENABLED:
     app.include_router(team_router)
@@ -1570,6 +1576,48 @@ async def _run_live_turn(
         live.finish()
 
 
+async def _run_quick_turn(live: live_turns.LiveTurn, session_id: str, request: dict[str, str]) -> None:
+    """A Menu cepat download as a chat turn: no model, the same history, the file shown under the answer."""
+    orch = get_orchestrator()
+    store = orch.conversation_store
+    asked = quick_actions.label("video", request)
+    started = time.time()
+    title_task = _start_naming(orch, session_id, "web", asked)
+    try:
+        workspace = Path(session_stack.enter(session_id).workspace)
+        store.add_message(session_id, "user", asked)
+        live.emit({"type": "progress", "kind": "status", "text": "Membaca info video"})
+        info = await quick_actions.video_info(request["url"])
+        title = str(info.get("title") or "video")
+        what = {"mp3": "audionya (MP3)", "srt": "subtitlenya"}.get(request["choice"], f"video {request['choice']}p")
+        live.emit({"type": "progress", "kind": "status", "text": f"Mengunduh {what}: {title[:80]}"})
+        result = await quick_actions.download(request["url"], request["choice"], workspace)
+        for relative in result["files"]:
+            shared_files.add(workspace, relative)
+        minutes = f"{int(info['duration_s']) // 60}:{int(info['duration_s']) % 60:02d}" if info.get("duration_s") else ""
+        details = " · ".join(x for x in (str(info.get("channel") or ""), minutes, f"{result['size_mb']} MB" if result.get("size_mb") else "") if x)
+        shown = "\n\n".join(shared_files.markdown(session_id, f, Path(f).name if f != result["file"] else title) for f in result["files"])
+        answer = f"**{title}**" + (f"\n{details}" if details else "") + f"\n\n{shown}\n\nTersimpan di `{result['file']}`."
+        live.emit({"type": "content", "content": answer})
+        store.add_message(session_id, "assistant", answer, model_used="menu-cepat")
+        titled = await _finish_naming(orch, session_id, "web", title_task)
+        if titled:
+            live.emit({"type": "meta", "event": "title", "session_id": session_id, "title": titled})
+        live.emit({"type": "done", "model_used": "menu-cepat", "total_tokens": 0,
+                   "latency_ms": round((time.time() - started) * 1000), "status": "success"})
+    except quick_actions.QuickActionError as exc:
+        reason = f"Download tidak jadi: {exc}"
+        store.add_message(session_id, "assistant", reason, model_used="menu-cepat", failed=True)
+        live.emit({"type": "error", "content": reason})
+    except asyncio.CancelledError:
+        live.emit({"type": "stopped"})
+    except Exception as exc:  # noqa: BLE001 - the page must hear about any failure
+        logger.error(f"[ws] Menu cepat failed: {exc}")
+        live.emit({"type": "error", "content": f"Download gagal: {exc}"})
+    finally:
+        live.finish()
+
+
 async def _follow_live_turn(websocket: WebSocket, live: live_turns.LiveTurn) -> None:
     """Stream a live turn to this connection (from its start), listening for stop.
 
@@ -1631,6 +1679,19 @@ async def websocket_chat(websocket: WebSocket) -> None:
                     continue
                 await websocket.send_json({"type": "attach", "running": True, "session_id": attach_id,
                                            "message": live.message, "started": live.started})
+                await _follow_live_turn(websocket, live)
+                continue
+            # Menu cepat: a direct action (a video download) runs here without a model, as a turn of its own.
+            if isinstance(data, dict) and data.get("type") == "quick":
+                quick_session = str(data.get("session_id") or "") or generate_session_id()
+                if not is_valid_session_id(quick_session):
+                    await websocket.send_json({"type": "error", "content": "Invalid session id"})
+                    continue
+                raw_inputs = data.get("inputs")
+                inputs: dict[str, Any] = raw_inputs if isinstance(raw_inputs, dict) else {}
+                request = {"url": str(inputs.get("url") or "")[:2000].strip(), "choice": str(inputs.get("choice") or "720")[:10]}
+                live = live_turns.start(quick_session, quick_actions.label("video", request))
+                live.task = asyncio.create_task(_run_quick_turn(live, quick_session, request))
                 await _follow_live_turn(websocket, live)
                 continue
             if not isinstance(data, dict) or not isinstance(data.get("message"), str):

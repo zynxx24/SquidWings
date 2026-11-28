@@ -16,7 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from brain.agent import session_stack, telegram_format
+from brain.agent import session_stack, telegram_format, telegram_quick
 from brain.agent.orchestrator import AgentResponse, Orchestrator
 from brain.agent.team_chats import ChatLog, Limiter
 from brain.agent.team_flow import (
@@ -42,6 +42,7 @@ from brain.agent.team_flow import (
 from brain.agent.team_outputs import (
     DATABASE_IDS,
     OutputError,
+    answer_callback,
     download_telegram_file,
     fetch_telegram_updates,
     http_request,
@@ -56,7 +57,13 @@ from brain.config import credentials
 from brain.config.constants import ResponseStatus
 from brain.config.edition import STUDIO_NOTE, addon_enabled, studio_enabled, studio_module
 from brain.harness import RunLimits, Tier, tier_for
-from brain.utils import file_history, session_settings, shared_files, workspace_context
+from brain.utils import (
+    file_history,
+    quick_actions,
+    session_settings,
+    shared_files,
+    workspace_context,
+)
 from brain.utils.datastore import access as data_access
 from brain.utils.datastore.access import Access
 from brain.utils.datastore.base import DataError
@@ -1408,6 +1415,7 @@ class TeamOrchestrator:
         self._scheduler: asyncio.Task[None] | None = None
         self._telegram: asyncio.Task[None] | None = None
         self._telegram_offset: int | None = None
+        self._bot_commands_set = False
         self._workspaces: dict[str, Path] = {}
         # The files a run's folder had already shared when it started (a flow's folder outlives its runs).
         self._shared_at_start: dict[str, set[str]] = {}
@@ -3108,6 +3116,9 @@ class TeamOrchestrator:
             if not lock.acquire():
                 await asyncio.sleep(TELEGRAM_IDLE_SECONDS)
                 continue
+            if not self._bot_commands_set:
+                self._bot_commands_set = True
+                await telegram_quick.register_commands()
             try:
                 await self.poll_telegram()
             except OutputError as exc:
@@ -3146,6 +3157,10 @@ class TeamOrchestrator:
         now = time.time()
         for update in updates:
             self._telegram_offset = max(self._telegram_offset or 0, int(update["update_id"]) + 1)
+            callback = update.get("callback_query")
+            if isinstance(callback, dict):
+                self._quick_press(callback, allowed)
+                continue
             message = update.get("message") or {}
             chat = message.get("chat") or {}
             chat_id = str(chat.get("id") or "")
@@ -3158,6 +3173,16 @@ class TeamOrchestrator:
                 continue
             private = chat.get("type") == "private"
             if owner:
+                # Menu cepat: /menu, and a card of its own for a message that is only a link.
+                home = self._quick_home(owner_teams, text)
+                if home is not None and telegram_quick.is_menu_command(text):
+                    self._spawn(telegram_quick.show_menu(chat_id))
+                    continue
+                link = quick_actions.only_a_link(text) if self._attachment(message) is None else ""
+                if home is not None and private and link:
+                    self._spawn(telegram_quick.offer_link(chat_id, home.id, link))
+                    taken.append(home.id)
+                    continue
                 teams = self._owner_flows_for(owner_teams, text)
                 if not teams and private:
                     # Nothing of the owner's own takes it: the public bot answers, but as to its owner.
@@ -3175,6 +3200,22 @@ class TeamOrchestrator:
             else:
                 logger.info("[teams] Ignored a Telegram message from chat %s: not the owner and no bot for customers there", chat_id)
         return taken
+
+    def _quick_home(self, owner_teams: list[Team], text: str) -> Team | None:
+        """The owner's chat the Menu cepat works in: the flow this message would reach (the harness chat while
+        it is on). None when no flow of the owner's takes it."""
+        flows = self._owner_flows_for(owner_teams, text or "menu")
+        return flows[0] if flows else None
+
+    def _quick_press(self, callback: dict[str, Any], allowed: str) -> None:
+        """A press on a Menu cepat button: only the owner, in the owner's private chat, may use one."""
+        chat = (callback.get("message") or {}).get("chat") or {}
+        chat_id = str(chat.get("id") or "")
+        presser = str((callback.get("from") or {}).get("id") or "")
+        if not allowed or chat_id != allowed or presser != allowed or chat.get("type") != "private":
+            self._spawn(answer_callback(str(callback.get("id") or ""), "Tombol ini hanya untuk pemilik bot."))
+            return
+        self._spawn(telegram_quick.pressed(self, callback, chat_id))
 
     @staticmethod
     def _owner_flows_for(flows: list[Team], text: str) -> list[Team]:
@@ -3226,6 +3267,13 @@ class TeamOrchestrator:
             await self._say(chat_id, f"File {name} tidak bisa diterima: {exc}")
             return
         await self._say(chat_id, received.note[:3500])
+        if not text and not received.skill and not received.blocked:
+            # Menu cepat: buttons for what fits this file, instead of the AI asking what to do with it.
+            try:
+                if await telegram_quick.offer_file(chat_id, team.id, received.saved, received.extracted, received.note):
+                    return
+            except OutputError as exc:
+                logger.info("[teams] Menu cepat for %s not shown: %s", name, exc)
         ask = text or ("Skill baru sudah terpasang. Ringkas kegunaannya dalam dua kalimat." if received.skill
                        else "Lihat file yang baru saya kirim, lalu tanya apa yang mau saya lakukan dengannya.")
         self._take_chat(team, chat_id, message, f"{ask}\n\n[Unggahan dari Telegram] {received.note}", owner=True)

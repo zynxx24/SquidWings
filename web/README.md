@@ -7,6 +7,7 @@ Server web (FastAPI) dan halaman chat. Halaman add-on (trading, Studio, IDE) ada
 | `server.py` | Server utama: chat, upload, terminal, preview, halaman, pemasangan API add-on, dan perubahan file per giliran (`/api/session/{id}/changes`) |
 | `team_api.py` | API alur kerja (tim agent): simpan, aktif/nonaktif, jalankan, tes satu node, kredensial |
 | `router_api.py` | API halaman Router (provider, model default, harga, token) |
+| `quick_api.py` | Menu cepat di chat: daftar aksi, saran otomatis untuk link dan file, instruksi aksi AI, info video. Download-nya berjalan sebagai giliran chat `{"type": "quick"}` di WebSocket |
 | `data_api.py` | API Tabel data: sumber, tabel, baris, kolom, dan relasi antar tabel |
 | `static/` | Halaman chat (`index.html`, `js/`, `css/`), halaman Router (`router/`), font (`vendor/`) |
 | `tailwind/` | Konfigurasi Tailwind (prefix `tw-`) |

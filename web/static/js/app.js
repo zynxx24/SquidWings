@@ -47,6 +47,13 @@
     download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
     command: '<path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3z"/>',
     keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>',
+    bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
+    doc: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+    zip: '<path d="M4 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M12 10v1M12 13v1M12 16v1"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
+    wave: '<path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 11v2"/>',
+    pdf: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M8.5 17v-4H10a1.2 1.2 0 0 1 0 2.5H8.5M13 17v-4h1a2 2 0 0 1 0 4z"/>',
+    back: '<path d="m15 18-6-6 6-6"/>',
   };
   const icon = (name, size = 18) =>
     `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -1057,12 +1064,14 @@
       return `<file name="${attr(a.name)}"${saved}>\n${a.markdown}\n</file>`;
     }).join('\n\n');
     const full = files ? `${files}\n\n${text}` : text;
-    const label = S.attachments.map(a => `[${a.name}] `).join('') + text;
+    const label = S.quickLabel || (S.attachments.map(a => `[${a.name}] `).join('') + text);
+    S.quickLabel = '';
     const images = S.attachments.map(a => a.image_data_url).filter(Boolean);
     S.attachments = [];
     renderChips();
     input.value = '';
     autosize();
+    quickClose();
 
     S.liveUserRow = addUser(label);
     if ($('chat-title').textContent === 'Chat baru') $('chat-title').textContent = label.replace(/\s+/g, ' ').slice(0, 70);
@@ -1201,6 +1210,7 @@
     chips.querySelectorAll('[data-remove]').forEach(button => {
       button.onclick = () => { S.attachments.splice(Number(button.dataset.remove), 1); renderChips(); };
     });
+    quickFilesChanged();
   }
   $('file-input').onchange = async e => { await attachFiles(e.target.files); e.target.value = ''; };
   async function attachFiles(fileList) {
@@ -1218,6 +1228,246 @@
     }
     renderChips();
   }
+
+  /* ── Menu cepat ───────────────────────────────────── */
+  // Ready-made jobs (web/quick_api.py, brain/utils/quick_actions.py). The auto menu offers the ones that fit what
+  // is typed or attached; the panel lists them all. A video download runs on the server without a model (a
+  // "quick" turn on the chat socket); the other actions send one clear instruction to the chat.
+  const QM = { actions: [], action: null, preset: {}, choice: '', infoUrl: '', infoTimer: 0, suggestTimer: 0, suggested: [] };
+  const quickSuffix = name => (/\.[^./\\]+$/.exec(String(name || '').toLowerCase()) || [''])[0];
+
+  async function quickCatalog() {
+    if (!QM.actions.length) QM.actions = (await api('/api/quick/actions')).actions || [];
+    return QM.actions;
+  }
+
+  async function quickOpen(actionId = '', preset = {}) {
+    try { await quickCatalog(); } catch (err) { toast(`Menu cepat tidak bisa dibuka: ${err.message}`); return; }
+    const panel = $('quick-panel');
+    panel.hidden = false;
+    $('quick-btn').setAttribute('aria-expanded', 'true');
+    const action = QM.actions.find(a => a.id === actionId);
+    if (action) quickForm(action, preset); else quickList();
+  }
+
+  function quickClose() {
+    const panel = $('quick-panel');
+    if (!panel || panel.hidden) { quickSuggestSoon(); return; }
+    panel.hidden = true;
+    QM.action = null;
+    $('quick-btn').setAttribute('aria-expanded', 'false');
+    quickSuggestSoon();
+  }
+
+  function quickList() {
+    QM.action = null;
+    $('quick-panel').innerHTML = `
+      <div class="qm-head">
+        <span class="qm-head-ico">${icon('bolt', 16)}</span>
+        <h3 id="quick-title">Menu cepat</h3>
+        <button type="button" class="icon-btn icon-small qm-close" aria-label="Tutup menu cepat">${icon('x', 16)}</button>
+      </div>
+      <p class="qm-lead">Tempel link atau lampirkan file, menu yang cocok muncul sendiri di atas kotak ketik.</p>
+      <div class="qm-grid">${QM.actions.map(a => `
+        <button type="button" class="qm-card" data-action="${esc(a.id)}">
+          <span class="qm-ico">${icon(a.icon, 20)}</span>
+          <span class="qm-text"><b>${esc(a.title)}</b><small>${esc(a.blurb)}</small></span>
+          <span class="qm-mode ${a.mode === 'direct' ? 'is-direct' : ''}">${a.mode === 'direct' ? 'Tanpa AI · cepat' : 'Dikerjakan AI'}</span>
+        </button>`).join('')}
+      </div>`;
+    $('quick-panel').querySelector('.qm-close').onclick = quickClose;
+    $('quick-panel').querySelectorAll('[data-action]').forEach(b => {
+      b.onclick = () => quickForm(QM.actions.find(a => a.id === b.dataset.action), {});
+    });
+    $('quick-panel').querySelector('.qm-card')?.focus();
+  }
+
+  function quickMatches(action) {
+    return S.attachments.filter(a => action.files.includes(quickSuffix(a.name)));
+  }
+
+  function quickFilesHtml(action) {
+    const found = quickMatches(action);
+    const picked = QM.preset.file && found.some(a => a.name === QM.preset.file) ? QM.preset.file : (found[0] || {}).name;
+    const rows = found.map((a, i) => `
+      <label class="qm-file"><input type="radio" name="qm-file" value="${i}" ${a.name === picked ? 'checked' : ''}>
+        <span>${icon('doc', 15)} ${esc(a.name)}</span></label>`).join('');
+    return `${rows || `<p class="qm-muted">Belum ada file yang cocok (${esc(action.files.slice(0, 6).join(', '))}${action.files.length > 6 ? ', ...' : ''}).</p>`}
+      <button type="button" class="btn btn-ghost qm-attach">${icon('clip', 15)} Lampirkan file</button>`;
+  }
+
+  function quickChoicesHtml(choices) {
+    if (!choices.length) return '';
+    if (!choices.some(c => c.id === QM.choice)) QM.choice = (choices.find(c => c.id === '720') || choices[0]).id;
+    return choices.map(c => `<button type="button" role="radio" class="qm-choice" aria-checked="${c.id === QM.choice}" data-choice="${esc(c.id)}">${esc(c.label)}</button>`).join('');
+  }
+
+  function quickForm(action, preset) {
+    QM.action = action;
+    QM.preset = preset || {};
+    QM.choice = action.choices.length ? action.choices[0].id : '';
+    if (action.id === 'video') QM.choice = '720';
+    const needsUrl = action.needs === 'url';
+    const fileWithUrl = action.also_url;
+    $('quick-panel').innerHTML = `
+      <div class="qm-head">
+        <button type="button" class="icon-btn icon-small qm-back" aria-label="Kembali ke daftar menu">${icon('back', 16)}</button>
+        <span class="qm-head-ico">${icon(action.icon, 16)}</span>
+        <h3 id="quick-title">${esc(action.title)}</h3>
+        <button type="button" class="icon-btn icon-small qm-close" aria-label="Tutup menu cepat">${icon('x', 16)}</button>
+      </div>
+      <p class="qm-lead">${esc(action.blurb)}</p>
+      ${needsUrl || fileWithUrl ? `<label class="qm-field"><span>${fileWithUrl ? 'Link video (atau pilih file di bawah)' : 'Link'}</span>
+        <input id="qm-url" type="url" inputmode="url" autocomplete="off" placeholder="https://" value="${esc(QM.preset.url || '')}"></label>
+        <p id="qm-info" class="qm-info" aria-live="polite"></p>` : ''}
+      ${action.needs === 'file' ? `<div class="qm-field"><span>File</span><div id="qm-files" class="qm-files">${quickFilesHtml(action)}</div></div>` : ''}
+      ${action.choices.length ? `<div class="qm-field"><span>Pilihan</span><div id="qm-choices" class="qm-choices" role="radiogroup" aria-label="Pilihan">${quickChoicesHtml(action.choices)}</div></div>` : ''}
+      ${action.note ? `<label class="qm-field"><span>${esc(action.note)}</span><textarea id="qm-note" rows="2"></textarea></label>` : ''}
+      <p id="qm-error" class="qm-error" role="alert"></p>
+      <div class="qm-foot">
+        <span class="qm-mode ${action.mode === 'direct' ? 'is-direct' : ''}">${action.mode === 'direct' ? 'Tanpa AI · hasil langsung di chat' : 'Dikerjakan AI di chat ini'}</span>
+        <button type="button" class="btn btn-primary qm-run">${icon(action.mode === 'direct' ? 'download' : 'send', 15)} Jalankan</button>
+      </div>`;
+    const panel = $('quick-panel');
+    panel.querySelector('.qm-back').onclick = quickList;
+    panel.querySelector('.qm-close').onclick = quickClose;
+    panel.querySelector('.qm-run').onclick = quickRun;
+    quickWireChoices();
+    quickWireFiles();
+    const url = $('qm-url');
+    if (url) {
+      url.oninput = () => { clearTimeout(QM.infoTimer); QM.infoTimer = setTimeout(quickVideoInfo, 600); };
+      if (url.value) quickVideoInfo();
+      (url.value ? panel.querySelector('.qm-run') : url).focus();
+    } else panel.querySelector('.qm-run').focus();
+  }
+
+  function quickWireChoices() {
+    $('quick-panel').querySelectorAll('[data-choice]').forEach(b => {
+      b.onclick = () => {
+        QM.choice = b.dataset.choice;
+        $('quick-panel').querySelectorAll('[data-choice]').forEach(x => x.setAttribute('aria-checked', String(x === b)));
+      };
+    });
+  }
+
+  function quickWireFiles() {
+    const attach = $('quick-panel').querySelector('.qm-attach');
+    if (attach) attach.onclick = () => $('file-input').click();
+  }
+
+  function quickFilesChanged() {
+    const box = $('qm-files');
+    if (box && QM.action) { box.innerHTML = quickFilesHtml(QM.action); quickWireFiles(); }
+    quickSuggestSoon();
+  }
+
+  async function quickVideoInfo() {
+    const url = ($('qm-url') || {}).value?.trim() || '';
+    const info = $('qm-info');
+    if (!info || QM.action?.id !== 'video') return;
+    if (!/^https?:\/\/\S+$/i.test(url)) { info.textContent = ''; return; }
+    if (url === QM.infoUrl) return;
+    QM.infoUrl = url;
+    info.dataset.kind = 'busy';
+    info.textContent = 'Membaca info video...';
+    try {
+      const data = await post('/api/quick/video-info', { url });
+      if (QM.infoUrl !== url) return;
+      const minutes = data.duration_s ? ` · ${Math.floor(data.duration_s / 60)}:${String(Math.round(data.duration_s % 60)).padStart(2, '0')}` : '';
+      info.dataset.kind = 'ok';
+      info.innerHTML = `<b>${esc(data.title)}</b><span>${esc(data.channel || data.site || '')}${minutes}</span>`;
+      const box = $('qm-choices');
+      if (box && data.choices?.length) { box.innerHTML = quickChoicesHtml(data.choices); quickWireChoices(); }
+    } catch (err) {
+      if (QM.infoUrl !== url) return;
+      info.dataset.kind = 'error';
+      info.textContent = err.message;
+    }
+  }
+
+  async function quickRun() {
+    const action = QM.action;
+    if (!action) return;
+    const error = $('qm-error');
+    error.textContent = '';
+    if (S.busy) { error.textContent = 'Tunggu balasan yang sedang berjalan selesai dulu.'; return; }
+    const url = ($('qm-url') || {}).value?.trim() || '';
+    const picked = document.querySelector('#qm-files input[name="qm-file"]:checked');
+    const file = picked ? quickMatches(action)[Number(picked.value)] : null;
+    const inputs = { choice: QM.choice, note: ($('qm-note') || {}).value?.trim() || '' };
+    if (url) inputs.url = url;
+    // The name the person sent (a PDF stays a PDF); the attached <file> block carries where its text is saved.
+    if (file) inputs.file = file.name;
+    if (action.needs === 'url' && !/^https?:\/\/\S+$/i.test(url)) { error.textContent = 'Isi link yang diawali http:// atau https://.'; $('qm-url').focus(); return; }
+    if (action.needs === 'file' && !file && !(action.also_url && url)) { error.textContent = 'Lampirkan filenya dulu.'; return; }
+    if (!S.session) await newChat();
+    if (action.mode === 'direct') {
+      const label = `Menu cepat · ${action.title} · ${url} (${(action.choices.find(c => c.id === QM.choice) || {}).label || QM.choice})`;
+      quickClose();
+      $('input').value = '';
+      autosize();
+      await quickDirect({ url, choice: QM.choice }, label);
+      return;
+    }
+    try {
+      const made = await post('/api/quick/prompt', { action: action.id, inputs });
+      // Only the file this action is about goes along; other attachments stay for the next message.
+      if (file) {
+        S.keptAttachments = S.attachments.filter(a => a !== file);
+        S.attachments = [file];
+      }
+      S.quickLabel = made.label;
+      $('input').value = made.message;
+      await sendMessage();
+      if (S.keptAttachments) { S.attachments = S.keptAttachments; S.keptAttachments = null; renderChips(); }
+    } catch (err) { error.textContent = err.message; }
+  }
+
+  async function quickDirect(inputs, label) {
+    S.liveUserRow = addUser(label);
+    if ($('chat-title').textContent === 'Chat baru') $('chat-title').textContent = label.slice(0, 70);
+    const turn = createTurn();
+    scrollDown(true);
+    setBusy(true);
+    try {
+      const ws = await connect();
+      followTurn(ws, turn);
+      ws.send(JSON.stringify({ type: 'quick', action: 'video', session_id: S.session, inputs }));
+    } catch (err) {
+      turn.finish();
+      turn.error(err.message);
+      settleTurn();
+    }
+  }
+
+  function quickSuggestSoon() {
+    clearTimeout(QM.suggestTimer);
+    QM.suggestTimer = setTimeout(quickSuggest, 350);
+  }
+
+  async function quickSuggest() {
+    const box = $('quick-suggest');
+    if (!box) return;
+    const text = $('input').value;
+    const files = S.attachments.map(a => a.name);
+    const panelOpen = !$('quick-panel').hidden;
+    if (panelOpen || (!/https?:\/\//i.test(text) && !files.length)) { box.innerHTML = ''; QM.suggested = []; return; }
+    let found = [];
+    try { found = (await post('/api/quick/suggest', { text, files })).suggestions || []; } catch { found = []; }
+    QM.suggested = found.slice(0, 4);
+    box.innerHTML = QM.suggested.length ? `<span class="qs-label">${icon('bolt', 13)} Menu cepat</span>` + QM.suggested.map((s, i) => {
+      const target = s.file || (s.url ? new URL(s.url).hostname.replace(/^www\./, '') : '');
+      return `<button type="button" class="qs-chip" data-suggest="${i}">${icon(s.icon, 14)}<span>${esc(s.title)}</span>${target ? `<small>${esc(target)}</small>` : ''}</button>`;
+    }).join('') : '';
+    box.querySelectorAll('[data-suggest]').forEach(b => {
+      b.onclick = () => { const s = QM.suggested[Number(b.dataset.suggest)]; quickOpen(s.action, { url: s.url, file: s.file }); };
+    });
+  }
+
+  $('quick-btn').onclick = () => ($('quick-panel').hidden ? quickOpen() : quickClose());
+  $('input').addEventListener('input', quickSuggestSoon);
+  $('quick-panel').addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); quickClose(); $('quick-btn').focus(); } });
 
   /* ── Session panel ────────────────────────────────── */
   const openCards = new Set((store.get('open-cards') || 'ponytail,graphify,aislop').split(',').filter(Boolean));

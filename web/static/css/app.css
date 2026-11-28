@@ -718,3 +718,70 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); }
 #view-chat.drop-on::after { content: "Lepas untuk melampirkan file"; position: absolute; inset: 12px; z-index: 30; display: grid; place-items: center;
   border: 2px dashed var(--accent); border-radius: var(--r-lg); background: color-mix(in srgb, var(--accent-soft) 85%, transparent);
   color: var(--accent); font: 700 20px var(--sans); letter-spacing: -0.01em; pointer-events: none; animation: cmdk-in 240ms var(--spring) both; }
+
+/* ── Menu cepat ─────────────────────────────────────── */
+/* A panel that rises above the composer, and the chips the auto menu shows for a link or a file. */
+.composer { position: relative; }
+.quick-btn { width: auto; gap: 5px; padding: 0 9px 0 7px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.quick-btn[aria-expanded="true"], .quick-btn:hover { color: var(--accent); background: var(--accent-soft); }
+.quick-panel {
+  position: absolute; left: 0; right: 0; bottom: calc(100% + 10px); z-index: 30; max-height: min(72vh, 560px); overflow: auto;
+  padding: 14px; text-align: left; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg); animation: rise 0.18s var(--ease);
+}
+.qm-head { display: flex; align-items: center; gap: 8px; }
+.qm-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.qm-head .qm-close { margin-left: auto; }
+.qm-head-ico { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; color: var(--accent); background: var(--accent-soft); }
+.qm-lead { margin: 6px 0 12px; color: var(--muted); font-size: 13px; }
+.qm-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.qm-card {
+  display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; gap: 2px 10px; align-items: start; padding: 11px 12px;
+  text-align: left; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg);
+  transition: border-color 0.15s var(--ease), transform 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+.qm-card:hover, .qm-card:focus-visible { border-color: var(--accent); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.qm-card .qm-ico { grid-row: span 2; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--accent); background: var(--accent-soft); }
+.qm-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.qm-text b { font-size: 14px; font-weight: 650; }
+.qm-text small { color: var(--muted); font-size: 12.5px; line-height: 1.35; }
+.qm-mode { grid-column: 2; justify-self: start; margin-top: 4px; padding: 1px 7px; border-radius: var(--r-pill); font-size: 11px; font-weight: 650; color: var(--muted); background: var(--surface-2); }
+.qm-mode.is-direct { color: var(--ok); background: var(--ok-soft); }
+.qm-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.qm-field > span { font-size: 12px; font-weight: 650; color: var(--muted); }
+.qm-field input[type="url"], .qm-field textarea { width: 100%; box-sizing: border-box; }
+.qm-info { display: flex; flex-direction: column; gap: 1px; margin: -6px 0 12px; font-size: 13px; color: var(--muted); }
+.qm-info:empty { display: none; }
+.qm-info b { color: var(--text); font-weight: 650; overflow-wrap: anywhere; }
+.qm-info[data-kind="error"] { color: var(--err); }
+.qm-choices { display: flex; flex-wrap: wrap; gap: 6px; }
+.qm-choice { min-height: 32px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); font-size: 13px; font-weight: 600; }
+.qm-choice:hover { border-color: var(--accent); }
+.qm-choice[aria-checked="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.qm-files { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.qm-file { display: flex; align-items: center; gap: 8px; font-size: 13.5px; overflow-wrap: anywhere; }
+.qm-file span { display: inline-flex; align-items: center; gap: 6px; }
+.qm-muted { margin: 0; color: var(--muted); font-size: 13px; }
+.qm-attach { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; font-size: 13px; }
+.qm-error { margin: 0 0 8px; color: var(--err); font-size: 13px; }
+.qm-error:empty { display: none; }
+.qm-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.qm-foot .qm-mode { margin: 0; }
+.qm-run { display: inline-flex; align-items: center; gap: 6px; }
+.quick-suggest { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.quick-suggest:not(:empty) { margin-bottom: 8px; }
+.qs-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 650; color: var(--accent); }
+.qs-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; min-height: 30px; padding: 0 10px; border-radius: var(--r-pill);
+  border: 1px solid var(--accent-line, var(--line-strong)); background: var(--accent-soft); color: var(--text); font-size: 13px; font-weight: 600;
+  animation: rise 0.18s var(--ease);
+}
+.qs-chip svg { color: var(--accent); flex: none; }
+.qs-chip small { color: var(--muted); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+.qs-chip:hover { border-color: var(--accent); }
+@media (max-width: 560px) {
+  .qm-grid { grid-template-columns: 1fr; }
+  .quick-btn .quick-btn-label { display: none; }
+  .quick-panel { max-height: 64vh; }
+}
+@media (prefers-reduced-motion: reduce) { .quick-panel, .qs-chip, .qm-card { animation: none; transition: none; } }

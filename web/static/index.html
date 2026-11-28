@@ -75,6 +75,8 @@
           <p>Setiap chat punya folder, vault, graph kode, dan memorinya sendiri.</p>
         </div>
         <form id="composer" class="composer">
+          <div id="quick-panel" class="quick-panel" role="dialog" aria-modal="false" aria-labelledby="quick-title" hidden></div>
+          <div id="quick-suggest" class="quick-suggest" aria-live="polite"></div>
           <div id="chips" class="chips"></div>
           <textarea id="input" rows="1" placeholder="Tulis tugas atau pertanyaan" aria-label="Pesan"></textarea>
           <div class="composer-row">
@@ -82,6 +84,8 @@
               <span data-icon="clip"></span>
               <input id="file-input" type="file" multiple class="visually-hidden">
             </label>
+            <button id="quick-btn" type="button" class="icon-btn quick-btn" aria-expanded="false" aria-controls="quick-panel"
+                    title="Menu cepat: download video, analisa dokumen, perbaiki ZIP, dan lainnya"><span data-icon="bolt"></span><span class="quick-btn-label">Menu</span></button>
             <button id="mic" type="button" class="icon-btn hidden" title="Bicara" aria-label="Bicara" aria-pressed="false" data-icon="mic"></button>
             <select id="model-select" class="model-select" aria-label="Model"></select>
             <span class="composer-hint hide-small">Enter kirim · Shift+Enter baris baru</span>

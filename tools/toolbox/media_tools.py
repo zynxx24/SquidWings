@@ -216,7 +216,10 @@ async def media_download(url: str, kind: str = "video", max_height: int = 1080, 
     subs = ["--write-subs", "--write-auto-subs", "--sub-langs", langs, "--convert-subs", "srt"]
     height = max(144, min(int(max_height), 4320))
     if kind == "video":
-        extra = ["-f", f"bv*[height<={height}]+ba/b[height<={height}]/bv*+ba/b", "--merge-output-format", "mp4"]
+        # H.264 + AAC first: an MP4 every phone, Telegram and old player can play (YouTube's small sizes are AV1
+        # otherwise). Above 1080p there is no H.264, so the sort falls through to what exists.
+        extra = ["-f", f"bv*[height<={height}]+ba/b[height<={height}]/bv*+ba/b", "-S", f"res:{height},vcodec:h264,acodec:aac",
+                 "--merge-output-format", "mp4"]
     elif kind == "audio":
         extra = ["-f", "ba/b", "-x", "--audio-format", "mp3", "--audio-quality", "0"]
     elif kind == "subtitles":

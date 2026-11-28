@@ -205,6 +205,61 @@ async def send_file(path: Path, chat_id: str = "", caption: str = "") -> str:
     return path.name
 
 
+async def telegram_call(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """One Bot API call with a JSON body. Returns Telegram's result; raises OutputError when it refuses."""
+    token = credentials.get("telegram_bot_token")
+    if not token:
+        raise OutputError("Bot token Telegram belum diisi. Isi di Tim agent > Kredensial, atau TELEGRAM_BOT_TOKEN di .env.")
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.post(f"https://api.telegram.org/bot{token}/{method}", json=payload)
+    except httpx.HTTPError as exc:
+        raise OutputError(f"Tidak bisa menghubungi Telegram ({type(exc).__name__})") from None
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    if response.status_code != 200 or not body.get("ok"):
+        raise OutputError(f"Telegram menolak {method} ({response.status_code}): {str(body.get('description') or '')[:200]}")
+    result = body.get("result")
+    return result if isinstance(result, dict) else {"value": result}
+
+
+async def send_buttons(chat_id: str, html: str, rows: list[list[tuple[str, str]]]) -> int:
+    """A formatted message with callback buttons under it (label, callback data). Returns its message id."""
+    keyboard_rows = [[{"text": label[:64], "callback_data": data[:64]} for label, data in row] for row in rows if row]
+    result = await telegram_call("sendMessage", {
+        "chat_id": chat_id, "text": html[:4000], "parse_mode": "HTML", "link_preview_options": {"is_disabled": True},
+        **({"reply_markup": {"inline_keyboard": keyboard_rows}} if keyboard_rows else {}),
+    })
+    return int(result.get("message_id") or 0)
+
+
+async def answer_callback(callback_id: str, text: str = "") -> None:
+    """Stop the spinner on a pressed button, with a short note on top of the chat. Best effort."""
+    try:
+        await telegram_call("answerCallbackQuery", {"callback_query_id": callback_id, **({"text": text[:190]} if text else {})})
+    except OutputError as exc:
+        logger.info("[teams] answerCallbackQuery: %s", exc)
+
+
+async def replace_buttons(chat_id: str, message_id: int, html: str) -> None:
+    """Turn a menu message into what was picked, without its buttons, so it is not pressed twice. Best effort."""
+    try:
+        await telegram_call("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": html[:4000],
+                                                "parse_mode": "HTML", "link_preview_options": {"is_disabled": True}})
+    except OutputError as exc:
+        logger.info("[teams] editMessageText: %s", exc)
+
+
+async def set_bot_commands(commands: list[tuple[str, str]]) -> None:
+    """The commands Telegram lists in the bot's menu button. Best effort."""
+    try:
+        await telegram_call("setMyCommands", {"commands": [{"command": c, "description": d[:256]} for c, d in commands]})
+    except OutputError as exc:
+        logger.info("[teams] setMyCommands: %s", exc)
+
+
 async def send_chat_action(chat_id: str, action: str = "typing") -> None:
     """Show "typing…" in a chat while the answer is being made. Best effort: a failure changes nothing."""
     token = credentials.get("telegram_bot_token")
@@ -222,7 +277,8 @@ async def fetch_telegram_updates(offset: int | None, wait: int = _TELEGRAM_POLL_
     token = credentials.get("telegram_bot_token")
     if not token:
         return []
-    params: dict[str, Any] = {"timeout": wait, "allowed_updates": '["message"]'}
+    # callback_query: a press on a Menu cepat button (brain/agent/telegram_quick.py).
+    params: dict[str, Any] = {"timeout": wait, "allowed_updates": '["message","callback_query"]'}
     if offset is not None:
         params["offset"] = offset
     try:

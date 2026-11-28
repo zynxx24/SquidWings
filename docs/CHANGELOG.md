@@ -1,5 +1,13 @@
 # Catatan perubahan
 
+## 2026-11-28: Menu cepat di web dan Telegram
+
+- **Menu yang muncul sendiri.** Tempel link atau lampirkan file di chat web, chip Menu cepat langsung muncul di atas kotak ketik: link video dapat "Download video" dan "Transkrip", link biasa "Ringkas halaman", PDF dan Word "Analisa dokumen" (Word juga "Jadikan PDF"), ZIP "Perbaiki ZIP", audio dan video "Transkrip". Tombol **Menu** di sebelah lampiran membuka semuanya dengan pilihannya (resolusi, mode analisa, catatan).
+- **Download video tanpa AI.** Info video (judul, channel, durasi) dibaca dulu, lalu pilih 360p, 480p, 720p, 1080p (sesuai yang tersedia), MP3, atau subtitle. Berjalan langsung di server, jadi cepat dan tidak memakai token; hasilnya tampil sebagai video di chat dan tersimpan di riwayat.
+- **Telegram:** `/menu` (juga di tombol menu bot) menampilkan semua aksi. Link yang dikirim sendirian dibalas kartu info video dan tombol resolusi; file tanpa keterangan dibalas tombol yang cocok, bukan lagi AI yang bertanya mau diapakan. Video dikirim balik sebagai file yang bisa langsung diputar. "Tanya AI saja" selalu ada; pesan dan file dengan keterangan tetap langsung ke AI seperti biasa. Tombol hanya berlaku untuk pemilik dan tetap berfungsi setelah server restart (24 jam).
+- **Perbaiki ZIP:** isinya diekstrak dan dipindai seperti biasa, lalu AI menjalankan tes, memperbaiki akar masalahnya, dan mengirim balik `<nama>-diperbaiki.zip` dengan ringkasan perubahan.
+- `media_download` sekarang mengutamakan H.264 dan AAC, jadi MP4 hasil download bisa diputar di semua HP dan langsung di Telegram (sebelumnya resolusi kecil YouTube sering AV1).
+
 ## 2026-11-28: Video Editor untuk video kode, dan tim video dari rencana sampai editor
 
 - **Video Editor tanpa koding untuk video HyperFrames, React (Remotion), dan HTML.** Buka dari tombol **Video kode** di Studio. Ia menemukan sendiri folder proyek di chat, lalu menampilkan bagian yang bisa diubah sebagai isian: teks, warna (pemilih warna), waktu mulai dan durasi, media, variabel CSS, dan isi JSON. Simpan dengan Ctrl+S; pratinjau HTML langsung diperbarui, dan tombol **Render** membuat MP4 lewat render hub. Struktur dan animasi tetap lewat **Buka di IDE** atau AI.
