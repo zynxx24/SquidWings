@@ -54,7 +54,7 @@ from brain.agent.team_outputs import (
 from brain.agent.team_views import PublicPages, ViewStore, subtitle_for
 from brain.config import credentials
 from brain.config.constants import ResponseStatus
-from brain.config.edition import STUDIO_NOTE, studio_enabled, studio_module
+from brain.config.edition import STUDIO_NOTE, addon_enabled, studio_enabled, studio_module
 from brain.harness import RunLimits, Tier, tier_for
 from brain.utils import file_history, session_settings, shared_files, workspace_context
 from brain.utils.datastore import access as data_access
@@ -74,10 +74,13 @@ from brain.utils.workspace_context import (
 logger = get_logger(__name__)
 # Not a design limit, only a guard against a broken page sending thousands of nodes.
 MAX_TEAM_MEMBERS = 500
-TEAM_MODES = ("standard", "video", "motion")
+TEAM_MODES = ("standard", "video", "motion", "codevideo")
+# "codevideo": plan and script first, then a HyperFrames or Remotion project built so its texts, colours, timings
+# and media can be changed in the Studio's Video Editor without code, and its code in the IDE.
 # "motion": the team builds a Studio video (motion.json) the user can then edit and comment on.
 STUDIO_SKILL = "studio"
 VIDEO_SKILL = "animate"
+CODE_VIDEO_SKILLS = ["video-audio"]
 SCHEDULE_CHECK_SECONDS = 30
 TELEGRAM_IDLE_SECONDS = 30
 # A schedule this late was missed, say the server was off. Running it now would surprise.
@@ -619,7 +622,51 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
         },
     ] if studio_enabled() else []
 
-    return [*motion_studio,
+    # A video from plan to render, editable afterwards: the Video Editor (no code) and the IDE (code).
+    code_video = [
+        {
+            "key": "code-video",
+            "name": "Video lengkap: rencana, video, editor",
+            "description": (
+                "Perencana menulis rencana dan naskah final dulu, pembuat video membangun proyek HyperFrames "
+                "(atau React/Remotion bila diminta) lalu merendernya, pemeriksa mencocokkan video dengan naskah. "
+                "Hasilnya bisa diubah di Video Editor tanpa koding (teks, warna, waktu, media) dan di IDE."
+            ),
+            "members": [
+                {**member("planner", "Perencana", "Menulis rencana dan naskah final sebelum video dibangun", mid),
+                 "instructions": (
+                     "Kerja tanpa tanya jawab. Buat folder video/<nama-pendek>/ lalu tulis video/<nama-pendek>/naskah.md "
+                     "sebelum apa pun dibangun: tujuan satu kalimat, penonton, ukuran (16:9, 9:16, atau 1:1), durasi "
+                     "total, mesin (HyperFrames, kecuali tugas meminta React atau Remotion), arah visual dari style_pick "
+                     "(palet hex, dua font), daftar aset, lalu tabel adegan: detik mulai-selesai, teks di layar persis, "
+                     "narasi bila ada, dan gerak. Cek muat: sekitar 3 kata per detik untuk teks, 2,5 kata per detik untuk "
+                     "narasi; lebarkan adegan yang terlalu padat. Isi nyata dari tugas, tanpa angka atau klaim karangan. "
+                     "Laporan akhir: path naskah dan seluruh isinya.")},
+                {**member("builder", "Pembuat video", "Membangun proyek dari naskah dan merendernya", top, "planner"),
+                 "instructions": (
+                     "Pakai skill video-audio. Bangun proyek di folder yang ditulis perencana, teks dan detik diambil "
+                     "kata demi kata dari naskah.md. Supaya bisa diedit tanpa koding di Video Editor: tiap teks di "
+                     "elemennya sendiri dengan id yang jelas dan tanpa tag lain di dalamnya (contoh <h1 id=\"judul\" "
+                     "class=\"clip\" data-start=\"0.5\" data-duration=\"3\">Teksnya</h1>), semua warna sebagai variabel "
+                     "CSS di :root (--latar: #0B3C49;), media di assets/ lewat src pada elemen ber-id. Untuk Remotion: "
+                     "teks di defaultProps (title, subtitle, caption, text) dan warna sebagai string \"#hex\". Jalankan "
+                     "video_check dan perbaiki setiap error, lalu video_render. Laporkan path proyek dan path video, atau "
+                     "error terakhir bila belum jadi.")},
+                {**member("checker", "Pemeriksa", "Mencocokkan video dengan naskah lalu menyerahkan", mid, "builder"),
+                 "instructions": (
+                     "Bandingkan setiap teks di layar dan detiknya di proyek dengan naskah.md (read_file keduanya); "
+                     "perbaiki yang beda di proyek, bukan di naskah. Jalankan video_check. Kalau video belum ada atau "
+                     "proyek berubah setelah render, video_render lagi. share_file videonya. Jawaban akhir: apa videonya, "
+                     "adegan dan detiknya, yang diperbaiki, yang tidak bisa dicek, dan bahwa teks, warna, waktu, dan "
+                     "media bisa diubah di Video Editor tanpa koding, kodenya di IDE.")},
+            ],
+            "lead_id": "checker",
+            "reviewer_id": None,
+            "mode": "codevideo",
+        },
+    ]
+
+    return [*motion_studio, *code_video,
         {
             "key": "reminder",
             "name": "Alarm bangun dan pengingat jadwal",
@@ -1571,7 +1618,7 @@ class TeamOrchestrator:
 
     @staticmethod
     def _budget(team: Team) -> dict[str, Any]:
-        if team.mode in ("video", "motion"):
+        if team.mode in ("video", "motion", "codevideo"):
             return {
                 "mode": "video",
                 "run_seconds": credentials.number("team_video_run_seconds"),
@@ -1807,8 +1854,10 @@ class TeamOrchestrator:
             session_settings.activate_skills(stack.workspace, [VIDEO_SKILL])
         elif team.mode == "motion":
             session_settings.activate_skills(stack.workspace, [STUDIO_SKILL])
+        elif team.mode == "codevideo":
+            session_settings.activate_skills(stack.workspace, CODE_VIDEO_SKILLS)
         try:
-            if team.mode == "video":
+            if team.mode in ("video", "codevideo"):
                 free = free_bytes(stack.workspace)
                 if free < MIN_VIDEO_FREE_BYTES:
                     # Without room for the frames every export dies with ENOSPC, after the agents
@@ -1854,6 +1903,12 @@ class TeamOrchestrator:
             render_note = ""
             fresh = self._new_shares(Path(stack.workspace), shared_before, run.started_at or 0.0)
             handed: list[str] = []
+            if team.mode == "codevideo" and not self._has_video(fresh):
+                # The project rendered but nobody shared it: hand over the newest render of this run.
+                rendered = shared_files.find_new_videos(stack.workspace, run.started_at or 0.0)
+                if rendered:
+                    shared_files.add(stack.workspace, rendered[0])
+                    handed.append(rendered[0])
             if team.mode == "video" and not self._has_video(fresh):
                 # The render worked but nobody called share_file. Hand over the newest render
                 # rather than failing a run that did make its video.
@@ -1873,7 +1928,12 @@ class TeamOrchestrator:
             run.files = list(dict.fromkeys([*self._new_shares(Path(stack.workspace), shared_before, run.started_at or 0.0), *handed]))
             run.result = f"{run.result}{shared_files.missing_from(stack.workspace, session_id, run.result, only=run.files)}".strip()
             run.result = f"{run.result}{self._studio_buttons(Path(stack.workspace), run)}".strip()
+            run.result = f"{run.result}{self._code_buttons(Path(stack.workspace), run)}".strip()
             run.status = "completed"
+            if team.mode == "codevideo" and not self._has_video(run.files):
+                run.status = "failed"
+                run.error = ("Belum ada video yang dirender. Proyeknya tetap ada: buka Video Editor lewat tombol di "
+                             "hasil ini lalu tekan Render, atau jalankan tim lagi.")
             if team.mode == "video" and not self._has_video(run.files):
                 # Agents can finish with a report and no file. That is not a finished video.
                 run.status = "failed"
@@ -2005,6 +2065,27 @@ class TeamOrchestrator:
             link = f"/studio?{urlencode({'session': run.session or run.id, 'project': project['name']})}"
             if link not in (run.result or ""):
                 lines.append(f"[▶ Lihat & edit video \"{project['name']}\" di Studio]({link})")
+        return ("\n\n" + "\n\n".join(lines)) if lines else ""
+
+    @staticmethod
+    def _code_buttons(workspace: Path, run: TeamRun) -> str:
+        """Video Editor and IDE buttons for every code video project (HyperFrames, Remotion) this run made or changed."""
+        from urllib.parse import urlencode
+
+        code_projects = studio_module("addons.studio.code_projects")
+        if code_projects is None:
+            return ""
+        session = run.session or run.id
+        lines = []
+        for project in code_projects.find(workspace):
+            if project["modified"] < (run.started_at or 0) - 1 or project["kind"] == "html":
+                continue
+            editor = f"/studio/code?{urlencode({'session': session, 'project': project['path']})}"
+            if editor in (run.result or ""):
+                continue
+            lines.append(f"[✎ Edit teks, warna, dan waktu \"{project['name']}\" di Video Editor]({editor})")
+            if addon_enabled("ide"):
+                lines.append(f"[</> Buka kode \"{project['name']}\" di IDE](/ide?{urlencode({'session': session, 'path': project['path']})})")
         return ("\n\n" + "\n\n".join(lines)) if lines else ""
 
     @staticmethod

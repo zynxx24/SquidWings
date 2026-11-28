@@ -1,0 +1,68 @@
+/* Video Editor for code projects: the block list is the work surface, the preview sits beside it.
+   Tokens only, so palettes and both themes apply. Builds on studio.css (top bar, buttons, inputs). */
+.page-code { grid-template-rows: auto auto 1fr; overflow: hidden; }
+.ce-back { text-decoration: none; }
+.ce-back:hover span { text-decoration: underline; }
+
+.ce-main { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(320px, 1.1fr); min-height: 0; }
+.ce-blocks { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); background: var(--surface); }
+.ce-head { padding: var(--s-3) var(--s-4) var(--s-2); border-bottom: 1px solid var(--line); }
+.ce-head h2 { margin: 0; font-size: var(--fs-md); }
+.ce-hint { margin: var(--s-1) 0 var(--s-2); color: var(--muted); font-size: var(--fs-xs); }
+.ce-tools { display: flex; flex-wrap: wrap; gap: var(--s-2); align-items: center; }
+.ce-tools input { flex: 1 1 180px; }
+.ce-kinds { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.ce-kinds button {
+  font: 600 var(--fs-xs) var(--sans); color: var(--muted); background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r-pill); padding: 4px 10px; cursor: pointer; min-height: 28px;
+}
+.ce-kinds button[aria-pressed="true"] { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+
+.ce-list { overflow: auto; padding: var(--s-2) var(--s-4) var(--s-6); display: flex; flex-direction: column; gap: var(--s-2); }
+.ce-group { margin: var(--s-3) 0 0; font-size: var(--fs-xs); font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+.ce-row {
+  display: grid; grid-template-columns: 1fr; gap: 6px; padding: var(--s-2) var(--s-3); border: 1px solid var(--line);
+  border-radius: var(--r-md); background: var(--bg); transition: border-color var(--dur), box-shadow var(--dur);
+}
+.ce-row.is-changed { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.ce-row label { font-size: var(--fs-xs); font-weight: 600; color: var(--muted); display: flex; gap: var(--s-2); align-items: baseline; }
+.ce-row label code { font-family: var(--mono); color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.ce-unit { color: var(--muted); font-size: var(--fs-xs); }
+.ce-field { display: flex; gap: var(--s-2); align-items: center; }
+.ce-field input[type="text"], .ce-field textarea { flex: 1; }
+.ce-field input[type="color"] { width: 40px; height: 34px; padding: 2px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface); cursor: pointer; }
+.ce-readonly { font-size: var(--fs-sm); color: var(--muted); overflow-wrap: anywhere; }
+.ce-empty { margin: auto; max-width: 42ch; text-align: center; color: var(--muted); padding: var(--s-6) var(--s-4); }
+.ce-list .ce-empty { margin: var(--s-6) auto; }
+
+.ce-view { display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.ce-tabs { display: flex; gap: var(--s-1); padding: var(--s-2) var(--s-4); border-bottom: 1px solid var(--line); }
+.ce-tabs button {
+  font: 600 var(--fs-sm) var(--sans); color: var(--muted); background: none; border: 0; border-bottom: 2px solid transparent;
+  padding: 6px 10px; cursor: pointer; min-height: 34px;
+}
+.ce-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.ce-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: var(--s-3) var(--s-4); gap: var(--s-2); }
+.ce-panel[hidden] { display: none; }
+.ce-stage {
+  flex: 1; min-height: 220px; display: flex; border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface-2); overflow: hidden;
+}
+.ce-stage iframe, .ce-stage video { flex: 1; width: 100%; border: 0; background: #000; }
+.ce-stage iframe { background: var(--surface); }
+.ce-render-state { margin: 0; font-size: var(--fs-sm); color: var(--muted); white-space: pre-wrap; }
+.ce-render-state[data-kind="error"] { color: var(--err); }
+
+@media (max-width: 860px) {
+  .page-code { overflow: auto; height: auto; min-height: 100vh; }
+  .ce-main { grid-template-columns: 1fr; }
+  .ce-blocks { border-right: 0; border-bottom: 1px solid var(--line); }
+  .ce-list { overflow: visible; }
+  .ce-stage { min-height: 56vw; }
+  .st-actions { margin-left: 0; width: 100%; }
+  .st-actions .st-btn { flex: 1; justify-content: center; }
+  .st-project select { max-width: 100%; }
+  .page-code .st-brand { display: inline-flex; }          /* the way back to the Studio stays on a phone */
+  .page-code .st-actions .st-btn span { display: inline; }  /* three buttons fit with their words */
+}
+@media (prefers-reduced-motion: reduce) { .ce-row { transition: none; } }

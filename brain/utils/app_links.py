@@ -30,7 +30,9 @@ _SKIP_DIRS = frozenset({"node_modules", ".git", ".agent_memory", ".vault", "__py
 _SKIP_FILES = re.compile(r"(^\.env.*|.*\.(pem|key|p12|pfx|sqlite|db)$|^id_(rsa|ed25519|ecdsa)$)", re.IGNORECASE)
 _TOKEN = re.compile(r"^[A-Za-z0-9_-]{20,64}$")
 HEADERS = {
-    "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads",
+    # frame-ancestors 'self': only this server's own pages (the Studio's Video Editor preview) may frame an app.
+    "Content-Security-Policy": "sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads; frame-ancestors 'self'",
+    "X-Frame-Options": "SAMEORIGIN",
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "X-Robots-Tag": "noindex",

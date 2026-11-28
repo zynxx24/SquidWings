@@ -1889,6 +1889,8 @@
   $('undo').onclick = undo;
   $('redo').onclick = redo;
   $('send-ai').onclick = sendNotesToAI;
+  // The Video Editor for code projects (HyperFrames, React) of this same chat.
+  $('to-code').onclick = e => { e.preventDefault(); location.href = `/studio/code?${new URLSearchParams({ session: S.session || '' })}`; };
 
   /* ── right panel tabs ──────────────────────────── */
   function showTab(name) {

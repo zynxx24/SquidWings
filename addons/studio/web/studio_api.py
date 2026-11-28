@@ -32,7 +32,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
-from addons.studio import renderer, studio_doc
+from addons.studio import code_projects, renderer, studio_doc
 from addons.studio.studio_doc import ConflictError, StudioError
 from brain.config.settings import get_settings
 from brain.utils import shared_files
@@ -559,6 +559,134 @@ async def font_file(path: str) -> Response:
     kind = {".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf", ".otf": "font/otf"}.get(
         Path(path).suffix.lower(), "application/octet-stream")
     return Response(cached.read_bytes(), media_type=kind, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+
+# ── code projects: HyperFrames, Remotion and HTML edited as blocks (addons.studio.code_projects) ─────────────
+def _code_error(exc: StudioError) -> HTTPException:
+    if isinstance(exc, ConflictError):
+        return HTTPException(status_code=409, detail={"message": "File ini sudah diubah (mungkin oleh AI). Blok dimuat ulang.",
+                                                      "stamp": exc.current})
+    return HTTPException(status_code=422, detail=str(exc))
+
+
+_code_tasks: set[asyncio.Task[None]] = set()     # running code renders, kept so the loop does not drop them
+
+
+def _ide_on() -> bool:
+    from brain.config.edition import addon_enabled
+
+    return addon_enabled("ide")
+
+
+@router.get("/api/studio/{session}/code/projects")
+async def code_projects_list(session: str) -> dict[str, Any]:
+    workspace = _workspace(session)
+    found = await asyncio.to_thread(code_projects.find, workspace)
+    shared = set(shared_files.shared(workspace))
+    for project in found:
+        render = project.pop("render")
+        project["render_url"] = shared_files.url_for(session, render) if render in shared else ""
+    return {"projects": found, "ide": _ide_on()}
+
+
+@router.get("/api/studio/{session}/code/files")
+async def code_project_files(session: str, project: str = Query(..., max_length=500)) -> dict[str, Any]:
+    workspace = _workspace(session)
+    try:
+        folder, kind = await asyncio.to_thread(code_projects.project_folder, workspace, project)
+    except StudioError as exc:
+        raise _code_error(exc) from exc
+    files = await asyncio.to_thread(code_projects.editable_files, folder)
+    return {"project": project, "kind": kind, "files": files, "ide": _ide_on()}
+
+
+@router.get("/api/studio/{session}/code/blocks")
+async def code_blocks(session: str, project: str = Query(..., max_length=500),
+                      path: str = Query(..., max_length=500)) -> dict[str, Any]:
+    try:
+        return await asyncio.to_thread(code_projects.blocks, _workspace(session), project, path)
+    except StudioError as exc:
+        raise _code_error(exc) from exc
+
+
+@router.put("/api/studio/{session}/code/blocks")
+async def code_blocks_save(session: str, payload: dict[str, Any]) -> dict[str, Any]:
+    project, path = str(payload.get("project") or ""), str(payload.get("path") or "")
+    if len(project) > 500 or not path or len(path) > 500:
+        raise HTTPException(status_code=400, detail="project dan path wajib diisi")
+    try:
+        return await asyncio.to_thread(code_projects.save, _workspace(session), project, path,
+                                       str(payload.get("base") or ""), payload.get("edits") or [])
+    except StudioError as exc:
+        raise _code_error(exc) from exc
+
+
+@router.post("/api/studio/{session}/code/preview")
+async def code_preview(session: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """A frozen, sandboxed copy of an HTML page of the project (the same /a/ apps the chat shares)."""
+    from brain.utils import app_links
+
+    workspace = _workspace(session)
+    project, path = str(payload.get("project") or ""), str(payload.get("path") or "index.html")
+    try:
+        folder, kind = await asyncio.to_thread(code_projects.project_folder, workspace, project)
+    except StudioError as exc:
+        raise _code_error(exc) from exc
+    if kind == "remotion":
+        raise HTTPException(status_code=422, detail="Proyek React (Remotion) dilihat lewat render. Tekan Render.")
+    page = folder / path
+    if not app_links.is_app(page):
+        page = folder / "index.html"
+    try:
+        token = await asyncio.to_thread(app_links.publish, page)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Pratinjau tidak bisa dibuat: {exc}") from exc
+    return {"url": app_links.path_for(token)}
+
+
+@router.post("/api/studio/{session}/code/render")
+async def code_render(session: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Render a code project through the render hub (video_render); the page watches it like any Studio job."""
+    from tools.toolbox import media_tools
+
+    workspace = _workspace(session)
+    project = str(payload.get("project") or "")
+    composition = str(payload.get("composition") or "")[:200]
+    try:
+        folder, kind = await asyncio.to_thread(code_projects.project_folder, workspace, project)
+    except StudioError as exc:
+        raise _code_error(exc) from exc
+    if kind == "html":
+        raise HTTPException(status_code=422, detail="Halaman HTML biasa tidak dirender. Jadikan proyek HyperFrames dulu (minta AI).")
+    _forget_old_jobs()
+    job = renderer.Job(id=os.urandom(8).hex(), session=session, project=project, message="Menunggu giliran render")
+    _render_jobs[job.id] = job
+
+    async def work() -> None:
+        job.state, job.message = "running", f"Merender {kind}"
+        try:
+            result = await media_tools.video_render(str(folder.relative_to(workspace.resolve())) or ".",
+                                                    composition=composition, share=False, workspace_path=str(workspace))
+        except Exception as exc:  # noqa: BLE001 - any failure of the external renderer is shown to the user as is
+            result = {"ok": False, "error": str(exc)}
+        if result.get("ok") and result.get("saved"):
+            job.file = str(result["saved"])
+            await asyncio.to_thread(shared_files.add, workspace, job.file)
+            job.state, job.progress = "done", 1.0
+        else:
+            job.state = "error"
+            choices = result.get("compositions")
+            job.error = (f"Pilih komposisi: {', '.join(choices)}" if choices else
+                         str(result.get("error") or "render gagal") + (f"\n{result.get('log_tail')}" if result.get("log_tail") else ""))
+        job.finished = time.time()
+        _notify()
+
+    task = asyncio.get_running_loop().create_task(work())
+    _code_tasks.add(task)
+    task.add_done_callback(_code_tasks.discard)
+    _notify()
+    return job.public()
 
 
 __all__ = ["router"]

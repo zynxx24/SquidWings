@@ -105,7 +105,7 @@
   };
   const STATUS = { queued: 'Menunggu', running: 'Berjalan', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan', skipped: 'Tidak dijalankan' };
   const RUN_STATUS = { queued: 'Menunggu', running: 'Berjalan', synthesizing: 'Lead menyusun jawaban', reviewing: 'Reviewer memeriksa', revising: 'Lead merevisi', delivering: 'Mengirim hasil', rendering: 'Merender video', completed: 'Selesai', failed: 'Gagal', cancelled: 'Dibatalkan' };
-  const MODES = { standard: 'Standar', video: 'Video render (animate)', motion: 'Studio motion (bisa diedit)' };
+  const MODES = { standard: 'Standar', video: 'Video render (animate)', motion: 'Studio motion (bisa diedit)', codevideo: 'Video kode: rencana, render, Video Editor' };
   const WRITES = { datatable: c => c.operation && c.operation !== 'get', telegram: () => true, http: c => c.method === 'POST' };
 
   /* ── Flow helpers ────────────────────────────────── */
@@ -2210,7 +2210,7 @@
     S.selected = null;
     S.selectedEdge = null;
     S.schedule = clone(source.schedule || { mode: 'off' });
-    S.mode = ['video', 'motion'].includes(source.mode) ? source.mode : 'standard';
+    S.mode = ['video', 'motion', 'codevideo'].includes(source.mode) ? source.mode : 'standard';
     S.active = source.active !== false;
     S.folder = source.folder || 'team';
     S.loops = clone(source.loops || []);

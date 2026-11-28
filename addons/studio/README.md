@@ -37,6 +37,30 @@ Status: `GET /api/studio/engine` (engine siap, GPU yang terdeteksi, thread, bata
 * Klip video besar (lebih dari 960 px atau 40 MB) dibuatkan **proxy** di `proxies/` saat diunggah: 960 px, keyframe tiap setengah detik, supaya editor lancar di HP. Tombol Proxy di bawah pratinjau mematikannya. Ekspor dan still selalu memakai file asli.
 * Editor tidak polling: `GET /api/studio/{sesi}/events?project=` adalah satu aliran Server-Sent Events yang mengirim stamp proyek (simpanan AI atau tab lain), progres render, dan progres proxy. HP yang tidur memutus aliran; browser menyambung lagi sendiri.
 
+## Video Editor untuk proyek kode (HyperFrames, React, HTML)
+
+Halaman `/studio/code` (tombol **Video kode** di Studio, atau tombol **Edit di Video Editor** di hasil tim) mengubah video yang dibuat sebagai kode tanpa menyentuh kodenya. Ia mencari folder di chat yang berisi proyek HyperFrames (`hyperframes.json`, atau `index.html` dengan `data-composition-id`), Remotion (`remotion` di `package.json`), atau halaman HTML biasa. Proyek Studio (`motion.json`) tetap diedit di Studio.
+
+| Bagian | Yang bisa diubah |
+|---|---|
+| HTML | teks elemen ber-`id` (tanpa tag lain di dalamnya), `data-start` dan `data-duration` (detik), `src` media |
+| CSS (di `<style>` atau `.css`) | variabel `--nama`: warna hex jadi pemilih warna, nilai lain (font, ukuran) jadi isian |
+| JSON | setiap teks dan angka, dengan jalur kuncinya (`adegan[0].judul`) |
+| React (`.tsx`, `.jsx`) | teks JSX, prop teks (`title`, `subtitle`, `caption`, `text`, ...) termasuk `defaultProps`, warna `"#hex"`, frame (`from`, `durationInFrames`, `fps`), media (`src`, `staticFile()`) |
+
+Struktur, animasi, dan logika diubah di IDE (tombol **Buka di IDE**) atau lewat AI. Pratinjau HTML memakai salinan ber-sandbox (`/a/`), proyek React dilihat dari hasil render. **Render** memakai `video_render` lewat render hub (satu render sekaligus, prioritas rendah, GPU kalau lolos uji).
+
+Pembacaan dan penulisan file dikerjakan engine C, bukan backend Python:
+
+```bash
+sqengine blocks FILE        # satu objek JSON per baris: kind, key, value, start, len (quote untuk string JS)
+sqengine patch FILE EDITS   # baris "start<TAB>len<TAB>lama<TAB>baru" (%XX), ditulis lewat satu rename
+```
+
+`patch` menolak span yang isinya sudah berubah (kode 4), yang tumpang tindih, atau yang keluar dari file, sehingga perubahan AI di tengah jalan tidak tertimpa. Server tidak memercayai offset dari halaman: setiap simpan memindai ulang file, memeriksa stamp, dan hanya menambal span yang memang blok saat itu (`code_projects.py`). API: `GET /api/studio/{sesi}/code/projects`, `.../code/files`, `GET` dan `PUT .../code/blocks`, `POST .../code/preview`, `POST .../code/render`.
+
+Tim agent **Video lengkap: rencana, video, editor** (mode `codevideo`) memakai alur ini: perencana menulis `naskah.md` final lebih dulu, pembuat video membangun proyek dengan teks ber-`id` dan warna di variabel CSS supaya bisa diedit tanpa koding, lalu pemeriksa mencocokkan video dengan naskah. Hasil run memberi tombol Video Editor dan IDE untuk setiap proyek yang diubahnya.
+
 ## Langkah manual
 
 | OS | Yang perlu dilakukan sendiri |
@@ -52,6 +76,7 @@ Status: `GET /api/studio/engine` (engine siap, GPU yang terdeteksi, thread, bata
 | `studio_doc.py`, `studio_context.py` | Dokumen motion.json dan konteks untuk agent |
 | `harness_studio.txt` | Protokol chat revisi di dalam editor |
 | `web/` | API Studio (proyek, aset, render server, still, proxy, aliran events) dan halaman editor (`web/static/`) |
+| `code_projects.py` | Proyek video kode: cari proyek, blok lewat `sqengine blocks`, simpan lewat `sqengine patch` dengan validasi tiap nilai |
 | `tools/` | Tool agent `studio_*`, termasuk `studio_still` (engine) dan `studio_captions` |
 | `skills/` | Skill `studio` |
 

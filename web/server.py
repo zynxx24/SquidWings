@@ -446,6 +446,16 @@ async def serve_studio_frame() -> HTMLResponse:
     return _page(ADDON_STATIC["studio"] / "frame.html", {})
 
 
+@app.get("/studio/code", response_class=HTMLResponse)
+async def serve_studio_code() -> HTMLResponse:
+    """The Video Editor for code projects (HyperFrames, Remotion, HTML): texts, colours, timings and media as fields."""
+    if not studio_enabled():
+        raise HTTPException(status_code=404, detail=STUDIO_NOTE)
+    # Its preview frames the project's sandboxed /a/ copy on this same origin.
+    return _page(ADDON_STATIC["studio"] / "code.html", {"Content-Security-Policy": csp_with(frame_src="'self'", frame_ancestors="'self'"),
+                                                        "X-Frame-Options": "SAMEORIGIN"})
+
+
 # Mount static files (CSS, JS, assets)
 # Specific mounts first: Starlette takes the first mount whose prefix matches.
 if trading_enabled() and ADDON_STATIC["trading"].is_dir():

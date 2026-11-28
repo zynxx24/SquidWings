@@ -58,7 +58,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "vendor/stb_image_write.h"
 
-#define SQ_VERSION "1.2.0"
+#define SQ_VERSION "1.3.0"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -2153,13 +2153,512 @@ static int mode_audio(Scene *sc) {
     return 0;
 }
 
+/* ── code blocks: what the no-code editor may change in an HTML, CSS or JSON video project ─────────── */
+/*
+ * sqengine blocks FILE          one JSON object per line: {"kind","key","value","start","len"[,"quote"]}
+ * sqengine patch FILE EDITS     EDITS: lines "start<TAB>len<TAB>old<TAB>new", old and new %XX-escaped
+ *
+ * The scan is a single pass over the bytes, so the server never loads a DOM or a JS engine for it:
+ *   text   the plain text of an element that has an id (no markup inside)
+ *   color  a CSS custom property whose value is a #hex colour (in <style> or a .css file)
+ *   css    any other CSS custom property (a font, a size)
+ *   time   data-start / data-duration of an element that has an id
+ *   media  src of an element that has an id (img, video, audio, source)
+ *   json   a string or number leaf of a .json file (key path a.b[2].c); a #hex string is a colour
+ * React and JS (.tsx .jsx .ts .js), keys are name@line:
+ *   text   JSX text between tags, and string props named title, text, caption, ... (defaultProps)
+ *   color  a "#hex" string;  time  a frame number of durationInFrames, from, fps, ...;  media  src, staticFile()
+ * A patch checks that every span still holds the old text (the file may have changed since the scan),
+ * refuses overlapping or out-of-range spans, and replaces the file in one rename.
+ */
+static void json_out(const char *s, size_t n) {
+    putchar('"');
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if (c == '"' || c == '\\') { putchar('\\'); putchar(c); }
+        else if (c == '\n') fputs("\\n", stdout);
+        else if (c == '\r') fputs("\\r", stdout);
+        else if (c == '\t') fputs("\\t", stdout);
+        else if (c < 0x20) printf("\\u%04x", c);
+        else putchar(c);
+    }
+    putchar('"');
+}
+
+/* quote: the JS quote around a string value (0 when not a JS string), so the writer can escape it. */
+static void emit_block_q(const char *kind, const char *key, size_t keylen, const char *buf, size_t start, size_t len, char quote) {
+    fputs("{\"kind\":", stdout); json_out(kind, strlen(kind));
+    fputs(",\"key\":", stdout); json_out(key, keylen);
+    fputs(",\"value\":", stdout); json_out(buf + start, len);
+    if (quote) { fputs(",\"quote\":", stdout); json_out(&quote, 1); }
+    printf(",\"start\":%zu,\"len\":%zu}\n", start, len);
+}
+
+static void emit_block(const char *kind, const char *key, size_t keylen, const char *buf, size_t start, size_t len) {
+    emit_block_q(kind, key, keylen, buf, start, len, 0);
+}
+
+static int is_hex_color(const char *s, size_t n) {
+    if (n != 4 && n != 7 && n != 9) return 0;
+    if (s[0] != '#') return 0;
+    for (size_t i = 1; i < n; i++) if (!isxdigit((unsigned char)s[i])) return 0;
+    return 1;
+}
+
+static void trim_span(const char *buf, size_t *start, size_t *end) {
+    while (*start < *end && isspace((unsigned char)buf[*start])) (*start)++;
+    while (*end > *start && isspace((unsigned char)buf[*end - 1])) (*end)--;
+}
+
+/* CSS custom properties between from and to. */
+static void scan_css(const char *buf, size_t from, size_t to) {
+    size_t i = from;
+    while (i + 2 < to) {
+        if (buf[i] == '/' && buf[i + 1] == '*') {
+            const char *e = strstr(buf + i + 2, "*/");
+            i = e && (size_t)(e - buf) < to ? (size_t)(e - buf) + 2 : to;
+            continue;
+        }
+        if (buf[i] == '-' && buf[i + 1] == '-' && (i == from || strchr("{; \t\r\n", buf[i - 1]))) {
+            size_t k = i + 2;
+            while (k < to && (isalnum((unsigned char)buf[k]) || buf[k] == '-' || buf[k] == '_')) k++;
+            size_t name_end = k;
+            while (k < to && isspace((unsigned char)buf[k])) k++;
+            if (k < to && buf[k] == ':' && name_end > i + 2) {
+                size_t vs = k + 1, ve = vs;
+                while (ve < to && buf[ve] != ';' && buf[ve] != '}') ve++;
+                size_t a = vs, b = ve;
+                trim_span(buf, &a, &b);
+                if (b > a) emit_block(is_hex_color(buf + a, b - a) ? "color" : "css", buf + i, name_end - i, buf, a, b - a);
+                i = ve;
+                continue;
+            }
+        }
+        i++;
+    }
+}
+
+static int tag_is(const char *buf, size_t at, size_t n, const char *name) {
+    size_t len = strlen(name);
+    if (at + len > n) return 0;
+    for (size_t j = 0; j < len; j++) if (tolower((unsigned char)buf[at + j]) != name[j]) return 0;
+    return at + len == n || !isalnum((unsigned char)buf[at + len]);
+}
+
+static size_t find_ci(const char *buf, size_t from, size_t n, const char *needle) {
+    size_t len = strlen(needle);
+    for (size_t i = from; i + len <= n; i++) {
+        size_t j = 0;
+        while (j < len && tolower((unsigned char)buf[i + j]) == needle[j]) j++;
+        if (j == len) return i;
+    }
+    return n;
+}
+
+static void scan_html(const char *buf, size_t n) {
+    size_t i = 0;
+    while (i < n) {
+        if (buf[i] != '<') { i++; continue; }
+        if (i + 3 < n && !strncmp(buf + i, "<!--", 4)) {
+            size_t e = find_ci(buf, i + 4, n, "-->");
+            i = e < n ? e + 3 : n;
+            continue;
+        }
+        if (i + 1 >= n || !isalpha((unsigned char)buf[i + 1])) { i++; continue; }
+        size_t name_s = i + 1, k = name_s;
+        while (k < n && (isalnum((unsigned char)buf[k]) || buf[k] == '-')) k++;
+        size_t name_e = k;
+        size_t id_s = 0, id_e = 0, ds_s = 0, ds_e = 0, dd_s = 0, dd_e = 0, src_s = 0, src_e = 0;
+        int have_id = 0, have_ds = 0, have_dd = 0, have_src = 0, self_close = 0;
+        while (k < n && buf[k] != '>') {
+            if (buf[k] == '/' && k + 1 < n && buf[k + 1] == '>') { self_close = 1; k++; break; }
+            if (isspace((unsigned char)buf[k])) { k++; continue; }
+            size_t an_s = k;
+            while (k < n && !isspace((unsigned char)buf[k]) && buf[k] != '=' && buf[k] != '>' && buf[k] != '/') k++;
+            size_t an_e = k, vs = 0, ve = 0;
+            while (k < n && isspace((unsigned char)buf[k])) k++;
+            if (k < n && buf[k] == '=') {
+                k++;
+                while (k < n && isspace((unsigned char)buf[k])) k++;
+                if (k < n && (buf[k] == '"' || buf[k] == '\'')) {
+                    char q = buf[k++];
+                    vs = k;
+                    while (k < n && buf[k] != q) k++;
+                    ve = k;
+                    if (k < n) k++;
+                } else {
+                    vs = k;
+                    while (k < n && !isspace((unsigned char)buf[k]) && buf[k] != '>') k++;
+                    ve = k;
+                }
+            } else if (an_e == an_s) {
+                k++;
+                continue;
+            }
+            size_t al = an_e - an_s;
+            if (al == 2 && !strncmp(buf + an_s, "id", 2)) { id_s = vs; id_e = ve; have_id = ve > vs; }
+            else if (al == 10 && !strncmp(buf + an_s, "data-start", 10)) { ds_s = vs; ds_e = ve; have_ds = 1; }
+            else if (al == 13 && !strncmp(buf + an_s, "data-duration", 13)) { dd_s = vs; dd_e = ve; have_dd = 1; }
+            else if (al == 3 && !strncmp(buf + an_s, "src", 3)) { src_s = vs; src_e = ve; have_src = 1; }
+        }
+        size_t after = k < n ? k + 1 : n;
+        if (tag_is(buf, name_s, name_e, "style")) {
+            size_t close = find_ci(buf, after, n, "</style");
+            scan_css(buf, after, close);
+            i = close;
+            continue;
+        }
+        if (tag_is(buf, name_s, name_e, "script")) {
+            size_t close = find_ci(buf, after, n, "</script");
+            i = close;
+            continue;
+        }
+        if (have_id) {
+            char key[256];
+            size_t idl = id_e - id_s < 200 ? id_e - id_s : 200;
+            if (have_ds) { snprintf(key, sizeof key, "%.*s.data-start", (int)idl, buf + id_s); emit_block("time", key, strlen(key), buf, ds_s, ds_e - ds_s); }
+            if (have_dd) { snprintf(key, sizeof key, "%.*s.data-duration", (int)idl, buf + id_s); emit_block("time", key, strlen(key), buf, dd_s, dd_e - dd_s); }
+            if (have_src) { snprintf(key, sizeof key, "%.*s.src", (int)idl, buf + id_s); emit_block("media", key, strlen(key), buf, src_s, src_e - src_s); }
+            if (!self_close && after < n) {
+                size_t lt = after, nl = name_e - name_s;
+                while (lt < n && buf[lt] != '<') lt++;
+                int closes = lt + 2 + nl <= n && buf[lt + 1] == '/';
+                for (size_t j = 0; closes && j < nl; j++)
+                    if (tolower((unsigned char)buf[lt + 2 + j]) != tolower((unsigned char)buf[name_s + j])) closes = 0;
+                if (closes && lt + 2 + nl < n && isalnum((unsigned char)buf[lt + 2 + nl])) closes = 0;
+                size_t a = after, b = lt;
+                trim_span(buf, &a, &b);
+                if (closes && b > a) emit_block("text", buf + id_s, idl, buf, a, b - a);
+            }
+        }
+        i = after;
+    }
+}
+
+/* JSON leaves with their key path. Tolerant: a malformed file yields fewer blocks, never a crash. */
+static void scan_json(const char *buf, size_t n) {
+    char path[64][128];
+    int is_array[64], index[64], depth = -1;
+    char pending[128] = "";
+    int have_pending = 0;
+    size_t i = 0;
+    while (i < n) {
+        char c = buf[i];
+        if (c == '{' || c == '[') {
+            if (depth + 1 >= 64) return;
+            depth++;
+            if (depth > 0) {
+                if (is_array[depth - 1]) snprintf(path[depth], sizeof path[depth], "%s[%d]", depth > 1 ? path[depth - 1] : "", index[depth - 1]);
+                else snprintf(path[depth], sizeof path[depth], "%s%s%s", depth > 1 ? path[depth - 1] : "", depth > 1 ? "." : "", pending);
+            } else path[0][0] = 0;
+            is_array[depth] = c == '[';
+            index[depth] = 0;
+            have_pending = 0;
+            i++;
+            continue;
+        }
+        if (c == '}' || c == ']') { if (depth >= 0) depth--; i++; continue; }
+        if (c == ',') { if (depth >= 0 && is_array[depth]) index[depth]++; have_pending = 0; i++; continue; }
+        if (c == '"') {
+            size_t s0 = i + 1, k = s0;
+            while (k < n && buf[k] != '"') { if (buf[k] == '\\') k++; k++; }
+            size_t e0 = k < n ? k : n;
+            size_t after = k + 1;
+            while (after < n && isspace((unsigned char)buf[after])) after++;
+            int is_key = depth >= 0 && !is_array[depth] && after < n && buf[after] == ':';
+            if (is_key) {
+                size_t l = e0 - s0 < 120 ? e0 - s0 : 120;
+                memcpy(pending, buf + s0, l); pending[l] = 0; have_pending = 1;
+                i = after + 1;
+                continue;
+            }
+            if (depth >= 0) {
+                char key[256];
+                if (is_array[depth]) snprintf(key, sizeof key, "%s[%d]", path[depth], index[depth]);
+                else snprintf(key, sizeof key, "%s%s%s", path[depth], path[depth][0] ? "." : "", have_pending ? pending : "");
+                emit_block(is_hex_color(buf + s0, e0 - s0) ? "color" : "json", key, strlen(key), buf, s0, e0 - s0);
+            }
+            have_pending = 0;
+            i = e0 + 1;
+            continue;
+        }
+        if ((c == '-' || isdigit((unsigned char)c)) && depth >= 0) {
+            size_t s0 = i;
+            while (i < n && (isdigit((unsigned char)buf[i]) || strchr("+-.eE", buf[i]))) i++;
+            char key[256];
+            if (is_array[depth]) snprintf(key, sizeof key, "%s[%d]", path[depth], index[depth]);
+            else snprintf(key, sizeof key, "%s%s%s", path[depth], path[depth][0] ? "." : "", have_pending ? pending : "");
+            emit_block("json", key, strlen(key), buf, s0, i - s0);
+            have_pending = 0;
+            continue;
+        }
+        i++;
+    }
+}
+
+/* ── React (.tsx/.jsx) and plain JS/TS: JSX text, colours, frame numbers, media, text props ───── */
+static size_t line_at(const char *buf, size_t pos) {
+    static const char *last_buf;
+    static size_t last_pos, last_line;
+    if (buf != last_buf || pos < last_pos) { last_buf = buf; last_pos = 0; last_line = 1; }
+    for (size_t i = last_pos; i < pos; i++) if (buf[i] == '\n') last_line++;
+    last_pos = pos;
+    return last_line;
+}
+
+static int ident_ch(char c) { return isalnum((unsigned char)c) || c == '_' || c == '$'; }
+
+static size_t skip_ws_back(const char *buf, size_t k) {
+    while (k > 0 && isspace((unsigned char)buf[k - 1])) k--;
+    return k;
+}
+
+/* The identifier that ends right before `end`, spaces skipped, as [s, e). */
+static int ident_before(const char *buf, size_t end, size_t *s, size_t *e) {
+    size_t k = skip_ws_back(buf, end);
+    *e = k;
+    while (k > 0 && ident_ch(buf[k - 1])) k--;
+    *s = k;
+    return *e > *s && !isdigit((unsigned char)buf[*s]);
+}
+
+static int name_in(const char *s, size_t n, const char *const *set) {
+    for (; *set; set++) if (strlen(*set) == n && !strncmp(*set, s, n)) return 1;
+    return 0;
+}
+
+static const char *const TIME_PROPS[] = {"durationInFrames", "from", "fps", "delay", "duration", "start", "startFrom", "endAt", NULL};
+static const char *const TEXT_PROPS[] = {"title", "subtitle", "text", "label", "caption", "headline", "heading",
+                                         "description", "message", "cta", "quote", NULL};
+
+static int media_ext(const char *s, size_t n) {
+    static const char *const ext[] = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".mp4", ".webm", ".mov",
+                                      ".mp3", ".wav", ".m4a", ".ogg", NULL};
+    for (const char *const *e = ext; *e; e++) {
+        size_t l = strlen(*e), j = 0;
+        if (n <= l) continue;
+        while (j < l && tolower((unsigned char)s[n - l + j]) == (*e)[j]) j++;
+        if (j == l) return 1;
+    }
+    return 0;
+}
+
+static void emit_at(const char *kind, const char *name, size_t name_len, const char *buf, size_t start, size_t len, char quote) {
+    char key[160];
+    snprintf(key, sizeof key, "%.*s@%zu", (int)(name_len < 100 ? name_len : 100), name, line_at(buf, start));
+    emit_block_q(kind, key, strlen(key), buf, start, len, quote);
+}
+
+static void js_string(const char *buf, size_t q, size_t s0, size_t e0) {
+    size_t len = e0 - s0, ns = 0, ne = 0, k = skip_ws_back(buf, q);
+    char before = k > 0 ? buf[k - 1] : 0;
+    int named = (before == '=' || before == ':' || before == '(') && ident_before(buf, k - 1, &ns, &ne);
+    if (before == '=' && k > 1 && strchr("=!<>", buf[k - 2])) named = 0;      /* a comparison, not a prop */
+    const char *name = named ? buf + ns : "";
+    size_t nl = named ? ne - ns : 0;
+    if (is_hex_color(buf + s0, len)) emit_at("color", name, nl, buf, s0, len, buf[q]);
+    else if ((named && before != '(' && nl == 3 && !strncmp(name, "src", 3)) ||
+             (named && before == '(' && nl == 10 && !strncmp(name, "staticFile", 10)) || media_ext(buf + s0, len))
+        emit_at("media", nl ? name : "src", nl ? nl : 3, buf, s0, len, buf[q]);
+    else if (named && before != '(' && len > 0 && name_in(name, nl, TEXT_PROPS)) emit_at("text", name, nl, buf, s0, len, buf[q]);
+}
+
+enum { BR_CODE, BR_ATTR, BR_CHILD };
+
+/* JSX text up to the next tag or expression. Returns where it stops. */
+static size_t jsx_text(const char *buf, size_t n, size_t from, const char *tag) {
+    size_t k = from;
+    while (k < n && buf[k] != '<' && buf[k] != '{') k++;
+    size_t a = from, b = k;
+    trim_span(buf, &a, &b);
+    if (b > a) emit_at("text", tag, strlen(tag), buf, a, b - a, 0);
+    return k;
+}
+
+static void scan_jsx(const char *buf, size_t n, int jsx_on) {
+    unsigned char braces[256];
+    int base[256];                     /* JSX depth when each brace opened: text lives only deeper than that */
+    char names[64][48];
+    int nb = 0, depth = 0, in_tag = 0, tag_braces = 0, closing = 0, child_next = 0, tag_next = 0;
+    char tag[48] = "";
+    size_t i = 0;
+    while (i < n) {
+        char c = buf[i];
+        if (c == '/' && i + 1 < n && buf[i + 1] == '/') { while (i < n && buf[i] != '\n') i++; continue; }
+        if (c == '/' && i + 1 < n && buf[i + 1] == '*') {
+            const char *e = strstr(buf + i + 2, "*/");
+            i = e ? (size_t)(e - buf) + 2 : n;
+            continue;
+        }
+        if (c == '"' || c == '\'' || c == '`') {
+            size_t s0 = i + 1, k = s0;
+            while (k < n && buf[k] != c && (c == '`' || buf[k] != '\n')) { if (buf[k] == '\\') k++; k++; }
+            if (c != '`' && k < n && buf[k] == c) js_string(buf, i, s0, k);
+            i = k + 1;
+            continue;
+        }
+        if (isdigit((unsigned char)c) && (i == 0 || (!ident_ch(buf[i - 1]) && buf[i - 1] != '.'))) {
+            size_t s0 = i, ns, ne;
+            while (i < n && (isdigit((unsigned char)buf[i]) || buf[i] == '.')) i++;
+            if (i < n && ident_ch(buf[i])) continue;
+            size_t k = skip_ws_back(buf, s0);
+            if (k > 0 && buf[k - 1] == '{') k = skip_ws_back(buf, k - 1);
+            if (k > 0 && (buf[k - 1] == '=' || buf[k - 1] == ':') && !(k > 1 && buf[k - 1] == '=' && strchr("=!<>", buf[k - 2])) &&
+                ident_before(buf, k - 1, &ns, &ne) && name_in(buf + ns, ne - ns, TIME_PROPS))
+                emit_at("time", buf + ns, ne - ns, buf, s0, i - s0, 0);
+            continue;
+        }
+        if (c == '{') {
+            if (nb < 256) { braces[nb] = in_tag ? BR_ATTR : child_next ? BR_CHILD : BR_CODE; base[nb++] = depth; }
+            child_next = 0;
+            i++;
+            continue;
+        }
+        if (c == '}') {
+            int kind = nb > 0 ? braces[--nb] : BR_CODE;
+            i++;
+            if (kind == BR_CHILD && depth > (nb > 0 ? base[nb - 1] : 0)) {
+                snprintf(tag, sizeof tag, "%s", depth <= 64 && names[depth - 1][0] ? names[depth - 1] : "fragment");
+                i = jsx_text(buf, n, i, tag);
+                child_next = i < n && buf[i] == '{';
+                tag_next = i < n && buf[i] == '<';
+            }
+            continue;
+        }
+        if (jsx_on && c == '<' && !in_tag) {
+            int prev_ok = tag_next;
+            if (!prev_ok) {
+                size_t k = skip_ws_back(buf, i);
+                char p = k ? buf[k - 1] : 0;
+                prev_ok = !p || strchr("(,=:?&|{}[;>", p) ||
+                          (k >= 6 && !strncmp(buf + k - 6, "return", 6) && (k == 6 || !ident_ch(buf[k - 7])));
+            }
+            tag_next = 0;
+            size_t k = i + 1;
+            int is_close = k < n && buf[k] == '/';
+            if (is_close) k++;
+            size_t ns = k;
+            while (k < n && (ident_ch(buf[k]) || buf[k] == '.' || buf[k] == '-')) k++;
+            int shaped = (k == ns && k < n && buf[k] == '>') ||
+                         (k > ns && isalpha((unsigned char)buf[ns]) && k < n && (isspace((unsigned char)buf[k]) || buf[k] == '>' || buf[k] == '/'));
+            if (prev_ok && shaped) {
+                in_tag = 1;
+                closing = is_close;
+                tag_braces = nb;
+                size_t l = k - ns < 47 ? k - ns : 47;
+                if (!is_close && depth < 64) { memcpy(names[depth], buf + ns, l); names[depth][l] = 0; }
+                i = k;
+                continue;
+            }
+            i++;
+            continue;
+        }
+        if (c == '>' && in_tag && nb == tag_braces) {
+            int self_close = buf[i - 1] == '/';
+            in_tag = 0;
+            if (closing) { if (depth > 0) depth--; }
+            else if (!self_close) depth++;
+            i++;
+            if (depth > (nb > 0 ? base[nb - 1] : 0)) {
+                snprintf(tag, sizeof tag, "%s", depth <= 64 && names[depth - 1][0] ? names[depth - 1] : "fragment");
+                i = jsx_text(buf, n, i, tag);
+                child_next = i < n && buf[i] == '{';
+                tag_next = i < n && buf[i] == '<';
+            }
+            continue;
+        }
+        i++;
+    }
+}
+
+static int mode_blocks(const char *file) {
+    size_t n = 0;
+    unsigned char *buf = read_file(file, &n);
+    if (!buf) die(1, "cannot read %s", file);
+    buf[n] = 0;
+    const char *dot = strrchr(file, '.');
+    const char *ext = dot ? dot + 1 : "";
+    char low[8] = {0};
+    for (int j = 0; j < 7 && ext[j]; j++) low[j] = (char)tolower((unsigned char)ext[j]);
+    if (!strcmp(low, "html") || !strcmp(low, "htm")) scan_html((const char *)buf, n);
+    else if (!strcmp(low, "css")) scan_css((const char *)buf, 0, n);
+    else if (!strcmp(low, "json")) scan_json((const char *)buf, n);
+    else if (!strcmp(low, "tsx") || !strcmp(low, "jsx")) scan_jsx((const char *)buf, n, 1);
+    else if (!strcmp(low, "ts") || !strcmp(low, "js") || !strcmp(low, "mjs")) scan_jsx((const char *)buf, n, 0);
+    else die(2, "blocks: only .html, .css, .json, .tsx, .jsx, .ts and .js");
+    free(buf);
+    return 0;
+}
+
+typedef struct { size_t start, len; char *old, *neu; } Edit;
+
+static int edit_cmp(const void *a, const void *b) {
+    const Edit *x = a, *y = b;
+    return x->start < y->start ? 1 : x->start > y->start ? -1 : 0;   /* last span first */
+}
+
+static int mode_patch(const char *file, const char *edits_path) {
+    size_t n = 0, en = 0;
+    unsigned char *buf = read_file(file, &n);
+    char *edits_text = (char *)read_file(edits_path, &en);
+    if (!buf || !edits_text) die(1, "cannot read %s or %s", file, edits_path);
+    edits_text[en] = 0;
+    Edit *edits = NULL;
+    int count = 0, cap = 0;
+    for (char *line = strtok(edits_text, "\n"); line; line = strtok(NULL, "\n")) {
+        char *f[4];
+        if (split_tabs(line, f, 4) != 4) die(2, "patch: each edit is start, len, old, new");
+        if (count == cap) { cap = cap ? cap * 2 : 16; edits = xrealloc(edits, sizeof(Edit) * (size_t)cap); }
+        edits[count].start = (size_t)strtoull(f[0], NULL, 10);
+        edits[count].len = (size_t)strtoull(f[1], NULL, 10);
+        edits[count].old = pct_decode(f[2]);
+        edits[count].neu = pct_decode(f[3]);
+        count++;
+    }
+    qsort(edits, (size_t)count, sizeof(Edit), edit_cmp);
+    for (int j = 0; j < count; j++) {
+        Edit *e = &edits[j];
+        if (e->start + e->len > n) die(3, "patch: span %zu+%zu is past the end of the file", e->start, e->len);
+        if (strlen(e->old) != e->len || memcmp(buf + e->start, e->old, e->len) != 0)
+            die(4, "patch: the file changed at %zu since it was read; read the blocks again", e->start);
+        if (j > 0 && e->start + e->len > edits[j - 1].start) die(3, "patch: edits overlap at %zu", e->start);
+    }
+    size_t out_n = n;
+    for (int j = 0; j < count; j++) out_n = out_n - edits[j].len + strlen(edits[j].neu);
+    char *out = xmalloc(out_n + 1);
+    size_t src = 0, dst = 0;
+    for (int j = count - 1; j >= 0; j--) {          /* first span first when copying */
+        Edit *e = &edits[j];
+        memcpy(out + dst, buf + src, e->start - src); dst += e->start - src;
+        size_t l = strlen(e->neu);
+        memcpy(out + dst, e->neu, l); dst += l;
+        src = e->start + e->len;
+    }
+    memcpy(out + dst, buf + src, n - src); dst += n - src;
+    char tmp[4096];
+    snprintf(tmp, sizeof tmp, "%s.sqpatch", file);
+    FILE *f = fopen(tmp, "wb");
+    if (!f || fwrite(out, 1, dst, f) != dst) die(1, "patch: cannot write %s", tmp);
+    fclose(f);
+#ifdef _WIN32
+    remove(file);
+#endif
+    if (rename(tmp, file) != 0) die(1, "patch: cannot replace %s", file);
+    printf("{\"ok\":true,\"edits\":%d,\"bytes\":%zu}\n", count, dst);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2 || !strcmp(argv[1], "--help")) {
         fprintf(stderr, "usage: sqengine video|still|audio SCENE [OUT.png] [--threads N] [--mem MB] [--times a,b] [--scale S] [--cols C]\n"
+                        "       sqengine blocks FILE.html|css|json|tsx  editable blocks, one JSON object a line\n"
+                        "       sqengine patch FILE EDITS               apply start/len/old/new edits\n"
                         "       sqengine info\n");
         return argc < 2 ? 2 : 0;
     }
     if (!strcmp(argv[1], "info")) { printf("sqengine %s cpus=%d\n", SQ_VERSION, cpu_count()); return 0; }
+    if (!strcmp(argv[1], "blocks")) { if (argc < 3) die(2, "blocks FILE"); return mode_blocks(argv[2]); }
+    if (!strcmp(argv[1], "patch")) { if (argc < 4) die(2, "patch FILE EDITS"); return mode_patch(argv[2], argv[3]); }
     if (argc < 3) die(2, "missing scene file");
     Scene sc;
     load_scene(&sc, argv[2]);

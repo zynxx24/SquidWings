@@ -1,5 +1,11 @@
 # Catatan perubahan
 
+## 2026-11-28: Video Editor untuk video kode, dan tim video dari rencana sampai editor
+
+- **Video Editor tanpa koding untuk video HyperFrames, React (Remotion), dan HTML.** Buka dari tombol **Video kode** di Studio. Ia menemukan sendiri folder proyek di chat, lalu menampilkan bagian yang bisa diubah sebagai isian: teks, warna (pemilih warna), waktu mulai dan durasi, media, variabel CSS, dan isi JSON. Simpan dengan Ctrl+S; pratinjau HTML langsung diperbarui, dan tombol **Render** membuat MP4 lewat render hub. Struktur dan animasi tetap lewat **Buka di IDE** atau AI.
+- **Pembacaan dan penulisan file dikerjakan engine C** (`sqengine blocks` dan `sqengine patch`), jadi backend tetap ringan. Simpanan memeriksa bahwa file belum diubah AI sejak dibuka; kalau sudah, bagian dimuat ulang dan isianmu yang belum tersimpan tetap ada.
+- **Template tim baru: "Video lengkap: rencana, video, editor".** Perencana menulis rencana dan naskah final dulu, pembuat video membangun proyek yang bisa diedit tanpa koding lalu merendernya, pemeriksa mencocokkan video dengan naskah. Hasilnya diberi tombol **Edit di Video Editor** dan **Buka kode di IDE**. Template dan mode lama tidak berubah.
+
 ## 2026-11-28: satu pengatur render untuk semua video
 
 - Aturan render yang dulu hanya dipakai mesin C Studio (`sqengine.c`) sekarang ada di `brain/utils/render_hub.py` dan dipakai semua render: Studio, `video_render` (HyperFrames dan Remotion), konversi `media_convert`, ekspor skill `animate`, dan perintah render yang dijalankan agent lewat terminal (ffmpeg, `hyperframes render`, `remotion render`).

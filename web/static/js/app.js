@@ -138,7 +138,11 @@
     },
     studio: {
       title: 'Studio video', path: '/studio', loading: 'Membuka studio video',
-      src: () => `/studio?embed=1&session=${encodeURIComponent(S.studioSession || S.session || '')}${S.studioProject ? `&project=${encodeURIComponent(S.studioProject)}` : ''}`,
+      src: () => {
+        const code = S.studioCode;
+        S.studioCode = '';
+        return code || `/studio?embed=1&session=${encodeURIComponent(S.studioSession || S.session || '')}${S.studioProject ? `&project=${encodeURIComponent(S.studioProject)}` : ''}`;
+      },
       newTab: () => '/studio',
     },
   };
@@ -1482,6 +1486,7 @@
     if (e.data.type === 'sq-ready') readyApp(f);
     else if (e.data.type === 'sq-models') refreshModels(true);
     else if (e.data.type === 'sq-nav' && (e.data.view === 'chat' || APPS[e.data.view])) showView(e.data.view);
+    else if (e.data.type === 'sq-open-ide' && typeof e.data.path === 'string') openIde({ session: String(e.data.session || ''), path: e.data.path });
     else if (e.data.type === 'sq-chat' && typeof e.data.text === 'string' && e.data.text.trim()) {
       // The Studio hands its notes to the agent, the IDE a question about a file: they go into a chat as a message.
       // The IDE names the chat its project belongs to, so the AI works in that same folder.
@@ -1508,6 +1513,14 @@
   }
   window.SQ_openStudio = openStudio;
 
+  /** Open the Studio's Video Editor for code projects (a "Video Editor" button in a team result or a chat answer). */
+  function openCodeEditor(query) {
+    const q = new URLSearchParams({ session: query.get('session') || S.session || '', project: query.get('project') || '' });
+    S.studioCode = `/studio/code?${q}`;
+    if (frames.studio) { frames.studio.frame.src = S.studioCode; S.studioCode = ''; }
+    showView('studio');
+  }
+
   /** Open the IDE on this chat's folder, at a file or at the diff of one of the AI's turns. */
   function openIde(where = {}) {
     if (!S.features.ide) { toast('Add-on IDE belum aktif: python main.py addon install ide, lalu jalankan ulang server.'); return; }
@@ -1521,7 +1534,15 @@
     const link = e.target instanceof Element ? e.target.closest('a[href]') : null;
     if (!link || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
     const url = new URL(link.getAttribute('href'), location.href);
-    if (url.origin !== location.origin || url.pathname.replace(/\/+$/, '') !== '/studio' || link.closest('.rail-foot')) return;
+    if (url.origin !== location.origin || link.closest('.rail-foot')) return;
+    const where = url.pathname.replace(/\/+$/, '');
+    if (where === '/studio/code') { e.preventDefault(); openCodeEditor(url.searchParams); return; }
+    if (where === '/ide' && url.searchParams.get('path')) {
+      e.preventDefault();
+      openIde({ session: url.searchParams.get('session') || '', path: url.searchParams.get('path') || '' });
+      return;
+    }
+    if (where !== '/studio') return;
     e.preventDefault();
     openStudio(url.searchParams.get('project') || '', url.searchParams.get('session') || '');
   });

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Editor kode</title>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/page.css">
+<link rel="stylesheet" href="/static/studio/studio.css">
+<link rel="stylesheet" href="/static/studio/code.css">
+<script src="/static/js/page.js"></script>
+</head>
+<body class="page-studio page-code">
+<header class="st-top">
+  <a class="st-brand ce-back" id="to-studio" href="/studio" title="Kembali ke Studio motion"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="m15 18-6-6 6-6"/></svg><span>Video Editor</span></a>
+  <div class="st-project">
+    <label class="st-project-label" for="project-select">Proyek</label>
+    <select id="project-select"></select>
+  </div>
+  <div class="st-project">
+    <label class="st-project-label" for="file-select">File</label>
+    <select id="file-select"></select>
+  </div>
+  <span id="save-state" class="st-save" aria-live="polite"></span>
+  <div class="st-actions">
+    <button id="open-ide" class="st-btn" type="button" aria-label="Buka di IDE" title="Buka file ini di IDE untuk mengubah kodenya"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="m8 7-5 5 5 5M16 7l5 5-5 5"/></svg><span>Buka di IDE</span></button>
+    <button id="render" class="st-btn" type="button" aria-label="Render jadi MP4" title="Render jadi MP4 (memakai render hub, GPU kalau ada)"><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg><span>Render</span></button>
+    <button id="save" class="st-btn primary" type="button" aria-label="Simpan perubahan" title="Simpan perubahan (Ctrl+S)" disabled><svg viewBox="0 0 24 24" aria-hidden="true" class="st-ico"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h8V3M8 21v-7h8v7"/></svg><span>Simpan</span></button>
+  </div>
+</header>
+
+<div id="banner" class="st-banner" role="status" hidden></div>
+
+<main class="ce-main">
+  <section class="ce-blocks" aria-labelledby="blocks-title">
+    <div class="ce-head">
+      <h2 id="blocks-title">Bagian yang bisa diubah</h2>
+      <p class="ce-hint">Ubah teks, warna, waktu, dan media tanpa menyentuh kode. Struktur dan animasi diubah lewat IDE atau minta AI.</p>
+      <div class="ce-tools">
+        <label class="visually-hidden" for="filter">Cari bagian</label>
+        <input id="filter" type="text" placeholder="Cari teks atau nama bagian" autocomplete="off">
+        <div class="ce-kinds" role="group" aria-label="Jenis bagian" id="kinds"></div>
+      </div>
+    </div>
+    <div id="list" class="ce-list" aria-live="polite"></div>
+  </section>
+
+  <section class="ce-view" aria-labelledby="view-title">
+    <div class="ce-tabs" role="tablist" aria-label="Tampilan">
+      <h2 id="view-title" class="visually-hidden">Pratinjau</h2>
+      <button id="tab-preview" role="tab" type="button" aria-selected="true" aria-controls="panel-preview">Pratinjau</button>
+      <button id="tab-render" role="tab" type="button" aria-selected="false" aria-controls="panel-render">Hasil render</button>
+    </div>
+    <div id="panel-preview" class="ce-panel" role="tabpanel" aria-labelledby="tab-preview">
+      <div class="ce-stage"><iframe id="preview" title="Pratinjau halaman" sandbox="allow-scripts" hidden></iframe>
+        <p id="preview-empty" class="ce-empty">Pilih proyek untuk melihat pratinjau.</p></div>
+      <button id="refresh-preview" class="st-link" type="button">Muat ulang pratinjau</button>
+    </div>
+    <div id="panel-render" class="ce-panel" role="tabpanel" aria-labelledby="tab-render" hidden>
+      <div class="ce-stage"><video id="render-video" controls playsinline hidden></video>
+        <p id="render-empty" class="ce-empty">Belum ada render. Tekan Render untuk membuat MP4.</p></div>
+      <p id="render-state" class="ce-render-state" aria-live="polite"></p>
+    </div>
+  </section>
+</main>
+<script src="/static/studio/code.js"></script>
+</body>
+</html>
