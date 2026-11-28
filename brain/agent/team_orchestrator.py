@@ -518,6 +518,22 @@ class TeamStore:
         return gone
 
 
+_MEDIA_EMBED = re.compile(r"^!\[[^\]\n]*\]\(([^)\s]+)\)\s*$", re.MULTILINE)
+
+
+def once_per_media(text: str) -> str:
+    """Drop a repeated embed of the same file (a model sometimes pastes the shared video twice); the first stays."""
+    seen: set[str] = set()
+
+    def keep(match: re.Match[str]) -> str:
+        if match.group(1) in seen:
+            return ""
+        seen.add(match.group(1))
+        return match.group(0)
+
+    return re.sub(r"\n{3,}", "\n\n", _MEDIA_EMBED.sub(keep, text)).strip()
+
+
 def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
     """Ready-made teams, with models chosen by tier from what is registered.
 
@@ -649,16 +665,23 @@ def team_templates(model_ids: list[str]) -> list[dict[str, Any]]:
                      "elemennya sendiri dengan id yang jelas dan tanpa tag lain di dalamnya (contoh <h1 id=\"judul\" "
                      "class=\"clip\" data-start=\"0.5\" data-duration=\"3\">Teksnya</h1>), semua warna sebagai variabel "
                      "CSS di :root (--latar: #0B3C49;), media di assets/ lewat src pada elemen ber-id. Untuk Remotion: "
-                     "teks di defaultProps (title, subtitle, caption, text) dan warna sebagai string \"#hex\". Jalankan "
-                     "video_check dan perbaiki setiap error, lalu video_render. Laporkan path proyek dan path video, atau "
-                     "error terakhir bila belum jadi.")},
+                     "teks di defaultProps (title, subtitle, caption, text) dan warna sebagai string \"#hex\". Elemen root "
+                     "HyperFrames wajib punya data-duration sama dengan durasi total naskah, dan baris penutup tampil "
+                     "paling sedikit 2 detik. Teks di dalam ikon atau kotak kecil harus muat di kotaknya. Jalankan "
+                     "video_check dan perbaiki setiap error serta setiap peringatan layout, contrast, craft, dan root, "
+                     "jalankan lagi sampai bersih, lalu video_render. Kalau hasil render memuat duration_note, perbaiki "
+                     "dan render ulang. Laporkan path proyek, path video, dan duration_s, atau error terakhir bila belum jadi.")},
                 {**member("checker", "Pemeriksa", "Mencocokkan video dengan naskah lalu menyerahkan", mid, "builder"),
                  "instructions": (
                      "Bandingkan setiap teks di layar dan detiknya di proyek dengan naskah.md (read_file keduanya); "
-                     "perbaiki yang beda di proyek, bukan di naskah. Jalankan video_check. Kalau video belum ada atau "
-                     "proyek berubah setelah render, video_render lagi. share_file videonya. Jawaban akhir: apa videonya, "
-                     "adegan dan detiknya, yang diperbaiki, yang tidak bisa dicek, dan bahwa teks, warna, waktu, dan "
-                     "media bisa diubah di Video Editor tanpa koding, kodenya di IDE.")},
+                     "perbaiki yang beda di proyek, bukan di naskah. Jalankan video_check dan perbaiki setiap error dan "
+                     "peringatan layout, contrast, craft, dan root. Lalu video_render lagi dan bandingkan duration_s "
+                     "hasilnya dengan durasi total naskah: selisih lebih dari 0,25 detik atau ada duration_note berarti "
+                     "belum selesai. share_file videonya. Jawaban akhir: apa videonya, adegan dan detiknya, duration_s "
+                     "yang terukur, yang diperbaiki, peringatan video_check yang tersisa, yang tidak bisa dicek (kamu "
+                     "tidak melihat gambarnya, jadi tata letak hanya dicek lewat video_check), dan bahwa teks, warna, "
+                     "waktu, dan media bisa diubah di Video Editor tanpa koding, kodenya di IDE. Jangan menulis cocok "
+                     "tanpa angka yang kamu ukur.")},
             ],
             "lead_id": "checker",
             "reviewer_id": None,
@@ -1927,6 +1950,7 @@ class TeamOrchestrator:
             # A revision or a fallback answer can drop the video an agent shared earlier in the run.
             run.files = list(dict.fromkeys([*self._new_shares(Path(stack.workspace), shared_before, run.started_at or 0.0), *handed]))
             run.result = f"{run.result}{shared_files.missing_from(stack.workspace, session_id, run.result, only=run.files)}".strip()
+            run.result = once_per_media(run.result)
             run.result = f"{run.result}{self._studio_buttons(Path(stack.workspace), run)}".strip()
             run.result = f"{run.result}{self._code_buttons(Path(stack.workspace), run)}".strip()
             run.status = "completed"

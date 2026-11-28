@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import socket
+import subprocess
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -422,6 +423,82 @@ async def _remotion_compositions(project: Path) -> list[str]:
     return [word for word in last.split() if _COMPOSITION_ID.fullmatch(word)]
 
 
+_CHECK_SECTIONS = ("lint", "runtime", "layout", "contrast", "craft")
+_ROOT_TAG = re.compile(r"<[^<>]*\bdata-composition-id\s*=[^<>]*>", re.IGNORECASE | re.DOTALL)
+_DURATION_ATTR = re.compile(r"\bdata-duration\s*=\s*[\"']?\s*([0-9]+(?:\.[0-9]+)?)", re.IGNORECASE)
+_FFMPEG_DURATION = re.compile(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)")
+
+
+def _json_tail(output: str) -> dict[str, Any] | None:
+    """The JSON report a CLI printed among its log lines (stderr is merged in, so log lines can follow it), or None."""
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"(?m)^\{", output):
+        try:
+            found, _end = decoder.raw_decode(output, match.start())
+        except ValueError:
+            continue
+        if isinstance(found, dict):
+            return found
+    return None
+
+
+def _check_findings(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Errors and warnings of every section of `hyperframes check`, errors first (infos left out)."""
+    found = []
+    for section in _CHECK_SECTIONS:
+        for item in (report.get(section) or {}).get("findings") or []:
+            if item.get("severity") not in {"error", "warning"}:
+                continue
+            found.append({"section": section, "severity": item["severity"], "code": item.get("code", ""),
+                          "message": str(item.get("message", ""))[:400], "text": str(item.get("text") or "")[:80],
+                          "selector": str(item.get("selector") or "")[:120],
+                          **({"time": item["time"]} if isinstance(item.get("time"), int | float) else {})})
+    return sorted(found, key=lambda f: f["severity"] != "error")
+
+
+def _declared_seconds(folder: Path) -> float | None:
+    """data-duration of the root composition in index.html, or None when it has none."""
+    index = folder / "index.html"
+    try:
+        text = index.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    tag = _ROOT_TAG.search(text)
+    match = _DURATION_ATTR.search(tag.group(0)) if tag else None
+    return float(match.group(1)) if match else None
+
+
+def _video_seconds(path: Path) -> float | None:
+    """Length of a rendered file from ffmpeg's own report, or None when it cannot be read."""
+    try:
+        done = subprocess.run([render_hub.ffmpeg(), "-hide_banner", "-nostdin", "-i", str(path)], capture_output=True,
+                              text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = _FFMPEG_DURATION.search(done.stderr or "")
+    if not match:
+        return None
+    return int(match.group(1)) * 3600 + int(match.group(2)) * 60 + float(match.group(3))
+
+
+def _length_report(video: Path, hyperframes_folder: Path | None) -> dict[str, Any]:
+    """The real length of the render, and a note when it is not what the root composition declares."""
+    seconds = _video_seconds(video)
+    if seconds is None:
+        return {}
+    out: dict[str, Any] = {"duration_s": round(seconds, 2)}
+    if hyperframes_folder is None:
+        return out
+    declared = _declared_seconds(hyperframes_folder)
+    if declared is None:
+        out["duration_note"] = (f"The video is {seconds:.2f} s because the root composition has no data-duration and "
+                                "it ended with the last animation. Set data-duration on the root to the script's total "
+                                "and render again.")
+    elif abs(declared - seconds) > 0.25:
+        out["duration_note"] = f"The video is {seconds:.2f} s but the root declares {declared:g} s. Find why and render again."
+    return out
+
+
 def _voice_note(folder: Path) -> dict[str, str]:
     """A video with a voice script but no voice track yet: say so, with the step that makes it."""
     scripts = [p for p in (folder / "mic.txt", folder.parent / "mic.txt", folder.parent.parent / "mic.txt") if p.is_file()]
@@ -435,9 +512,10 @@ def _voice_note(folder: Path) -> dict[str, str]:
                           "komposisi (skill voice-over), sebelum render."}
 
 
-@spec("video_check", "Check a video project before rendering. HyperFrames: lints the compositions (errors, "
-      "warnings, unmounted compositions) and returns the findings. Remotion: lists the composition ids that can be "
-      "rendered. Fix every error before video_render.",
+@spec("video_check", "Check a video project before rendering. HyperFrames: plays the film in a browser and reports "
+      "errors and warnings for lint, runtime, layout, contrast and craft (lines shown too briefly to read, tiny text, "
+      "an empty first frame), plus a root without data-duration. Remotion: lists the composition ids that can be "
+      "rendered. Fix every error and every layout, contrast and craft warning before video_render.",
       "media", [param("project", description="The project folder in the workspace.")],
       keywords="cek video, lint video, periksa video, hyperframes lint, remotion compositions", workspace=True)
 async def video_check(project: str, workspace_path: str | None = None) -> dict[str, Any]:
@@ -445,14 +523,31 @@ async def video_check(project: str, workspace_path: str | None = None) -> dict[s
     engine = _engine(folder)
     if engine == "remotion":
         return {"ok": True, "engine": engine, "compositions": await _remotion_compositions(folder), **_voice_note(folder)}
+    declared = _declared_seconds(folder)
+    root_note = [] if declared is not None else [{
+        "section": "root", "severity": "warning", "code": "root_duration_missing",
+        "message": "The root composition has no data-duration, so the video ends when the last animation ends and "
+                   "the closing scene can be cut short. Set data-duration on the root to the script's total length."}]
+    # `check` renders the film in a browser: lint, runtime errors, layout, contrast and craft (unread lines, tiny
+    # text, an empty first frame). Without a browser it is skipped and the plain lint below still runs.
+    code, output, _ = await _run([*_hyperframes(), "check", "--json"], folder, 10 * 60, _HF_ENV)
+    full = _json_tail(output)
+    if full is not None and not full.get("browserSkipped") and isinstance(full.get("lint"), dict):
+        findings = [*root_note, *_check_findings(full)]
+        errors = sum(int((full.get(k) or {}).get("errorCount") or 0) for k in _CHECK_SECTIONS)
+        return {"ok": code == 0 and errors == 0, "engine": engine, "errors": errors,
+                "warnings": sum(1 for f in findings if f["severity"] == "warning"), "findings": findings[:40],
+                "unmounted": full["lint"].get("unmountedCompositions") or [], "declared_seconds": declared,
+                "fix": "Fix every error and every layout, contrast and craft warning, then check again.",
+                **_voice_note(folder)}
     code, output, _ = await _run([*_hyperframes(), "lint", ".", "--json"], folder, 5 * 60, _HF_ENV)
     try:
         report = json.loads(output[output.find("{"):])
     except ValueError:
         return {"ok": False, "engine": engine, "error": "lint tidak memberi hasil JSON", "log_tail": _tail(output)}
     return {"ok": bool(report.get("ok")) and code == 0, "engine": engine, "errors": report.get("errorCount", 0),
-            "warnings": report.get("warningCount", 0), "findings": (report.get("findings") or [])[:25],
-            "unmounted": report.get("unmountedCompositions") or [], **_voice_note(folder)}
+            "warnings": report.get("warningCount", 0) + len(root_note), "findings": [*root_note, *(report.get("findings") or [])][:25],
+            "unmounted": report.get("unmountedCompositions") or [], "declared_seconds": declared, **_voice_note(folder)}
 
 
 @spec("video_render", "Render a HyperFrames or Remotion project in the workspace to an MP4 and show it in the chat. "
@@ -507,7 +602,8 @@ async def video_render(project: str, output: str = "", composition: str = "", sh
         return {"ok": False, "engine": engine, "error": "render berhenti karena waktu habis" if timed_out else "render gagal",
                 "log_tail": _tail(log)}
     root = _files.workspace(workspace_path)
-    return {**deliver(dest, str(root), share, dest.stem), "engine": engine, "render": used}
+    return {**deliver(dest, str(root), share, dest.stem), "engine": engine, "render": used,
+            **await asyncio.to_thread(_length_report, dest, folder if engine == "hyperframes" else None)}
 
 
 @spec("video_docs", "The official HyperFrames reference for one topic, from the installed CLI (always the version "

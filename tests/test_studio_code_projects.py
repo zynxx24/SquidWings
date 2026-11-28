@@ -231,3 +231,80 @@ def test_a_run_gets_editor_and_ide_buttons_for_the_projects_it_changed(workspace
     assert "/studio/code?session=sess-abcdef123456&project=video%2Fantrean" in buttons
     assert "/ide?session=sess-abcdef123456&path=video%2Fantrean" in buttons
     assert "remo" not in buttons, "a project the run did not touch gets no button"
+
+
+# ── what the full run showed: a cut ending, flaws only a rendered check sees, a video pasted twice ─────────────
+CHECK_REPORT = {
+    "ok": True, "browserSkipped": False,
+    "lint": {"errorCount": 0, "findings": [], "unmountedCompositions": []},
+    "runtime": {"errorCount": 0, "findings": []},
+    "layout": {"errorCount": 0, "findings": [{"severity": "info", "code": "panel_out_of_canvas", "message": "x"}]},
+    "contrast": {"errorCount": 0, "findings": [{"severity": "warning", "code": "contrast_aa_failure",
+                                                "message": "Contrast is 3.84:1", "text": "LOKET 1"}]},
+    "craft": {"errorCount": 0, "findings": [{"severity": "warning", "code": "line_unread", "time": 12.4,
+                                             "message": "The film's last line is on screen 0.77 s"}]},
+}
+
+
+async def test_video_check_plays_the_film_and_flags_a_root_without_duration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tools.toolbox import media_tools
+
+    project = tmp_path / "vid"
+    project.mkdir()
+    (project / "hyperframes.json").write_text("{}")
+    (project / "index.html").write_text('<div id="root" data-composition-id="root" data-width="1920"></div>')
+    calls: list[list[str]] = []
+
+    async def fake_run(argv, cwd, timeout_s, env=None, low_priority=False):
+        calls.append(argv)
+        # The real CLI pretty-prints the report and logs to stderr, which _run merges in, after it as well.
+        return 0, ("[hyperframes] check: analyze 1/3\n" + json.dumps(CHECK_REPORT, indent=2)
+                   + "\n[hyperframes] check: report saved to x.json\n"), False
+
+    monkeypatch.setattr(media_tools, "_run", fake_run)
+    monkeypatch.setattr(media_tools, "_hyperframes", lambda: ["hyperframes"])
+    result = await media_tools.video_check("vid", workspace_path=str(tmp_path))
+    assert calls[0][1:] == ["check", "--json"]
+    codes = [f["code"] for f in result["findings"]]
+    assert codes == ["root_duration_missing", "contrast_aa_failure", "line_unread"], "infos left out, root first"
+    assert result["ok"] and result["warnings"] == 3 and result["declared_seconds"] is None
+
+    (project / "index.html").write_text('<div id="root" data-composition-id="root" data-duration="15"></div>')
+
+    async def no_browser(argv, cwd, timeout_s, env=None, low_priority=False):
+        if argv[1] == "check":
+            return 0, json.dumps({"browserSkipped": True}), False
+        return 0, json.dumps({"ok": True, "errorCount": 0, "warningCount": 0, "findings": []}), False
+
+    monkeypatch.setattr(media_tools, "_run", no_browser)
+    plain = await media_tools.video_check("vid", workspace_path=str(tmp_path))
+    assert plain["ok"] and plain["declared_seconds"] == 15 and plain["findings"] == [], "lint still runs without a browser"
+
+
+def test_the_render_reports_its_real_length(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tools.toolbox import media_tools
+
+    (tmp_path / "index.html").write_text('<div data-composition-id="root" data-start="0">')
+    monkeypatch.setattr(media_tools, "_video_seconds", lambda path: 13.3)
+    note = media_tools._length_report(tmp_path / "v.mp4", tmp_path)
+    assert note["duration_s"] == 13.3 and "no data-duration" in note["duration_note"]
+    (tmp_path / "index.html").write_text('<div data-composition-id="root" data-duration="15">')
+    assert "declares 15" in media_tools._length_report(tmp_path / "v.mp4", tmp_path)["duration_note"]
+    monkeypatch.setattr(media_tools, "_video_seconds", lambda path: 15.03)
+    assert media_tools._length_report(tmp_path / "v.mp4", tmp_path) == {"duration_s": 15.03}
+
+
+def test_a_video_pasted_twice_shows_once() -> None:
+    from brain.agent.team_orchestrator import once_per_media
+
+    text = "Selesai.\n\n![a](/api/session/s/files/r/v.mp4)\n\n![Video panjang](/api/session/s/files/r/v.mp4)\n\n![b](/x.png)"
+    assert once_per_media(text) == "Selesai.\n\n![a](/api/session/s/files/r/v.mp4)\n\n![b](/x.png)"
+
+
+def test_the_builder_must_declare_the_length_and_the_checker_measure_it() -> None:
+    from brain.agent.team_orchestrator import team_templates
+
+    template = next(t for t in team_templates(["m"]) if t["key"] == "code-video")
+    _planner, builder, checker = template["members"]
+    assert "data-duration" in builder["instructions"] and "duration_note" in builder["instructions"]
+    assert "duration_s" in checker["instructions"] and "tanpa angka" in checker["instructions"]

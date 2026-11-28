@@ -281,11 +281,14 @@
     }
   }
 
-  function showRender(url) {
+  // fresh: a render just replaced the file under the same name, so the player must fetch it again.
+  function showRender(url, fresh = false) {
     const video = $('render-video');
     video.hidden = !url;
     $('render-empty').hidden = Boolean(url);
-    if (url && video.getAttribute('src') !== url) video.src = url;
+    if (!url) return;
+    const src = fresh ? `${url}${url.includes('?') ? '&' : '?'}v=${Date.now()}` : url;
+    if (fresh || video.getAttribute('src') !== url) { video.src = src; video.load(); }
   }
 
   async function startRender() {
@@ -315,7 +318,7 @@
       }
       if (job.state === 'done') {
         out.dataset.kind = ''; out.textContent = `Selesai dalam ${job.seconds} detik: ${job.file}`;
-        showRender(job.url);
+        showRender(job.url, true);
         $('render').disabled = false;
         return;
       }
