@@ -528,6 +528,10 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); }
   background: var(--surface-2); border-top: 1px solid var(--line-strong);
 }
 .term-panel.hidden { display: none; }
+/* Agent activity in a closed Terminal: a dot on the button instead of opening the panel. */
+#open-terminal.term-pending { position: relative; }
+#open-terminal.term-pending::after { content: ""; position: absolute; top: 5px; right: 5px; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface, #fff); }
 .term-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); min-width: 0; }
 .term-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; min-width: 0; }
 .term-cwd { font-family: var(--mono); font-size: 12px; opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }

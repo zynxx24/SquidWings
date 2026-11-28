@@ -1,5 +1,9 @@
 # Catatan perubahan
 
+## 2026-11-28: panel Terminal tidak muncul sendiri
+
+- Panel Terminal di web sekarang hanya terbuka kalau kamu membukanya (tombol Terminal, Ctrl+`, atau menu perintah). Saat agent menjalankan sesuatu di Terminal, tombolnya cukup diberi titik. Perintah `sudo`, yang mungkin butuh password, memunculkan satu pemberitahuan singkat.
+
 ## 2026-11-28: update otomatis lagi, repo dan skill selalu sinkron
 
 - Repo kembali menarik commit baru dari GitHub sendiri saat start dan setiap 12 jam (`AUTO_UPDATE`, bawaan `apply`; `notify` kalau hanya mau diberi tahu, `false` untuk mati). Paket yang berubah ikut terpasang, tetap mengikuti `requirements.lock`.

@@ -1,5 +1,6 @@
 /* Terminal panel: this chat's shell on this machine (xterm.js over /ws/terminal).
  * The user types here, a sudo password included; the agent's terminal_run commands show up here too.
+ * The panel opens only when the user opens it: agent activity marks the Terminal button instead.
  * Closing the panel leaves the shell running, so a dev server keeps serving. */
 (() => {
   'use strict';
@@ -130,6 +131,8 @@
     }
     if (info && info.cwd) { $('term-cwd').textContent = info.cwd.replace(/^\/home\/[^/]+/, '~'); $('term-cwd').title = info.cwd; }
     panel.classList.remove('hidden');
+    button.classList.remove('term-pending');
+    button.title = 'Terminal (Ctrl+`)';
     button.setAttribute('aria-expanded', 'true');
     document.body.classList.add('term-open');
     requestAnimationFrame(() => { fit.fit(); connect(); if (focus) term.focus(); });
@@ -142,6 +145,15 @@
   }
 
   function toggle() { panel.classList.contains('hidden') ? open() : close(); }
+
+  // The agent ran something in the Terminal while the panel is closed: mark the button, never open the panel.
+  // A sudo command may wait for a password, so it gets one notice per command.
+  function notify(needsUser = false) {
+    if (!panel.classList.contains('hidden')) return;
+    button.classList.add('term-pending');
+    button.title = 'Ada aktivitas agent di Terminal (Ctrl+`)';
+    if (needsUser) toast('Agent menjalankan perintah sudo di Terminal. Buka Terminal kalau diminta password.');
+  }
 
   function sessionChanged() {
     if (!term || panel.classList.contains('hidden')) { if (socket) { socket.close(); socket = null; } return; }
@@ -156,5 +168,5 @@
     if (e.ctrlKey && e.key === '`') { e.preventDefault(); toggle(); }
   });
 
-  window.SQ.terminal = { open, close, toggle, sessionChanged };
+  window.SQ.terminal = { open, close, toggle, sessionChanged, notify };
 })();

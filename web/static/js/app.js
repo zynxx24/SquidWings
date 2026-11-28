@@ -891,10 +891,10 @@
           if (event.chars > 2000) li.querySelector('.step-meta').textContent = `${(event.chars / 1000).toFixed(1)} rb karakter`;
           setStatus(`${verb} ${target}`.trim(), true);
         } else if (event.kind === 'tool' && event.phase === 'start') {
-          // The agent typing into the Terminal panel (or a sudo command routed there): show it, so the
-          // user sees the command and can type a password.
+          // The agent working in the Terminal panel: the panel stays as the user left it. The Terminal
+          // button gets a dot, and a sudo command (which may want a password) gets one short notice.
           if (window.SQ.terminal && (event.name === 'terminal_run' || (event.name === 'execute_command' && /(^|[\s;&|(])sudo\s/.test(event.detail || '')))) {
-            window.SQ.terminal.open({ focus: /sudo/.test(event.detail || '') });
+            window.SQ.terminal.notify(/(^|[\s;&|(])sudo\s/.test(event.detail || ''));
           }
           const { verb, group, target } = describeTool(event.name, event.detail);
           const li = stepRow(event.name, event.detail);
