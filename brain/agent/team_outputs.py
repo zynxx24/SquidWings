@@ -235,6 +235,31 @@ async def fetch_telegram_updates(offset: int | None, wait: int = _TELEGRAM_POLL_
     return list(response.json().get("result") or [])
 
 
+TELEGRAM_DOWNLOAD_LIMIT = 20 * 1024 * 1024   # what the Bot API lets a bot download
+
+
+async def download_telegram_file(file_id: str) -> bytes:
+    """The bytes of a file someone sent to the bot (up to 20 MB, the Bot API's limit)."""
+    token = credentials.get("telegram_bot_token")
+    if not token:
+        raise OutputError("Bot token Telegram belum diisi.")
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            meta = await client.get(f"https://api.telegram.org/bot{token}/getFile", params={"file_id": file_id})
+            if meta.status_code != 200:
+                raise OutputError("File ini terlalu besar untuk bot Telegram (maksimal 20 MB) atau sudah tidak ada.")
+            path = str((meta.json().get("result") or {}).get("file_path") or "")
+            size = int((meta.json().get("result") or {}).get("file_size") or 0)
+            if not path or size > TELEGRAM_DOWNLOAD_LIMIT:
+                raise OutputError("File ini terlalu besar untuk bot Telegram (maksimal 20 MB).")
+            body = await client.get(f"https://api.telegram.org/file/bot{token}/{path}")
+    except httpx.HTTPError as exc:
+        raise OutputError(f"Tidak bisa mengunduh dari Telegram ({type(exc).__name__})") from None
+    if body.status_code != 200 or len(body.content) > TELEGRAM_DOWNLOAD_LIMIT:
+        raise OutputError(f"Telegram menolak unduhan ({body.status_code})")
+    return body.content
+
+
 # ── HTTP ──────────────────────────────────────────────────────────────────────
 def _public_url(url: str) -> None:
     """Refuse addresses on this machine or its network.

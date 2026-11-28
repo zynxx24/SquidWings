@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import re
 import shutil
 import time
@@ -34,12 +35,14 @@ from brain.agent.team_flow import (
     render_template,
     telegram_message,
     telegram_task,
+    to_flow,
     unfilled,
     uses_ai,
 )
 from brain.agent.team_outputs import (
     DATABASE_IDS,
     OutputError,
+    download_telegram_file,
     fetch_telegram_updates,
     http_request,
     save_to_database,
@@ -2339,14 +2342,29 @@ class TeamOrchestrator:
                 continue
             run.files_sent.append(relative)
             try:
+                if path.suffix.lower() in {".html", ".htm"}:
+                    await self._send_app(path, chat_id)
                 await send_file(path, chat_id)
                 sent += 1
-            except (OutputError, OSError) as exc:
+            except (OutputError, OSError, ValueError, RuntimeError) as exc:
                 failed.append(f"{path.name}: {exc}")
         if failed:
             with contextlib.suppress(OutputError):
                 await send_telegram("File tidak terkirim:\n" + "\n".join(failed), chat_id)
         return f" · {sent} file terkirim" if sent else ""
+
+    async def _send_app(self, path: Path, chat_id: str) -> None:
+        """An HTML file as an app: a short card with a button that opens it inside Telegram (a Mini App)."""
+        import html as html_text
+
+        from brain.utils import app_links
+
+        url = await self.pages.publish_app(path)
+        card = (f"<b>{html_text.escape(path.stem.replace('-', ' ').replace('_', ' ').title())}</b>\n"
+                f"Aplikasi siap. Tekan <b>Buka aplikasi</b> untuk melihatnya langsung di Telegram.\n"
+                f"<i>{html_text.escape(path.name)}</i> · tautan berlaku {app_links.KEEP_DAYS} hari")
+        await send_rich([card], chat_id, buttons=[{"label": "Buka aplikasi", "url": url, "kind": "web"},
+                                                  {"label": "Buka di browser", "url": url}])
 
     @staticmethod
     def _log_to_source(config: dict[str, Any], record: dict[str, Any]) -> str:
@@ -2896,8 +2914,40 @@ class TeamOrchestrator:
         finally:
             self.events.unsubscribe(run_id, queue)
 
+    def ensure_telegram_harness(self) -> Team | None:
+        """The first time the bot and the owner's chat are set, give the owner the harness flow on Telegram (the
+        default chat), made from its template. Made once: afterwards the owner switches it off or on (or deletes it)
+        on the Tim agent page, and that choice is never undone here. TELEGRAM_CONNECTOR=off skips even the first."""
+        if os.getenv("TELEGRAM_CONNECTOR", "on").strip().lower() in {"0", "off", "false", "no"}:
+            return None
+        if not credentials.get("telegram_bot_token") or not credentials.get("telegram_chat_id"):
+            return None
+        marker = self.store.directory / ".telegram-default-made"
+        existing = next((t for t in self.store.list_teams() if self._is_harness_chat(t)), None)
+        if existing is not None or marker.exists():
+            return existing
+        # The harness node picks its model itself ("auto"), so the template needs no registered model.
+        template = next(t for t in team_templates(["auto"]) if t["key"] == "harness-telegram")
+        members, starts = to_flow(template["members"], template.get("lead_id"), template.get("reviewer_id"))
+        team = self.create_team(template["name"], template["description"], members, None, None, template["schedule"],
+                                style="flow", starts=starts, active=True, folder="team")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(team.id, encoding="utf-8")
+        logger.info("[teams] Telegram is connected to the harness (flow %s)", team.id)
+        return team
+
+    @staticmethod
+    def _is_harness_chat(team: Team) -> bool:
+        """The owner's Telegram flow that runs the full harness: the default chat."""
+        return (team.schedule.get("mode") == "telegram" and team.schedule.get("audience") != "public"
+                and any(m.config.get("harness") for m in team.members))
+
     def start_scheduler(self) -> None:
         """Start firing scheduled teams and listening to Telegram. Needs a running event loop."""
+        try:
+            self.ensure_telegram_harness()
+        except (ValueError, StopIteration, OSError) as exc:
+            logger.warning("[teams] Could not make the Telegram harness flow: %s", exc)
         if self._scheduler is None:
             self._scheduler = asyncio.create_task(self._schedule_loop(), name="team-scheduler")
         if self._telegram is None:
@@ -2940,8 +2990,17 @@ class TeamOrchestrator:
         return [team for team in self._telegram_teams() if team.schedule.get("audience") == "public"]
 
     async def _telegram_loop(self) -> None:
+        # One process polls the bot (Telegram answers a second poller with 409): the terminal or the web server,
+        # whichever starts first; the other takes over when that one stops.
+        from brain.config.paths import data_dir
+        from brain.utils.platform_compat import ProcessLock
+
+        lock = ProcessLock(data_dir() / "telegram-poll.lock")
         while True:
             if not self._telegram_teams() or not credentials.get("telegram_bot_token"):
+                await asyncio.sleep(TELEGRAM_IDLE_SECONDS)
+                continue
+            if not lock.acquire():
                 await asyncio.sleep(TELEGRAM_IDLE_SECONDS)
                 continue
             try:
@@ -2998,8 +3057,13 @@ class TeamOrchestrator:
                 if not teams and private:
                     # Nothing of the owner's own takes it: the public bot answers, but as to its owner.
                     teams = [team for team in self._public_teams() if telegram_message(team.schedule, text) is not None][:1]
+                attachment = self._attachment(message)
                 for team in teams:
-                    if self._take_chat(team, chat_id, message, text.strip(), owner=True):
+                    if attachment is not None:
+                        # The file is fetched and checked first; the message goes on once it is in the flow's folder.
+                        self._spawn(self._owner_upload(team, chat_id, message, text.strip(), attachment))
+                        taken.append(team.id)
+                    elif self._take_chat(team, chat_id, message, text.strip(), owner=True):
                         taken.append(team.id)
             elif self._public_teams() and private:
                 self._offer_customer(chat_id, message, text)
@@ -3016,7 +3080,50 @@ class TeamOrchestrator:
         if keyed:
             return keyed
         open_flows = [t for t in flows if not t.schedule.get("keyword") and telegram_message(t.schedule, text) is not None]
-        return sorted(open_flows, key=lambda t: t.updated_at, reverse=True)[:1]
+        # The harness flow is the default chat while it is on; otherwise the flow changed most recently.
+        return sorted(open_flows, key=lambda t: (TeamOrchestrator._is_harness_chat(t), t.updated_at), reverse=True)[:1]
+
+    # ── Telegram uploads (the owner's only) ────────────────────────────────────
+    @staticmethod
+    def _attachment(message: dict[str, Any]) -> tuple[str, str] | None:
+        """(file_id, file name) of a file in the message: a document, the largest photo, a video, a song, a voice note."""
+        number = message.get("message_id", "x")
+        document = message.get("document")
+        if isinstance(document, dict) and document.get("file_id"):
+            return str(document["file_id"]), str(document.get("file_name") or f"file-{number}")
+        photos = message.get("photo")
+        if isinstance(photos, list) and photos:
+            return str(photos[-1]["file_id"]), f"foto-{number}.jpg"
+        for kind, suffix in (("video", ".mp4"), ("audio", ".mp3"), ("voice", ".ogg"), ("video_note", ".mp4")):
+            item = message.get(kind)
+            if isinstance(item, dict) and item.get("file_id"):
+                return str(item["file_id"]), str(item.get("file_name") or f"{kind}-{number}{suffix}")
+        return None
+
+    def _flow_folder(self, team: Team) -> Path:
+        """The folder a flow's next run works in (as ``_place``), where an upload must land."""
+        if team.folder.startswith("s:"):
+            folder = workspace_context.SESSIONS_ROOT / team.folder[2:]
+            if folder.is_dir():
+                return folder
+        reserve_session_name(team.id, "team", team.name)
+        return session_workspace(team.id)
+
+    async def _owner_upload(self, team: Team, chat_id: str, message: dict[str, Any], text: str,
+                            attachment: tuple[str, str]) -> None:
+        from brain.utils import intake
+
+        file_id, name = attachment
+        try:
+            data = await download_telegram_file(file_id)
+            received = await asyncio.to_thread(intake.accept, self._flow_folder(team), name, data)
+        except (OutputError, OSError, ValueError) as exc:
+            await self._say(chat_id, f"File {name} tidak bisa diterima: {exc}")
+            return
+        await self._say(chat_id, received.note[:3500])
+        ask = text or ("Skill baru sudah terpasang. Ringkas kegunaannya dalam dua kalimat." if received.skill
+                       else "Lihat file yang baru saya kirim, lalu tanya apa yang mau saya lakukan dengannya.")
+        self._take_chat(team, chat_id, message, f"{ask}\n\n[Unggahan dari Telegram] {received.note}", owner=True)
 
     # ── Telegram chats ────────────────────────────────────────────────────────
     @staticmethod

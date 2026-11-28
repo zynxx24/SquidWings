@@ -108,6 +108,13 @@ def _parse(path: Path) -> Skill | None:
     )
 
 
+def _user_dir() -> Path:
+    """Skills the owner uploaded (skills/installer.py), in the user's data folder."""
+    from brain.config.paths import user_data_root
+
+    return user_data_root() / "skills"
+
+
 def _addon_dirs() -> list[Path]:
     """Skill folders of the add-ons that are switched on (addons/<name>/skills)."""
     from brain.config.edition import addon_enabled
@@ -119,7 +126,7 @@ def _watched_files() -> list[Path]:
     """What load_all is built from: edit, add or remove one and the next call rebuilds."""
     from skills import adapters
 
-    folders = [_BUILTIN_DIR, adapters.ADAPTERS_DIR, *_addon_dirs()]
+    folders = [_BUILTIN_DIR, adapters.ADAPTERS_DIR, *_addon_dirs(), _user_dir()]
     custom = os.getenv("SKILLS_DIR", "").strip()
     if custom:
         folders.append(Path(custom).expanduser())
@@ -163,7 +170,7 @@ def _load_all_cached() -> dict[str, Skill]:
     skills: dict[str, Skill] = {}
     custom = os.getenv("SKILLS_DIR", "").strip()
     disabled = {name.strip().lower() for name in os.getenv("SKILLS_DISABLED", "").split(",") if name.strip()}
-    for directory in (_BUILTIN_DIR, *_addon_dirs(), Path(custom).expanduser() if custom else None):
+    for directory in (_BUILTIN_DIR, *_addon_dirs(), _user_dir(), Path(custom).expanduser() if custom else None):
         if directory is None or not directory.is_dir():
             continue
         for path in sorted([*directory.glob("*.md"), *directory.glob("*/SKILL.md")]):

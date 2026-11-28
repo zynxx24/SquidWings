@@ -226,7 +226,7 @@ class WebSecurityMiddleware:
             return
 
         # Anyone but this machine needs the access cookie (the PIN page and its login call excepted).
-        remote = not self._from_this_machine(scope, headers) and str(scope.get("path") or "") not in access_gate.OPEN_PATHS
+        remote = not self._from_this_machine(scope, headers) and not access_gate.is_open(str(scope.get("path") or ""))
         if remote and not access_gate.valid(self._cookies(headers.get("cookie", "")).get(access_gate.COOKIE)):
             await self._deny_remote(scope, send, kind, headers)
             return

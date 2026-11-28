@@ -33,6 +33,7 @@ os.environ["MODEL_STATS_PATH"] = os.path.join(_tempfile.mkdtemp(prefix="model-st
 os.environ["ROUTER_STORE_DIR"] = _tempfile.mkdtemp(prefix="router-store-")
 os.environ["STYLE_HISTORY_FILE"] = os.path.join(_tempfile.mkdtemp(prefix="style-history-"), "h.json")  # looks used, across chats
 os.environ["SQUIDWINGS_DATA_DIR"] = _tempfile.mkdtemp(prefix="sw-data-")   # audit chain, logs, reports
+os.environ["SQUIDWINGS_HOME"] = _tempfile.mkdtemp(prefix="sw-home-")       # uploaded skills, moved data
 os.environ["ROUTER_IMPORT_ENV"] = "0"      # the server's start-up must not copy .env endpoints into it
 # Add-ons are off by default; the suite covers them, so switch both on (a test may still turn one off).
 os.environ.setdefault("ADDON_TRADING", "1")

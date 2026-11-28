@@ -1,5 +1,13 @@
 # Catatan perubahan
 
+## 2026-11-28: Telegram tersambung ke harness sejak start, upload sama di semua tempat, HTML jadi aplikasi
+
+- **Telegram langsung tersambung.** Saat terminal (`python main.py`) atau web start dan bot serta Chat ID sudah diisi di Kredensial, alur "Harness lewat Telegram" dibuat sekali dan jadi chat default: pesan tanpa kata pemicu dikerjakan harness lengkap (alat, skill, file). Matikan atau nyalakan di halaman Tim agent; pilihanmu tidak diubah lagi saat start, dan alur lain tetap menerima pesan dengan kata pemicunya. Terminal dan web bisa jalan bersamaan: hanya satu yang membaca pesan bot. `TELEGRAM_CONNECTOR=off` mematikannya sama sekali.
+- **Upload sama di web, terminal, dan Telegram.** File asli disimpan di folder chat (`uploads/`). Di terminal pakai `/upload <path>`; di Telegram kirim dokumen, foto, audio, atau video (maksimal 20 MB, hanya dari pemilik).
+- **ZIP diperiksa sebelum diekstrak** (zip-slip, symlink, zip bomb), lalu setiap file dipindai: program biner, perintah berbahaya, prompt injection, karakter tersembunyi, key yang bocor. ZIP berisi `SKILL.md` yang bersih langsung dipasang sebagai skill (di folder data pengguna) dan bisa dipakai mulai pesan berikutnya; temuan berbahaya membuatnya tidak dipasang.
+- **HTML jadi aplikasi.** File HTML yang dibagikan agent dibuka sebagai aplikasi: di Telegram berupa kartu dengan tombol **Buka aplikasi** (Mini App di dalam Telegram) plus filenya, di web ada tautan "Buka aplikasi", di terminal muncul link lokal. Aplikasinya salinan dengan sandbox, jadi script di dalamnya tidak bisa membaca cookie atau API SquidWings.
+- Perbaikan: halaman hasil Telegram (`/v/...`) sempat ikut diminta PIN akses lewat tunnel; sekarang tidak, karena dilindungi token acak.
+
 ## 2026-11-28: panel Terminal tidak muncul sendiri
 
 - Panel Terminal di web sekarang hanya terbuka kalau kamu membukanya (tombol Terminal, Ctrl+`, atau menu perintah). Saat agent menjalankan sesuatu di Terminal, tombolnya cukup diberi titik. Perintah `sudo`, yang mungkin butuh password, memunculkan satu pemberitahuan singkat.

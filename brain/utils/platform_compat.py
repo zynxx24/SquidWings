@@ -123,3 +123,57 @@ def stop_hint(pid: int) -> str:
 
 __all__ = ["find_port_hint", "stop_hint", "IS_LINUX", "IS_MAC", "IS_WINDOWS", "flush_stdin", "kill_tree", "low_priority_kwargs",
            "lower_own_priority", "new_group_kwargs", "os_name", "preexec_or_none", "stdin_ready"]
+
+
+class ProcessLock:
+    """An exclusive lock on a file that other processes see (only one may hold it), released when this process
+    ends. POSIX uses ``fcntl.flock``; Windows locks the first byte with ``msvcrt``."""
+
+    def __init__(self, path: Any) -> None:
+        self.path = path
+        self._handle: Any = None
+
+    def acquire(self) -> bool:
+        """True when this process now holds the lock (or already did); False when another process holds it."""
+        if self._handle is not None:
+            return True
+        from pathlib import Path
+
+        target = Path(self.path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(target, "a+")  # noqa: SIM115 - kept open for as long as the lock is held
+        try:
+            if IS_WINDOWS:
+                import msvcrt
+
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            return False
+        handle.seek(0)
+        handle.truncate()
+        handle.write(str(os.getpid()))
+        handle.flush()
+        self._handle = handle
+        return True
+
+    def release(self) -> None:
+        if self._handle is None:
+            return
+        with contextlib.suppress(OSError):
+            if IS_WINDOWS:
+                import msvcrt
+
+                self._handle.seek(0)
+                msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+            else:
+                import fcntl
+
+                fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+        self._handle.close()
+        self._handle = None

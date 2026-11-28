@@ -101,6 +101,12 @@ def make_app(store: ViewStore) -> Any:
             return HTMLResponse("<!doctype html><meta charset=utf-8><p>Halaman ini tidak ada atau sudah kedaluwarsa.</p>", status_code=404)
         return HTMLResponse(body, headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex", "Referrer-Policy": "no-referrer"})
 
+    @app.get("/a/{token}/{path:path}")
+    async def html_app(token: str, path: str = "") -> Any:
+        from brain.utils import app_links
+
+        return app_links.response(token, path)
+
     return app
 
 
@@ -181,6 +187,13 @@ class PublicPages:
                 raise RuntimeError("Tidak bisa membuat alamat publik (cloudflared). Isi Alamat web publik di Kredensial > Telegram.")
             logger.info("[teams] Telegram pages are public at %s", url)
             return str(url).rstrip("/")
+
+    async def publish_app(self, html: Path) -> str:
+        """Freeze an HTML file and its folder; return the public link that opens it (a Telegram Mini App)."""
+        from brain.utils import app_links
+
+        token = await asyncio.to_thread(app_links.publish, html)
+        return f"{await self.base_url()}{app_links.path_for(token)}"
 
     async def publish(self, title: str, subtitle: str, text: str) -> str:
         """Save a page and return its public link."""

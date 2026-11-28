@@ -717,6 +717,75 @@ def _apply_workspace_changes(workspace_path: Path, response_text: str) -> list[s
 
 
 
+# Notes about files uploaded with /upload, put in front of the next message so the agent knows they are there.
+_UPLOAD_NOTES: list[str] = []
+
+
+def _upload_command(arg: str) -> None:
+    """/upload <path>: the same intake as the web and Telegram (a ZIP is scanned, a skill installed)."""
+    from brain.utils import intake
+    from brain.utils.workspace_context import get_active_workspace
+
+    source = Path(arg.strip().strip("'\"")).expanduser()
+    if not arg.strip() or not source.is_file():
+        console.print("[yellow]Pakai: /upload <path file>  (contoh: /upload ~/Downloads/skill.zip)[/yellow]")
+        return
+    workspace = get_active_workspace()
+    if not workspace:
+        console.print("[yellow]Belum ada folder chat. Kirim satu pesan dulu, lalu /upload lagi.[/yellow]")
+        return
+    try:
+        received = intake.accept(Path(workspace), source.name, source.read_bytes())
+    except (OSError, ValueError) as exc:
+        console.print(f"[red]Gagal mengunggah: {escape(str(exc))}[/red]")
+        return
+    style = "red" if received.blocked else "green"
+    console.print(f"[{style}]{escape(received.note)}[/{style}]")
+    _UPLOAD_NOTES.append(received.note)
+
+
+def _shared_now() -> set[str]:
+    from brain.utils import shared_files
+    from brain.utils.workspace_context import get_active_workspace
+
+    workspace = get_active_workspace()
+    return set(shared_files.shared(workspace)) if workspace else set()
+
+
+def _show_shared_files(before: set[str]) -> None:
+    """Files the agent shared this turn: where they are, and an HTML file as an app to open."""
+    from brain.utils import app_links, shared_files
+    from brain.utils.workspace_context import get_active_workspace
+
+    workspace = get_active_workspace()
+    if not workspace:
+        return
+    for relative in sorted(set(shared_files.shared(workspace)) - before):
+        path = shared_files.resolve(workspace, relative)
+        if path is None:
+            continue
+        console.print(f"[bold]📎 {escape(path.name)}[/bold] [dim]{escape(str(path))}[/dim]")
+        if app_links.is_app(path):
+            try:
+                token = app_links.publish(path)
+            except (OSError, ValueError) as exc:
+                console.print(f"   [dim]tidak bisa dibuka sebagai aplikasi: {escape(str(exc))}[/dim]")
+                continue
+            port = int(os.getenv("WEB_PORT", "8080") or 8080)
+            if _port_open(port):
+                console.print(f"   [green]Buka aplikasi:[/green] http://127.0.0.1:{port}{app_links.path_for(token)}")
+            else:
+                console.print(f"   [green]Buka di browser:[/green] {path.resolve().as_uri()}")
+
+
+def _port_open(port: int) -> bool:
+    import socket
+
+    with socket.socket() as probe:
+        probe.settimeout(0.2)
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+
+
 def _handle_ide_command(
     cmd: str,
     registry: ModelRegistry,
@@ -759,6 +828,10 @@ def _handle_ide_command(
             console.print(f"\n[bold green]✅ Model dipilih:[/bold green] {escape(selected)} "
                           "[dim](dikunci: kalau error, alasannya ditampilkan dan tidak diganti otomatis)[/dim]")
         return True, selected, active_workspace
+
+    elif command in ("upload", "unggah"):
+        _upload_command(arg)
+        return True, None, active_workspace
 
     elif command == "cache":
         from brain.utils import cache as cache_registry
@@ -1607,6 +1680,11 @@ async def chat_mode(project: str | None = None) -> None:
                         active_workspace = new_ws
                     continue
 
+            if _UPLOAD_NOTES:
+                user_input = "\n".join(f"[Unggahan] {note}" for note in _UPLOAD_NOTES) + "\n\n" + user_input
+                _UPLOAD_NOTES.clear()
+            shared_before = _shared_now()
+
             # "[terminal] <title>": the AI names the chat (at most 28 characters) while it answers
             title_task = _start_terminal_naming(orchestrator, session_id, user_input)
 
@@ -1635,6 +1713,8 @@ async def chat_mode(project: str | None = None) -> None:
             except Exception as proc_err:
                 logger.exception(f"[chat_mode] Unhandled error during process_input: {proc_err}")
                 cli_ui.error_panel(console, str(proc_err))
+
+            _show_shared_files(shared_before)
 
             if voice.speak and reply:
                 await _speak_reply(reply)
@@ -2334,6 +2414,12 @@ Examples:
             from tools.code_intel import tool_updates
 
             tool_updates.start_background(_settings().project_root / ".agent_memory" / "tool_updates.json")
+
+    if (args.command == "chat" or args.command is None) and not os.getenv("PYTEST_CURRENT_TEST"):
+        # Telegram answers through the harness while the terminal runs (the web server runs its own).
+        from brain.agent import telegram_connector
+
+        console.print(f"[dim]↳ {telegram_connector.start_in_background()}[/dim]")
 
     if args.command == "chat" or args.command is None:
         _run_async(chat_mode, getattr(args, "project", None))

@@ -289,6 +289,14 @@ class AccessPin(BaseModel):
     pin: str = Field(default="", max_length=128)
 
 
+@app.get("/a/{token}/{path:path}", include_in_schema=False)
+async def html_app(token: str, path: str = "") -> Any:
+    """An HTML file shared as an app: a frozen copy, sandboxed (brain/utils/app_links.py)."""
+    from brain.utils import app_links
+
+    return app_links.response(token, path)
+
+
 @app.get("/access", include_in_schema=False)
 async def access_page() -> HTMLResponse:
     return HTMLResponse(access_gate.LOGIN_PAGE, headers=_NO_CACHE)
@@ -778,6 +786,18 @@ def _upload_payload(name: str, ext: str, data: bytes, session: str) -> dict[str,
     """Everything the file holds: its text, its images, and the full copy in the chat's folder."""
     folder = _upload_folder(session)
     stem = Path(name).stem[:80]
+    # The original goes into the chat's folder too: a ZIP is checked, unpacked and scanned, a skill installed.
+    intake_note = ""
+    if folder is not None:
+        from brain.utils import intake
+
+        received = intake.accept(folder.parent, name, data)
+        intake_note = received.note
+        if ext == ".zip":
+            return {"name": name, "pages": 0, "scanned": False, "markdown": f"[Unggahan] {intake_note}",
+                    "chars": len(intake_note), "total_chars": len(intake_note), "truncated": False, "images": 0,
+                    "saved": received.saved, "ocr_read": 0, "ocr_failed": 0, "intake": intake_note,
+                    "skill": received.skill, "blocked": received.blocked}
     # A document is read once, by extract(); converting it here too would be thrown away.
     if ext in DOCUMENT_SUFFIXES:
         found = extract(data, name, f"uploads/{stem}_img/", ocr=True)
@@ -799,6 +819,9 @@ def _upload_payload(name: str, ext: str, data: bytes, session: str) -> dict[str,
         (folder / f"{stem}.md").write_text(full, encoding="utf-8")
         save_images(found, folder / f"{stem}_img")
         result["saved"] = f"uploads/{stem}.md"
+    if intake_note:
+        result["intake"] = intake_note
+        result["markdown"] = f"{result['markdown']}\n\n[Unggahan] {intake_note}"
     return result
 
 

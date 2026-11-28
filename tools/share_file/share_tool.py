@@ -32,7 +32,18 @@ async def share_file(path: str, caption: str = "") -> dict[str, Any]:
     kind = shared_files.kind_of(target.name)
     url = shared_files.url_for(session, relative.as_posix())
     markdown = shared_files.markdown(session, relative.as_posix(), caption.strip() or target.name)
-    return {
+    result = {
         "ok": True, "name": target.name, "kind": kind, "size": size, "url": url, "markdown": markdown,
         "note": "The file is shown to the user under your answer. Do not paste the link again.",
     }
+    # An HTML file also opens as an app: a sandboxed copy with the files beside it (brain/utils/app_links.py).
+    from brain.utils import app_links
+
+    if app_links.is_app(target):
+        try:
+            app_url = app_links.path_for(app_links.publish(target))
+        except (OSError, ValueError) as exc:
+            result["app_error"] = str(exc)
+        else:
+            result.update(app_url=app_url, markdown=f"{markdown}\n\n[Buka aplikasi]({app_url})")
+    return result

@@ -32,6 +32,12 @@ COOKIE = "squidwings_access"
 MAX_AGE_S = 30 * 24 * 3600
 MIN_PIN = 6
 OPEN_PATHS = frozenset({"/access", "/api/access/login", "/favicon.ico"})
+# Pages opened by a link with a random token in it (Telegram result pages, shared HTML apps): the token is the key.
+OPEN_PREFIXES = ("/v/", "/a/")
+
+
+def is_open(path: str) -> bool:
+    return path in OPEN_PATHS or path.startswith(OPEN_PREFIXES)
 _ITERATIONS = 200_000
 _lock = threading.Lock()
 _cached: tuple[float, dict[str, str]] = (-1.0, {})
